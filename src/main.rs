@@ -1,10 +1,4 @@
-use std::fs::File;
-
 use clap::{App, Arg};
-
-const EXIF_EXPOSURE: &str = "ExposureTime";
-const EXIF_FSTOP: &str = "FNumber";
-const EXIF_SENSITIVITY: &str = "PhotographicSensitivity";
 
 fn main() {
     let matches = App::new("My Super Program")
@@ -35,8 +29,6 @@ fn main() {
 
     let filename = matches.value_of("INPUT").unwrap();
 
-    // let f = File::open(filename);
-
     let img = image::io::Reader::open(filename)
         .unwrap()
         .with_guessed_format()
@@ -50,7 +42,7 @@ fn main() {
         exif::Reader::new().read_from_container(&mut file).unwrap()
     };
 
-    let exposure = match img_exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY) {
+    let exposure_time = match img_exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY) {
         Some(n) => match n.value {
             exif::Value::Rational(ref v) => v[0],
             _ => panic!(),
@@ -71,10 +63,13 @@ fn main() {
         .get_uint(0)
         .unwrap();
 
+    let total_exposure =
+        sensitivity as f64 * exposure_time.to_f64() / (fstop.to_f64() * fstop.to_f64());
+
     let upper_left = img.get_pixel(0, 0);
 
     println!(
-        "Hello, {}! {:?}\n{} {} {}",
-        filename, upper_left, exposure, fstop, sensitivity
+        "Hello, {}! {:?}\n{} {} {}\n{}",
+        filename, upper_left, exposure_time, fstop, sensitivity, total_exposure,
     );
 }
