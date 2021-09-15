@@ -16,63 +16,71 @@ pub fn estimate_sensor_response(images: &[(image::RgbImage, f32)]) -> SensorResp
     todo!()
 }
 
-pub fn generate_mapping_matrix(
-    images: &[(image::RgbImage, f32)],
-) -> [[[(f32, usize); 256]; 256]; 3] {
-    // A mapping from one 255 image value to another, with a list of floats
-    // indicating the linear luminance ratio estimates between them.
-    let mut matrix_r = vec![Vec::new(); 256 * 256];
-    let mut matrix_g = vec![Vec::new(); 256 * 256];
-    let mut matrix_b = vec![Vec::new(); 256 * 256];
+pub fn generate_mapping_matrix(images: &[(image::RgbImage, f32)]) -> [[[usize; 256]; 256]; 3] {
+    // Build the histograms for each image.
+    // One per channel.
+    let mut histograms = [
+        vec![[0usize; 256]; images.len()], // r
+        vec![[0usize; 256]; images.len()], // g
+        vec![[0usize; 256]; images.len()], // b
+    ];
+    for i in 0..images.len() {
+        for (_, _, rgb) in images[i].0.enumerate_pixels() {
+            for chan in 0..3 {
+                histograms[chan][i][rgb[chan] as usize] += 1;
+            }
+        }
+    }
 
+    // Build the mapping points.
     assert!(images.len() > 1);
+    let mut mappings: [Vec<(Vec<(u8, u8)>, f32)>; 3] = [
+        vec![(Vec::new(), 0.0); images.len() - 1], // r
+        vec![(Vec::new(), 0.0); images.len() - 1], // g
+        vec![(Vec::new(), 0.0); images.len() - 1], // b
+    ];
     for i in 0..(images.len() - 1) {
-        let img1 = &images[i].0;
-        let img2 = &images[i + 1].0;
-        let exp_ratio = images[i + 1].1 / images[i].1;
+        let relative_exposure = images[i + 1].1 / images[i].1;
+        for chan in 0..3 {
+            mappings[chan][i].1 = relative_exposure;
+            let hist_1 = &histograms[chan][i];
+            let hist_2 = &histograms[chan][i + 1];
 
-        assert_eq!(img1.dimensions(), img2.dimensions());
-        for (p1, p2) in img1.enumerate_pixels().zip(img2.enumerate_pixels()) {
-            let r1 = p1.2[0] as usize;
-            let g1 = p1.2[1] as usize;
-            let b1 = p1.2[2] as usize;
+            let mut i1 = 0;
+            let mut i2 = 1;
+            let mut acc1 = 0;
+            let mut acc2 = hist_2[0];
 
-            let r2 = p2.2[0] as usize;
-            let g2 = p2.2[1] as usize;
-            let b2 = p2.2[2] as usize;
+            while i1 < 256 && i2 < 256 {
+                if acc1 > acc2 {
+                    acc2 += hist_2[i2];
+                    i2 += 1;
+                    if acc2 >= acc1 {
+                        mappings[chan][i].0.push((i1 as u8, i2 as u8));
+                    }
+                } else {
+                    acc1 += hist_1[i1];
+                    i1 += 1;
+                    if acc1 > acc2 {
+                        mappings[chan][i].0.push((i1 as u8, i2 as u8));
+                    }
+                }
+            }
 
-            matrix_r[r1 * 256 + r2].push(exp_ratio);
-            matrix_g[g1 * 256 + g2].push(exp_ratio);
-            matrix_b[b1 * 256 + b2].push(exp_ratio);
+            mappings[chan][i].0.dedup_by_key(|n| n.0);
+            mappings[chan][i].0.dedup_by_key(|n| n.1);
         }
     }
 
-    // Collapse each list of luminance ratio estimates into their median value,
-    // and store that and the length of the list it came from.
-    let mut matrix_med_r = [[(0.0f32, 0usize); 256]; 256];
-    let mut matrix_med_g = [[(0.0f32, 0usize); 256]; 256];
-    let mut matrix_med_b = [[(0.0f32, 0usize); 256]; 256];
-    for in_n in 0..256 {
-        for out_n in 0..256 {
-            let i = in_n * 256 + out_n;
-
-            if !matrix_r[i].is_empty() {
-                matrix_r[i].sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-                matrix_med_r[in_n][out_n] = (matrix_r[i][matrix_r[i].len() / 2], matrix_r[i].len());
-            }
-            if !matrix_g[i].is_empty() {
-                matrix_g[i].sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-                matrix_med_g[in_n][out_n] = (matrix_g[i][matrix_g[i].len() / 2], matrix_g[i].len());
-            }
-            if !matrix_b[i].is_empty() {
-                matrix_b[i].sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-                matrix_med_b[in_n][out_n] = (matrix_b[i][matrix_b[i].len() / 2], matrix_b[i].len());
+    // Graph it!
+    let mut graph = [[[0usize; 256]; 256]; 3];
+    for chan in 0..3 {
+        for i in 0..(images.len() - 1) {
+            for (in_v, out_v) in &mappings[chan][i].0 {
+                graph[chan][*in_v as usize][*out_v as usize] += 1;
             }
         }
     }
-    drop(matrix_r);
-    drop(matrix_g);
-    drop(matrix_b);
 
-    [matrix_med_r, matrix_med_g, matrix_med_b]
+    graph
 }

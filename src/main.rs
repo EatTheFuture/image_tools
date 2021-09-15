@@ -86,12 +86,12 @@ fn main() {
 
     use image::Rgb;
     let mut graph = image::RgbImage::from_pixel(256, 256, Rgb([0u8, 0, 0]));
-    let scale = 0.01f32;
+    let scale = 1024.0f32 / (images.len() - 1) as f32;
     for y in 0..256 {
         for x in 0..256 {
-            let r = mats[0][y][x].1 as f32 * scale;
-            let g = mats[1][y][x].1 as f32 * scale;
-            let b = mats[2][y][x].1 as f32 * scale;
+            let r = mats[0][y][x] as f32 * scale;
+            let g = mats[1][y][x] as f32 * scale;
+            let b = mats[2][y][x] as f32 * scale;
 
             graph.put_pixel(
                 x as u32,
@@ -105,7 +105,7 @@ fn main() {
         }
     }
 
-    println!("{:?}", mats);
+    // println!("{:?}", mats);
 
     graph.save("graph.png").unwrap();
 }
