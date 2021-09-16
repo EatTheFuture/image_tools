@@ -89,9 +89,10 @@ fn main() {
     let scale = 1024.0f32 / (images.len() - 1) as f32;
     for y in 0..256 {
         for x in 0..256 {
-            let r = mats[0][y][x] as f32 * scale;
-            let g = mats[1][y][x] as f32 * scale;
-            let b = mats[2][y][x] as f32 * scale;
+            let r = mats[0][x][255 - y] as f32 * scale;
+            let g = mats[1][x][255 - y] as f32 * scale;
+            let b = mats[2][x][255 - y] as f32 * scale;
+            // let all = r + g + b;
 
             graph.put_pixel(
                 x as u32,

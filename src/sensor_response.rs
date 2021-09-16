@@ -1,3 +1,6 @@
+// Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
+include!(concat!(env!("OUT_DIR"), "/emor.inc"));
+
 /// A mapping from input image rgb values to output linear rgb values.
 #[derive(Debug, Clone)]
 pub struct SensorResponseTable {

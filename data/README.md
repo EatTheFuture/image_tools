@@ -1,0 +1,1 @@
+The files "emor.txt" and "invemor.txt" are the data for the EMoR model from the paper "Modeling the Space of Camera Response Functions" by Grossberg and Nayar.  They were obtained from https://www.cs.columbia.edu/CAVE/software/softlib/dorf.php
