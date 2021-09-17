@@ -82,7 +82,7 @@ fn main() {
 
     images.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-    let mats = sensor_response::generate_mapping_matrix(&images[..]);
+    let mats = sensor_response::generate_mapping_graph(&images[..]);
 
     use image::Rgb;
     let mut graph = image::RgbImage::from_pixel(256, 256, Rgb([0u8, 0, 0]));
