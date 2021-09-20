@@ -13,13 +13,13 @@ fn main() {
     let emor_table = load_emor_file("data/emor.txt");
     f.write_all(
         format!(
-            "pub const EMOS_TABLE: &[[f32; {}]] = &[\n",
+            "pub const EMOR_TABLE: &[[f32; {}]] = &[\n",
             emor_table[0].len()
         )
         .as_bytes(),
     )
     .unwrap();
-    for list in emor_table {
+    for list in &emor_table[..] {
         f.write_all(b"    [").unwrap();
         for value in list {
             f.write_all(format!("{:0.6}, ", value).as_bytes()).unwrap();
@@ -31,13 +31,13 @@ fn main() {
     let invemor_table = load_emor_file("data/invemor.txt");
     f.write_all(
         format!(
-            "pub const INV_EMOS_TABLE: &[[f32; {}]] = &[\n",
+            "pub const INV_EMOR_TABLE: &[[f32; {}]] = &[\n",
             invemor_table[0].len()
         )
         .as_bytes(),
     )
     .unwrap();
-    for list in invemor_table {
+    for list in &invemor_table[..] {
         f.write_all(b"    [").unwrap();
         for value in list {
             f.write_all(format!("{:0.6}, ", value).as_bytes()).unwrap();
@@ -63,5 +63,10 @@ fn load_emor_file(filepath: &str) -> Vec<Vec<f32>> {
             }
         }
     }
+
+    for i in 0..values[0].len() {
+        values[1][i] -= values[0][i];
+    }
+
     values
 }
