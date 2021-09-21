@@ -1,17 +1,76 @@
+use crate::histogram::Histogram;
+
 // Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
-pub fn estimate_inverse_sensor_response(
-    mapping_curve: &[(f32, f32)],
-    exposure_ratio: f32,
-) -> Vec<(f32, f32)> {
+type Curve = Vec<(f32, f32)>;
+
+/// A curve that maps from the pixel values of one exposure
+/// of an image to another.  The curve is in [0.0, 1.0] on both axes,
+/// representing the min/max pixel values of each image format.
+#[derive(Debug, Clone)]
+pub struct ExposureMapping {
+    pub curve: Curve,
+    pub exposure_ratio: f32,
+}
+
+impl ExposureMapping {
+    /// Generates an exposure mapping from two histograms and accompanying exposure values.
+    pub fn from_histograms(
+        h1: &Histogram,
+        h2: &Histogram,
+        exposure_1: f32,
+        exposure_2: f32,
+    ) -> Self {
+        assert_eq!(h1.total_samples, h2.total_samples);
+
+        // Build the mapping curve.
+        let mut curve = Vec::new();
+        let mut i1 = 0;
+        let mut i2 = 1;
+        let mut acc1 = 0;
+        let mut acc2 = h2.buckets[0];
+        while i1 < h1.buckets.len() && i2 < h2.buckets.len() {
+            if acc1 >= acc2 {
+                acc2 += h2.buckets[i2];
+                i2 += 1;
+                if acc2 >= acc1 {
+                    curve.push((
+                        i1 as f32 / h1.buckets.len() as f32,
+                        i2 as f32 / h2.buckets.len() as f32,
+                    ));
+                }
+            } else {
+                acc1 += h1.buckets[i1];
+                i1 += 1;
+                if acc1 > acc2 {
+                    curve.push((
+                        i1 as f32 / h1.buckets.len() as f32,
+                        i2 as f32 / h2.buckets.len() as f32,
+                    ));
+                }
+            }
+        }
+
+        // Remove points that are duplicate in either dimension.
+        curve.dedup_by_key(|n| n.0);
+        curve.dedup_by_key(|n| n.1);
+
+        ExposureMapping {
+            curve: curve,
+            exposure_ratio: exposure_2 / exposure_1,
+        }
+    }
+}
+
+pub fn estimate_inverse_sensor_response(mapping: &ExposureMapping) -> Curve {
     let mut inv_response_curve = vec![(0.0f32, 0.0f32), (1.0f32, 1.0f32)];
     let mut scratch_curve = Vec::new();
 
-    for _ in 0..8096 {
+    for _ in 0..250 {
         // Do smoothing on the current estimated inverse response curve.
         scratch_curve.clear();
-        let smoothing_rounds = 16;
+        let smoothing_rounds = 100;
         for _ in 0..smoothing_rounds {
             for i in 0..inv_response_curve.len() {
                 let (x, mut y) = inv_response_curve[i];
@@ -30,11 +89,11 @@ pub fn estimate_inverse_sensor_response(
 
         // Fix the points of the inverse response curve to be consistent
         // with the points of the mapping curve.
-        for (x, y) in mapping_curve {
+        for (x, y) in mapping.curve.iter() {
             let xp = lerp_curve_at_x(&inv_response_curve, *x);
             let yp = lerp_curve_at_x(&inv_response_curve, *y);
 
-            let offset = ((xp * exposure_ratio) - yp) / (exposure_ratio + 1.0);
+            let offset = ((xp * mapping.exposure_ratio) - yp) / (mapping.exposure_ratio + 1.0);
 
             let xp2 = (xp - offset).max(0.0).min(1.0);
             let yp2 = (yp + offset).max(0.0).min(1.0);
@@ -134,99 +193,46 @@ pub fn lerp_curve_at_y(curve: &[(f32, f32)], t: f32) -> f32 {
     p1.0 + ((p2.0 - p1.0) * alpha)
 }
 
-// Given sets of pixel values (in [0, u16::MAX]) from images with two different exposures,
-// produces a mapping curve that converts from the pixel values in the first image to
-// the pixel values in the second.
-//
-// The returned curve uses [0.0, 1.0].
-pub fn generate_mapping_curve<Itr1, Itr2>(
-    pixel_values_1: Itr1,
-    pixel_values_2: Itr2,
-) -> Vec<(f32, f32)>
-where
-    Itr1: std::iter::Iterator<Item = u16>,
-    Itr2: std::iter::Iterator<Item = u16>,
-{
-    const BUCKET_COUNT: usize = 1 << 16;
-
-    // Build histograms of the pixel values.
-    let mut histogram_1 = vec![0usize; BUCKET_COUNT];
-    let mut histogram_2 = vec![0usize; BUCKET_COUNT];
-    for v in pixel_values_1 {
-        histogram_1[v as usize] += 1;
-    }
-    for v in pixel_values_2 {
-        histogram_2[v as usize] += 1;
-    }
-
-    // Build the mapping curve.
-    let mut mapping = Vec::new();
-    let mut i1 = 0;
-    let mut i2 = 1;
-    let mut acc1 = 0;
-    let mut acc2 = histogram_2[0];
-    while i1 < BUCKET_COUNT && i2 < BUCKET_COUNT {
-        if acc1 >= acc2 {
-            acc2 += histogram_2[i2];
-            i2 += 1;
-            if acc2 >= acc1 {
-                mapping.push((
-                    i1 as f32 / BUCKET_COUNT as f32,
-                    i2 as f32 / BUCKET_COUNT as f32,
-                ));
-            }
-        } else {
-            acc1 += histogram_1[i1];
-            i1 += 1;
-            if acc1 > acc2 {
-                mapping.push((
-                    i1 as f32 / BUCKET_COUNT as f32,
-                    i2 as f32 / BUCKET_COUNT as f32,
-                ));
-            }
-        }
-    }
-
-    // Remove points that are duplicate in either dimension.
-    mapping.dedup_by_key(|n| n.0);
-    mapping.dedup_by_key(|n| n.1);
-
-    mapping
-}
-
 pub fn generate_image_mapping_curves(
     images: &[(image::RgbImage, f32)],
-) -> [Vec<(Vec<(f32, f32)>, f32)>; 3] {
+) -> [Vec<ExposureMapping>; 3] {
     assert!(images.len() > 1);
-    let mut mappings = [Vec::new(), Vec::new(), Vec::new()];
+
+    let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
     for chan in 0..3 {
-        for i in 0..(images.len() - 1) {
-            let relative_exposure = images[i + 1].1 / images[i].1;
-            let mapping_curve = generate_mapping_curve(
+        for i in 0..images.len() {
+            histograms[chan].push(Histogram::from_u8s(
                 images[i]
                     .0
                     .enumerate_pixels()
-                    .map(|p: (u32, u32, &image::Rgb<u8>)| (p.2[chan] as u16) * 257),
-                images[i + 1]
-                    .0
-                    .enumerate_pixels()
-                    .map(|p: (u32, u32, &image::Rgb<u8>)| (p.2[chan] as u16) * 257),
-            );
-            mappings[chan].push((mapping_curve, relative_exposure));
+                    .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+            ));
+        }
+    }
+
+    let mut mappings = [Vec::new(), Vec::new(), Vec::new()];
+    for chan in 0..3 {
+        for i in 0..(images.len() - 1) {
+            mappings[chan].push(ExposureMapping::from_histograms(
+                &histograms[chan][i],
+                &histograms[chan][i + 1],
+                images[i].1,
+                images[i + 1].1,
+            ));
         }
     }
 
     mappings
 }
 
-pub fn generate_mapping_graph(mappings: &[Vec<(Vec<(f32, f32)>, f32)>; 3]) -> image::RgbImage {
+pub fn generate_mapping_graph(mappings: &[Vec<ExposureMapping>; 3]) -> image::RgbImage {
     // Graph it!
     let mut graph = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     for chan in 0..3 {
         for i in 0..mappings[0].len() {
             crate::draw_line_segments(
                 &mut graph,
-                mappings[chan][i].0.iter(),
+                mappings[chan][i].curve.iter().copied(),
                 image::Rgb(match chan {
                     0 => [128, 0, 0],
                     1 => [0, 128, 0],

@@ -1,5 +1,6 @@
 use clap::{App, Arg};
 
+mod histogram;
 mod sensor_response;
 
 use sensor_response::EMOR_TABLE;
@@ -105,28 +106,41 @@ fn main() {
     }
 
     let mut graph_inv = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    let mut graph_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     for chan in 0..3 {
         let rgb = match chan {
-            0 => image::Rgb([128, 0, 0]),
-            1 => image::Rgb([0, 128, 0]),
-            2 => image::Rgb([0, 0, 128]),
+            0 => image::Rgb([32, 0, 0]),
+            1 => image::Rgb([0, 32, 0]),
+            2 => image::Rgb([0, 0, 32]),
             _ => image::Rgb([0, 0, 0]),
         };
-        for (curve, ratio) in mapping_curves[chan].iter() {
-            let inv_mapping = sensor_response::estimate_inverse_sensor_response(curve, *ratio);
-            draw_line_segments(&mut graph_inv, inv_mapping.iter(), rgb);
+        for mapping in mapping_curves[chan].iter() {
+            let inv_mapping = sensor_response::estimate_inverse_sensor_response(&mapping);
+            draw_line_segments(&mut graph_inv, inv_mapping.iter().copied(), rgb);
             // draw_points(&mut graph_inv, inv_mapping.iter(), rgb);
+
+            draw_line_segments(
+                &mut graph_linear,
+                mapping.curve.iter().map(|p| {
+                    (
+                        sensor_response::lerp_curve_at_x(&inv_mapping[..], p.0),
+                        sensor_response::lerp_curve_at_x(&inv_mapping[..], p.1),
+                    )
+                }),
+                rgb,
+            );
         }
     }
 
     graph.save("graph.png").unwrap();
     // graph_emor.save("graph_emor.png").unwrap();
     graph_inv.save("graph_inv.png").unwrap();
+    graph_linear.save("graph_linear.png").unwrap();
 }
 
-pub fn draw_line_segments<'a, Itr>(img: &mut image::RgbImage, points: Itr, color: image::Rgb<u8>)
+pub fn draw_line_segments<Itr>(img: &mut image::RgbImage, points: Itr, color: image::Rgb<u8>)
 where
-    Itr: std::iter::Iterator<Item = &'a (f32, f32)> + 'a,
+    Itr: std::iter::Iterator<Item = (f32, f32)>,
 {
     let (w, h) = (img.width(), img.height());
     let mut points = points.peekable();
@@ -179,9 +193,9 @@ where
     }
 }
 
-pub fn draw_points<'a, Itr>(img: &mut image::RgbImage, points: Itr, color: image::Rgb<u8>)
+pub fn draw_points<Itr>(img: &mut image::RgbImage, points: Itr, color: image::Rgb<u8>)
 where
-    Itr: std::iter::Iterator<Item = &'a (f32, f32)> + 'a,
+    Itr: std::iter::Iterator<Item = (f32, f32)>,
 {
     let (w, h) = (img.width(), img.height());
 
