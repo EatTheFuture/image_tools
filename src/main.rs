@@ -109,16 +109,19 @@ fn main() {
     let mut graph_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     for chan in 0..3 {
         let rgb = match chan {
-            0 => image::Rgb([32, 0, 0]),
-            1 => image::Rgb([0, 32, 0]),
-            2 => image::Rgb([0, 0, 32]),
+            0 => image::Rgb([255, 0, 0]),
+            1 => image::Rgb([0, 255, 0]),
+            2 => image::Rgb([0, 0, 255]),
             _ => image::Rgb([0, 0, 0]),
         };
-        for mapping in mapping_curves[chan].iter() {
-            let inv_mapping = sensor_response::estimate_inverse_sensor_response(&mapping);
-            draw_line_segments(&mut graph_inv, inv_mapping.iter().copied(), rgb);
-            // draw_points(&mut graph_inv, inv_mapping.iter(), rgb);
 
+        let inv_mapping =
+            sensor_response::estimate_inverse_sensor_response(&mapping_curves[chan][..]);
+
+        draw_line_segments(&mut graph_inv, inv_mapping.iter().copied(), rgb);
+        // draw_points(&mut graph_inv, inv_mapping.iter().copied(), rgb);
+
+        for mapping in mapping_curves[chan].iter() {
             draw_line_segments(
                 &mut graph_linear,
                 mapping.curve.iter().map(|p| {
@@ -147,14 +150,18 @@ where
 
     while let Some(p1) = points.next() {
         if let Some(p2) = points.peek() {
-            let x1 = (p1.0 * (w - 1) as f32).min(w as f32) as u32;
-            let y1 = (p1.1 * (h - 1) as f32).min(h as f32) as u32;
-            let x2 = (p2.0 * (w - 1) as f32).min(w as f32) as u32;
-            let y2 = (p2.1 * (h - 1) as f32).min(h as f32) as u32;
+            let mut x1 = (p1.0 * (w - 1) as f32).min(w as f32) as u32;
+            let mut y1 = (p1.1 * (h - 1) as f32).min(h as f32) as u32;
+            let mut x2 = (p2.0 * (w - 1) as f32).min(w as f32) as u32;
+            let mut y2 = (p2.1 * (h - 1) as f32).min(h as f32) as u32;
 
-            if (y2 - y1) < (x2 - x1) {
+            if (y2 as i32 - y1 as i32).abs() < (x2 as i32 - x1 as i32).abs() {
+                if x1 > x2 {
+                    std::mem::swap(&mut x1, &mut x2);
+                    std::mem::swap(&mut y1, &mut y2);
+                }
                 let mut y = y1 as f32;
-                let dy = (y2 - y1) as f32 / (x2 - x1) as f32;
+                let dy = (y2 as f32 - y1 as f32) / (x2 as f32 - x1 as f32);
                 for x in x1..x2 {
                     let xi = x.min(w - 1);
                     let yi = (h - 1 - y as u32).min(h - 1);
@@ -171,8 +178,12 @@ where
                     y += dy;
                 }
             } else {
+                if y1 > y2 {
+                    std::mem::swap(&mut x1, &mut x2);
+                    std::mem::swap(&mut y1, &mut y2);
+                }
                 let mut x = x1 as f32;
-                let dx = (x2 - x1) as f32 / (y2 - y1) as f32;
+                let dx = (x2 as f32 - x1 as f32) / (y2 as f32 - y1 as f32);
                 for y in y1..y2 {
                     let xi = (x as u32).min(w - 1);
                     let yi = (h - 1 - y).min(h - 1);

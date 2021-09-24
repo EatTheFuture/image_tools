@@ -24,31 +24,45 @@ impl ExposureMapping {
     ) -> Self {
         assert_eq!(h1.total_samples, h2.total_samples);
 
+        let norm1 = 1.0 / (h1.buckets.len() - 1) as f32;
+        let norm2 = 1.0 / (h2.buckets.len() - 1) as f32;
+
         // Build the mapping curve.
         let mut curve = Vec::new();
-        let mut i1 = 0;
+        let mut i1 = 1;
         let mut i2 = 1;
-        let mut acc1 = 0;
-        let mut acc2 = h2.buckets[0];
+        let mut seg1 = (0, h1.buckets[0]);
+        let mut seg2 = (0, h2.buckets[0]);
+        let mut prev_plot = 0;
         while i1 < h1.buckets.len() && i2 < h2.buckets.len() {
-            if acc1 >= acc2 {
-                acc2 += h2.buckets[i2];
+            // Plot a point.
+            if seg1.1 <= seg2.1 && seg1.1 > seg2.0 {
+                if prev_plot != 1 {
+                    let alpha = (seg1.1 - seg2.0) as f32 / (seg2.1 - seg2.0) as f32;
+                    let x = i1 as f32 * norm1;
+                    let y = ((i2 - 1) as f32 + alpha) * norm2;
+                    curve.push((x, y));
+                }
+                prev_plot = 1;
+            } else if seg2.1 <= seg1.1 && seg2.1 > seg1.0 {
+                if prev_plot != 2 {
+                    let alpha = (seg2.1 - seg1.0) as f32 / (seg1.1 - seg1.0) as f32;
+                    let x = ((i1 - 1) as f32 + alpha) * norm1;
+                    let y = i2 as f32 * norm2;
+                    curve.push((x, y));
+                }
+                prev_plot = 2;
+            }
+
+            // Advance forward.
+            if seg1.1 >= seg2.1 {
+                seg2.0 = seg2.1;
+                seg2.1 += h2.buckets.get(i2).unwrap_or(&0);
                 i2 += 1;
-                if acc2 >= acc1 {
-                    curve.push((
-                        i1 as f32 / h1.buckets.len() as f32,
-                        i2 as f32 / h2.buckets.len() as f32,
-                    ));
-                }
             } else {
-                acc1 += h1.buckets[i1];
+                seg1.0 = seg1.1;
+                seg1.1 += h1.buckets.get(i1).unwrap_or(&0);
                 i1 += 1;
-                if acc1 > acc2 {
-                    curve.push((
-                        i1 as f32 / h1.buckets.len() as f32,
-                        i2 as f32 / h2.buckets.len() as f32,
-                    ));
-                }
             }
         }
 
@@ -61,45 +75,52 @@ impl ExposureMapping {
             exposure_ratio: exposure_2 / exposure_1,
         }
     }
+
+    pub fn resampled(&self, point_count: usize) -> ExposureMapping {
+        let min = self.curve[0].0;
+        let max = self.curve.last().unwrap().0;
+        let inc = 1.0 / (point_count - 1) as f32;
+        let mut curve = Vec::new();
+        for i in 0..point_count {
+            let x = (inc * i as f32) + ((fastrand::f32() - 0.5) * inc);
+            if x >= min && x <= max {
+                let y = lerp_curve_at_x(&self.curve[..], x);
+                curve.push((x, y));
+            }
+        }
+        ExposureMapping {
+            curve: curve,
+            exposure_ratio: self.exposure_ratio,
+        }
+    }
 }
 
-pub fn estimate_inverse_sensor_response(mapping: &ExposureMapping) -> Curve {
+pub fn estimate_inverse_sensor_response(mappings: &[ExposureMapping]) -> Curve {
+    let seed = fastrand::u32(..);
+    let segments = 256;
+    let target_smoothing_rounds = 8;
+    const MAX_SMOOTHING_ROUNDS: usize = 8;
+
     let mut inv_response_curve = vec![(0.0f32, 0.0f32), (1.0f32, 1.0f32)];
     let mut scratch_curve = Vec::new();
 
-    for _ in 0..250 {
-        // Do smoothing on the current estimated inverse response curve.
-        scratch_curve.clear();
-        let smoothing_rounds = 100;
-        for _ in 0..smoothing_rounds {
-            for i in 0..inv_response_curve.len() {
-                let (x, mut y) = inv_response_curve[i];
-                if i > 0 && i < (inv_response_curve.len() - 1) {
-                    let a = inv_response_curve[i - 1];
-                    let b = inv_response_curve[i + 1];
-                    let alpha = (x - a.0) / (b.0 - a.0);
-                    let y_lerp = a.1 + ((b.1 - a.1) * alpha);
-                    y = y * 0.5 + y_lerp * 0.5;
-                }
-                scratch_curve.push((x, y));
+    for round in 0..256 {
+        let segs_per_mapping = segments / mappings.len();
+        for mapping in mappings.iter().map(|m| m.resampled(segs_per_mapping)) {
+            for (x, y) in mapping.curve.iter().copied() {
+                let xp = lerp_curve_at_x(&inv_response_curve, x);
+                let yp = lerp_curve_at_x(&inv_response_curve, y);
+
+                // let target_ratio = mapping.exposure_ratio.min(1.0 / xp);
+                let target_ratio = mapping.exposure_ratio;
+                let offset = ((xp * target_ratio) - yp) / (target_ratio + 1.0);
+
+                let xp2 = (xp - (offset * 0.5)).max(0.0).min(1.0);
+                let yp2 = (yp + (offset * 0.5)).max(0.0).min(1.0);
+
+                scratch_curve.push((x, xp2));
+                scratch_curve.push((y, yp2));
             }
-            std::mem::swap(&mut inv_response_curve, &mut scratch_curve);
-            scratch_curve.clear();
-        }
-
-        // Fix the points of the inverse response curve to be consistent
-        // with the points of the mapping curve.
-        for (x, y) in mapping.curve.iter() {
-            let xp = lerp_curve_at_x(&inv_response_curve, *x);
-            let yp = lerp_curve_at_x(&inv_response_curve, *y);
-
-            let offset = ((xp * mapping.exposure_ratio) - yp) / (mapping.exposure_ratio + 1.0);
-
-            let xp2 = (xp - offset).max(0.0).min(1.0);
-            let yp2 = (yp + offset).max(0.0).min(1.0);
-
-            scratch_curve.push((*x, xp2));
-            scratch_curve.push((*y, yp2));
         }
         std::mem::swap(&mut inv_response_curve, &mut scratch_curve);
         scratch_curve.clear();
@@ -109,6 +130,48 @@ pub fn estimate_inverse_sensor_response(mapping: &ExposureMapping) -> Curve {
         inv_response_curve.push((1.0, 1.0));
         inv_response_curve.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         inv_response_curve.dedup_by(|a, b| a.0 == b.0);
+
+        // Do smoothing on the current estimated inverse response curve.
+        for smooth_round in 0..MAX_SMOOTHING_ROUNDS {
+            let mut is_monotonic = true;
+            for i in 0..inv_response_curve.len() {
+                if i > 0 && i < (inv_response_curve.len() - 1) {
+                    // Do smoothing.
+                    let a = inv_response_curve[i - 1];
+                    let b = inv_response_curve[i];
+                    let c = inv_response_curve[i + 1];
+                    let alpha = (b.0 - a.0) / (c.0 - a.0);
+                    let y_lerp = a.1 + ((c.1 - a.1) * alpha);
+
+                    is_monotonic &= b.1 > a.1 && c.1 > b.1;
+
+                    scratch_curve.push((b.0, b.1 * 0.333 + y_lerp * 0.667));
+                } else {
+                    scratch_curve.push(inv_response_curve[i]);
+                };
+            }
+            std::mem::swap(&mut inv_response_curve, &mut scratch_curve);
+            scratch_curve.clear();
+
+            // // Check if we've reached our smoothing targets.
+            // let mut min_slope_ratio = 9999.0f32;
+            // for points in inv_response_curve.windows(3) {
+            //     let a = points[0];
+            //     let b = points[1];
+            //     let c = points[2];
+
+            //     // Update max slope diff.
+            //     let slope1 = (b.1 - a.1) / (b.0 - a.0);
+            //     let slope2 = (c.1 - b.1) / (c.0 - b.0);
+            //     let slope_ratio = if slope1 < slope2 { slope1 / slope2 } else { slope2 / slope1 };
+            //     min_slope_ratio = if slope_ratio.is_nan() { 0.0 } else { min_slope_ratio.max(slope_ratio) };
+            //     // dbg!((slope1, slope2, slope_ratio));
+            // }
+
+            if smooth_round >= target_smoothing_rounds && is_monotonic {
+                break;
+            }
+        }
     }
 
     // Ensure monotonicity on the final curve.
