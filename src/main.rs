@@ -147,12 +147,24 @@ fn main() {
 
     println!("Building HDR image.");
 
+    fn calc_weight(n: f32, is_lowest_exposed: bool) -> f32 {
+        // Triangle weight.
+        let tri = if is_lowest_exposed && n > 0.5 {
+            1.0
+        } else {
+            (0.5 - (n - 0.5).abs()) * 2.0
+        };
+
+        // Smooth step weight.
+        tri * tri * (3.0 - 2.0 * tri)
+    }
+
     // Create the HDR.
     let width = images[0].0.width() as usize;
     let height = images[0].0.height() as usize;
     let mut hdr_image = vec![[0.0f32; 3]; width * height];
     let mut hdr_weights = vec![[0.0f32; 3]; width * height];
-    for (image, exposure) in images {
+    for (img_i, (image, exposure)) in images.iter().enumerate() {
         let inv_exposure = 1.0 / exposure;
         for (i, pixel) in image.pixels().enumerate() {
             let r = pixel[0] as f32 / 255.0;
@@ -161,18 +173,15 @@ fn main() {
             let r_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], r);
             let g_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], g);
             let b_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], b);
-            let r_weight = (0.5 - (r - 0.5).abs()) * 2.0;
-            let g_weight = (0.5 - (g - 0.5).abs()) * 2.0;
-            let b_weight = (0.5 - (b - 0.5).abs()) * 2.0;
-            let r_smooth_weight = r_weight * r_weight * (3.0 - 2.0 * r_weight);
-            let g_smooth_weight = g_weight * g_weight * (3.0 - 2.0 * g_weight);
-            let b_smooth_weight = b_weight * b_weight * (3.0 - 2.0 * b_weight);
-            hdr_image[i][0] += r_linear * inv_exposure * r_smooth_weight;
-            hdr_image[i][1] += g_linear * inv_exposure * g_smooth_weight;
-            hdr_image[i][2] += b_linear * inv_exposure * b_smooth_weight;
-            hdr_weights[i][0] += r_smooth_weight;
-            hdr_weights[i][1] += g_smooth_weight;
-            hdr_weights[i][2] += b_smooth_weight;
+            let r_weight = calc_weight(r, img_i == 0);
+            let g_weight = calc_weight(g, img_i == 0);
+            let b_weight = calc_weight(b, img_i == 0);
+            hdr_image[i][0] += r_linear * inv_exposure * r_weight;
+            hdr_image[i][1] += g_linear * inv_exposure * g_weight;
+            hdr_image[i][2] += b_linear * inv_exposure * b_weight;
+            hdr_weights[i][0] += r_weight;
+            hdr_weights[i][1] += g_weight;
+            hdr_weights[i][2] += b_weight;
         }
     }
     for i in 0..(width * height) {
