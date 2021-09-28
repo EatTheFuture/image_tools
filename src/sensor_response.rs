@@ -98,13 +98,13 @@ impl ExposureMapping {
 pub fn estimate_inverse_sensor_response(mappings: &[ExposureMapping]) -> Curve {
     let seed = fastrand::u32(..);
     let segments = 256;
-    let target_smoothing_rounds = 8;
-    const MAX_SMOOTHING_ROUNDS: usize = 8;
+    let target_smoothing_rounds = segments / mappings.len();
+    let max_smoothing_rounds = target_smoothing_rounds * 4;
 
     let mut inv_response_curve = vec![(0.0f32, 0.0f32), (1.0f32, 1.0f32)];
     let mut scratch_curve = Vec::new();
 
-    for round in 0..256 {
+    for round in 0..1024 {
         let segs_per_mapping = segments / mappings.len();
         for mapping in mappings.iter().map(|m| m.resampled(segs_per_mapping)) {
             for (x, y) in mapping.curve.iter().copied() {
@@ -115,8 +115,8 @@ pub fn estimate_inverse_sensor_response(mappings: &[ExposureMapping]) -> Curve {
                 let target_ratio = mapping.exposure_ratio;
                 let offset = ((xp * target_ratio) - yp) / (target_ratio + 1.0);
 
-                let xp2 = (xp - (offset * 0.5)).max(0.0).min(1.0);
-                let yp2 = (yp + (offset * 0.5)).max(0.0).min(1.0);
+                let xp2 = (xp - (offset * 0.1)).max(0.0);
+                let yp2 = (yp + (offset * 0.1)).min(1.0);
 
                 scratch_curve.push((x, xp2));
                 scratch_curve.push((y, yp2));
@@ -132,7 +132,7 @@ pub fn estimate_inverse_sensor_response(mappings: &[ExposureMapping]) -> Curve {
         inv_response_curve.dedup_by(|a, b| a.0 == b.0);
 
         // Do smoothing on the current estimated inverse response curve.
-        for smooth_round in 0..MAX_SMOOTHING_ROUNDS {
+        for smooth_round in 0..max_smoothing_rounds {
             let mut is_monotonic = true;
             for i in 0..inv_response_curve.len() {
                 if i > 0 && i < (inv_response_curve.len() - 1) {
@@ -152,21 +152,6 @@ pub fn estimate_inverse_sensor_response(mappings: &[ExposureMapping]) -> Curve {
             }
             std::mem::swap(&mut inv_response_curve, &mut scratch_curve);
             scratch_curve.clear();
-
-            // // Check if we've reached our smoothing targets.
-            // let mut min_slope_ratio = 9999.0f32;
-            // for points in inv_response_curve.windows(3) {
-            //     let a = points[0];
-            //     let b = points[1];
-            //     let c = points[2];
-
-            //     // Update max slope diff.
-            //     let slope1 = (b.1 - a.1) / (b.0 - a.0);
-            //     let slope2 = (c.1 - b.1) / (c.0 - b.0);
-            //     let slope_ratio = if slope1 < slope2 { slope1 / slope2 } else { slope2 / slope1 };
-            //     min_slope_ratio = if slope_ratio.is_nan() { 0.0 } else { min_slope_ratio.max(slope_ratio) };
-            //     // dbg!((slope1, slope2, slope_ratio));
-            // }
 
             if smooth_round >= target_smoothing_rounds && is_monotonic {
                 break;
@@ -288,22 +273,15 @@ pub fn generate_image_mapping_curves(
     mappings
 }
 
-pub fn generate_mapping_graph(mappings: &[Vec<ExposureMapping>; 3]) -> image::RgbImage {
+pub fn generate_mapping_graph(mappings: &[ExposureMapping]) -> image::RgbImage {
     // Graph it!
     let mut graph = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    for chan in 0..3 {
-        for i in 0..mappings[0].len() {
-            crate::draw_line_segments(
-                &mut graph,
-                mappings[chan][i].curve.iter().copied(),
-                image::Rgb(match chan {
-                    0 => [128, 0, 0],
-                    1 => [0, 128, 0],
-                    2 => [0, 0, 128],
-                    _ => [128, 128, 128],
-                }),
-            );
-        }
+    for mapping in mappings {
+        crate::draw_line_segments(
+            &mut graph,
+            mapping.curve.iter().copied(),
+            image::Rgb([128, 128, 128]),
+        );
     }
 
     graph

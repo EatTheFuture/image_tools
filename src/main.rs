@@ -3,7 +3,7 @@ use clap::{App, Arg};
 mod histogram;
 mod sensor_response;
 
-use sensor_response::EMOR_TABLE;
+use sensor_response::{EMOR_TABLE, INV_EMOR_TABLE};
 
 fn main() {
     let matches = App::new("My Super Program")
@@ -85,25 +85,36 @@ fn main() {
 
     images.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-    let mapping_curves = sensor_response::generate_image_mapping_curves(&images[..]);
+    let mapping_curves = {
+        let [mut r, mut g, mut b] = sensor_response::generate_image_mapping_curves(&images[..]);
+        let combined: Vec<_> = r.drain(..).chain(g.drain(..)).chain(b.drain(..)).collect();
+        combined
+    };
 
     let graph = sensor_response::generate_mapping_graph(&mapping_curves);
 
     let mut graph_emor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    for x in 0..1024 {
-        let n = 5;
-        for i in 0..(n + 1) {
-            let i = n - i;
-            let y = 0.5 - EMOR_TABLE[i][x];
-            let v = (255 / (i + 1)) as u8;
+    let n = 5;
+    for i in 0..(n + 1) {
+        let table = &EMOR_TABLE[i];
+        let v = (255 / (i + 1)) as u8;
+        let rgb = image::Rgb([v, v, v]);
 
-            graph_emor.put_pixel(
-                x as u32,
-                (y.max(0.0).min(1.0) * 1023.0) as u32,
-                image::Rgb([v, v, v]),
-            );
-        }
+        let offset = if i < 2 { 0.0 } else { 0.5 };
+        draw_line_segments(
+            &mut graph_emor,
+            (0..table.len()).zip(table.iter()).map(|(x, y)| {
+                (
+                    x as f32 / table.len() as f32,
+                    (offset + y).max(0.0).min(1.0),
+                )
+            }),
+            rgb,
+        );
     }
+
+    println!("Calculating inverse mappings.");
+    let inv_mapping = sensor_response::estimate_inverse_sensor_response(&mapping_curves[..]);
 
     let mut graph_inv = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     let mut graph_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
@@ -115,19 +126,18 @@ fn main() {
             _ => image::Rgb([0, 0, 0]),
         };
 
-        let inv_mapping =
-            sensor_response::estimate_inverse_sensor_response(&mapping_curves[chan][..]);
-
         draw_line_segments(&mut graph_inv, inv_mapping.iter().copied(), rgb);
         // draw_points(&mut graph_inv, inv_mapping.iter().copied(), rgb);
 
-        for mapping in mapping_curves[chan].iter() {
+        for mapping in mapping_curves.iter() {
             draw_line_segments(
                 &mut graph_linear,
                 mapping.curve.iter().map(|p| {
                     (
                         sensor_response::lerp_curve_at_x(&inv_mapping[..], p.0),
                         sensor_response::lerp_curve_at_x(&inv_mapping[..], p.1),
+                        // sensor_response::lerp_slice(&INV_EMOR_TABLE[1][..], p.0),
+                        // sensor_response::lerp_slice(&INV_EMOR_TABLE[1][..], p.1),
                     )
                 }),
                 rgb,
@@ -135,8 +145,60 @@ fn main() {
         }
     }
 
+    println!("Building HDR image.");
+
+    // Create the HDR.
+    let width = images[0].0.width() as usize;
+    let height = images[0].0.height() as usize;
+    let mut hdr_image = vec![[0.0f32; 3]; width * height];
+    let mut hdr_weights = vec![[0.0f32; 3]; width * height];
+    for (image, exposure) in images {
+        let inv_exposure = 1.0 / exposure;
+        for (i, pixel) in image.pixels().enumerate() {
+            let r = pixel[0] as f32 / 255.0;
+            let g = pixel[1] as f32 / 255.0;
+            let b = pixel[2] as f32 / 255.0;
+            let r_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], r);
+            let g_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], g);
+            let b_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], b);
+            let r_weight = (0.5 - (r - 0.5).abs()) * 2.0;
+            let g_weight = (0.5 - (g - 0.5).abs()) * 2.0;
+            let b_weight = (0.5 - (b - 0.5).abs()) * 2.0;
+            let r_smooth_weight = r_weight * r_weight * (3.0 - 2.0 * r_weight);
+            let g_smooth_weight = g_weight * g_weight * (3.0 - 2.0 * g_weight);
+            let b_smooth_weight = b_weight * b_weight * (3.0 - 2.0 * b_weight);
+            hdr_image[i][0] += r_linear * inv_exposure * r_smooth_weight;
+            hdr_image[i][1] += g_linear * inv_exposure * g_smooth_weight;
+            hdr_image[i][2] += b_linear * inv_exposure * b_smooth_weight;
+            hdr_weights[i][0] += r_smooth_weight;
+            hdr_weights[i][1] += g_smooth_weight;
+            hdr_weights[i][2] += b_smooth_weight;
+        }
+    }
+    for i in 0..(width * height) {
+        if hdr_weights[i][0] > 0.0 {
+            hdr_image[i][0] /= hdr_weights[i][0];
+        }
+        if hdr_weights[i][1] > 0.0 {
+            hdr_image[i][1] /= hdr_weights[i][1];
+        }
+        if hdr_weights[i][2] > 0.0 {
+            hdr_image[i][2] /= hdr_weights[i][2];
+        }
+    }
+
+    println!("Writing output.");
+
+    hdr::write_hdr(
+        &mut std::io::BufWriter::new(std::fs::File::create("test.hdr").unwrap()),
+        &hdr_image[..],
+        width,
+        height,
+    )
+    .unwrap();
+
     graph.save("graph.png").unwrap();
-    // graph_emor.save("graph_emor.png").unwrap();
+    graph_emor.save("graph_emor.png").unwrap();
     graph_inv.save("graph_inv.png").unwrap();
     graph_linear.save("graph_linear.png").unwrap();
 }

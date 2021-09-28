@@ -13,7 +13,7 @@ fn main() {
     let emor_table = load_emor_file("data/emor.txt");
     f.write_all(
         format!(
-            "pub const EMOR_TABLE: &[[f32; {}]] = &[\n",
+            "#[allow(dead_code)]\npub const EMOR_TABLE: &[[f32; {}]] = &[\n",
             emor_table[0].len()
         )
         .as_bytes(),
@@ -31,7 +31,7 @@ fn main() {
     let invemor_table = load_emor_file("data/invemor.txt");
     f.write_all(
         format!(
-            "pub const INV_EMOR_TABLE: &[[f32; {}]] = &[\n",
+            "#[allow(dead_code)]\npub const INV_EMOR_TABLE: &[[f32; {}]] = &[\n",
             invemor_table[0].len()
         )
         .as_bytes(),
@@ -64,9 +64,9 @@ fn load_emor_file(filepath: &str) -> Vec<Vec<f32>> {
         }
     }
 
-    for i in 0..values[0].len() {
-        values[1][i] -= values[0][i];
-    }
+    // for i in 0..values[0].len() {
+    //     values[1][i] -= values[0][i];
+    // }
 
     values
 }

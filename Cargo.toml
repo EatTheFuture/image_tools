@@ -1,3 +1,8 @@
+[workspace]
+members = [
+    "sub_crates/hdr",
+]
+
 [package]
 name = "hdri_merge"
 version = "0.1.0"
@@ -12,3 +17,6 @@ kamadak-exif = "0.5"
 clap = "2"
 fastrand = "1.5"
 sobol_burley = "0.3"
+
+[dependencies.hdr]
+path = "sub_crates/hdr"
