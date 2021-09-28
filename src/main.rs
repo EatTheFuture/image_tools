@@ -96,7 +96,7 @@ fn main() {
     let mut graph_emor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     let n = 5;
     for i in 0..(n + 1) {
-        let table = &EMOR_TABLE[i];
+        let table = &INV_EMOR_TABLE[i];
         let v = (255 / (i + 1)) as u8;
         let rgb = image::Rgb([v, v, v]);
 
@@ -114,7 +114,18 @@ fn main() {
     }
 
     println!("Calculating inverse mappings.");
-    let inv_mapping = sensor_response::estimate_inverse_sensor_response(&mapping_curves[..]);
+    // let inv_mapping: Vec<f32> = {
+    //     let tmp = sensor_response::estimate_inverse_sensor_response(&mapping_curves[..]);
+    //     (0..1024).map(|i| {
+    //         let x = i as f32 / 1023.0;
+    //         sensor_response::lerp_curve_at_x(&tmp, x)
+    //     }).collect()
+    // };
+    let inv_mapping = {
+        let inv_emor_factors = sensor_response::estimate_inv_emor(&mapping_curves[..]);
+        dbg!(inv_emor_factors);
+        sensor_response::inv_emor_factors_to_curve(&inv_emor_factors)
+    };
 
     let mut graph_inv = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     let mut graph_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
@@ -126,7 +137,14 @@ fn main() {
             _ => image::Rgb([0, 0, 0]),
         };
 
-        draw_line_segments(&mut graph_inv, inv_mapping.iter().copied(), rgb);
+        draw_line_segments(
+            &mut graph_inv,
+            inv_mapping.iter().enumerate().map(|(i, y)| {
+                let x = i as f32 / (inv_mapping.len() - 1) as f32;
+                (x, *y)
+            }),
+            rgb,
+        );
         // draw_points(&mut graph_inv, inv_mapping.iter().copied(), rgb);
 
         for mapping in mapping_curves.iter() {
@@ -134,8 +152,8 @@ fn main() {
                 &mut graph_linear,
                 mapping.curve.iter().map(|p| {
                     (
-                        sensor_response::lerp_curve_at_x(&inv_mapping[..], p.0),
-                        sensor_response::lerp_curve_at_x(&inv_mapping[..], p.1),
+                        sensor_response::lerp_slice(&inv_mapping[..], p.0),
+                        sensor_response::lerp_slice(&inv_mapping[..], p.1),
                         // sensor_response::lerp_slice(&INV_EMOR_TABLE[1][..], p.0),
                         // sensor_response::lerp_slice(&INV_EMOR_TABLE[1][..], p.1),
                     )
@@ -170,9 +188,9 @@ fn main() {
             let r = pixel[0] as f32 / 255.0;
             let g = pixel[1] as f32 / 255.0;
             let b = pixel[2] as f32 / 255.0;
-            let r_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], r);
-            let g_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], g);
-            let b_linear = sensor_response::lerp_curve_at_x(&inv_mapping[..], b);
+            let r_linear = sensor_response::lerp_slice(&inv_mapping[..], r);
+            let g_linear = sensor_response::lerp_slice(&inv_mapping[..], g);
+            let b_linear = sensor_response::lerp_slice(&inv_mapping[..], b);
             let r_weight = calc_weight(r, img_i == 0);
             let g_weight = calc_weight(g, img_i == 0);
             let b_weight = calc_weight(b, img_i == 0);
