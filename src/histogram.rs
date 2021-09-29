@@ -5,32 +5,23 @@ pub struct Histogram {
 }
 
 impl Histogram {
-    pub fn from_u8s<Itr>(values: Itr) -> Self
+    /// Builds a histogram from any iterator yielding items than can be converted to `usize`.
+    ///
+    /// The values yielded by the iterator are used to directly index
+    /// into the histogram buckets, so `bucket_count` should be large
+    /// enough to accommodate any yielded values.
+    pub fn from_iter<T, Itr>(values: Itr, bucket_count: usize) -> Self
     where
-        Itr: std::iter::Iterator<Item = u8>,
+        T: Into<usize>,
+        Itr: std::iter::Iterator<Item = T>,
     {
         let mut hist = Histogram {
             total_samples: 0,
-            buckets: vec![0; 1 << 8],
+            buckets: vec![0; bucket_count],
         };
         for v in values {
             hist.total_samples += 1;
-            hist.buckets[v as usize] += 1;
-        }
-        hist
-    }
-
-    pub fn from_u16s<Itr>(values: Itr) -> Self
-    where
-        Itr: std::iter::Iterator<Item = u16>,
-    {
-        let mut hist = Histogram {
-            total_samples: 0,
-            buckets: vec![0; 1 << 16],
-        };
-        for v in values {
-            hist.total_samples += 1;
-            hist.buckets[v as usize] += 1;
+            hist.buckets[v.into()] += 1;
         }
         hist
     }

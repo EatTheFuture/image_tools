@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Encoding/decoding for unsigned 32-bit trifloat numbers.
 //!
 //! The encoding uses 8 bits of mantissa per number, and 8 bits for the shared

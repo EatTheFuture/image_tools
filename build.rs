@@ -64,9 +64,9 @@ fn load_emor_file(filepath: &str) -> Vec<Vec<f32>> {
         }
     }
 
-    // for i in 0..values[0].len() {
-    //     values[1][i] -= values[0][i];
-    // }
+    for i in 0..values[0].len() {
+        values[1][i] -= values[0][i];
+    }
 
     values
 }
