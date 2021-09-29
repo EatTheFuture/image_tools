@@ -76,13 +76,13 @@ impl ExposureMapping {
         }
     }
 
-    pub fn resampled(&self, point_count: usize) -> ExposureMapping {
+    pub fn resampled(&self, point_count: usize, jitter: f32) -> ExposureMapping {
         let min = self.curve[0].0;
         let max = self.curve.last().unwrap().0;
         let inc = 1.0 / (point_count - 1) as f32;
         let mut curve = Vec::new();
         for i in 0..point_count {
-            let x = (inc * i as f32) + ((fastrand::f32() - 0.5) * inc);
+            let x = (inc * i as f32) + ((fastrand::f32() - 0.5) * inc * jitter);
             if x >= min && x <= max {
                 let y = lerp_curve_at_x(&self.curve[..], x);
                 curve.push((x, y));
@@ -97,16 +97,15 @@ impl ExposureMapping {
 
 pub fn estimate_inverse_sensor_response(mappings: &[ExposureMapping]) -> Curve {
     let seed = fastrand::u32(..);
-    let segments = 256;
-    let target_smoothing_rounds = segments / mappings.len();
+    let segments = 16;
+    let target_smoothing_rounds = 256;
     let max_smoothing_rounds = target_smoothing_rounds * 4;
 
     let mut inv_response_curve = vec![(0.0f32, 0.0f32), (1.0f32, 1.0f32)];
     let mut scratch_curve = Vec::new();
 
-    for round in 0..1024 {
-        let segs_per_mapping = segments / mappings.len();
-        for mapping in mappings.iter().map(|m| m.resampled(segs_per_mapping)) {
+    for round in 0..256 {
+        for mapping in mappings.iter().map(|m| m.resampled(segments, 0.5)) {
             for (x, y) in mapping.curve.iter().copied() {
                 let xp = lerp_curve_at_x(&inv_response_curve, x);
                 let yp = lerp_curve_at_x(&inv_response_curve, y);
@@ -115,8 +114,8 @@ pub fn estimate_inverse_sensor_response(mappings: &[ExposureMapping]) -> Curve {
                 let target_ratio = mapping.exposure_ratio;
                 let offset = ((xp * target_ratio) - yp) / (target_ratio + 1.0);
 
-                let xp2 = (xp - (offset * 0.1)).max(0.0);
-                let yp2 = (yp + (offset * 0.1)).min(1.0);
+                let xp2 = (xp - (offset * 0.5)).max(0.0);
+                let yp2 = (yp + (offset * 0.5)).min(1.0);
 
                 scratch_curve.push((x, xp2));
                 scratch_curve.push((y, yp2));
@@ -187,7 +186,7 @@ pub fn eval_inv_emor(factors: &[f32], x: f32) -> f32 {
     // y
 }
 
-const EMOR_FACTOR_COUNT: usize = 6;
+const EMOR_FACTOR_COUNT: usize = 4;
 pub fn estimate_inv_emor(mappings: &[ExposureMapping]) -> [f32; EMOR_FACTOR_COUNT] {
     pub fn calc_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
         let mut err_sum = 0.0f32;
@@ -207,7 +206,7 @@ pub fn estimate_inv_emor(mappings: &[ExposureMapping]) -> [f32; EMOR_FACTOR_COUN
     let mut factors = [0.0f32; EMOR_FACTOR_COUNT];
     let mut test_factors = [0.0f32; EMOR_FACTOR_COUNT];
     let mut err = calc_error(mappings, &factors);
-    for _ in 0..2 {
+    for _ in 0..4 {
         for i in 0..EMOR_FACTOR_COUNT {
             let increment_res = 512usize;
             let increment = 1.0 / (increment_res - 1) as f32;
