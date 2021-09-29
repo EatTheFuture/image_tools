@@ -13,6 +13,24 @@ pub fn lerp_slice(slice: &[f32], t: f32) -> f32 {
     }
 }
 
+pub fn flip_slice_xy(slice: &[f32]) -> Vec<f32> {
+    let mut curve = Vec::new();
+    for i in 0..slice.len() {
+        let x = i as f32 / (slice.len() - 1) as f32;
+        let y = slice[i];
+        curve.push((x, y));
+    }
+
+    let mut flipped = Vec::new();
+    for i in 0..slice.len() {
+        let y = i as f32 / (slice.len() - 1) as f32;
+        let x = lerp_curve_at_y(&curve, y);
+        flipped.push(x);
+    }
+
+    flipped
+}
+
 // Returns the y value at the given x value.
 #[allow(dead_code)]
 pub fn lerp_curve_at_x(curve: &[(f32, f32)], t: f32) -> f32 {

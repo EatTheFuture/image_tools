@@ -115,32 +115,33 @@ fn main() {
         let combined: Vec<_> = r.drain(..).chain(g.drain(..)).chain(b.drain(..)).collect();
         combined
     };
-    let graph = exposure_mapping::generate_mapping_graph(&mapping_curves);
-    graph.save("graph.png").unwrap();
+    let graph_mapping = exposure_mapping::generate_mapping_graph(&mapping_curves);
+    graph_mapping.save("graph_mapping.png").unwrap();
 
     // Estimate sensor response curves from the exposure mappings.
     println!("Calculating sensor mapping.");
-    let inv_mapping = {
-        let inv_emor_factors = emor::estimate_inv_emor(&mapping_curves[..]);
-        dbg!(inv_emor_factors);
-        emor::inv_emor_factors_to_curve(&inv_emor_factors)
+    let sensor_mapping = {
+        let (emor_factors, err) = emor::estimate_emor(&mapping_curves[..]);
+        dbg!(emor_factors, err);
+        emor::emor_factors_to_curve(&emor_factors)
     };
+    let inv_mapping = utils::flip_slice_xy(&sensor_mapping);
 
     // Save out debug sensor mapping graphs.
-    let mut graph_inv = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    let mut graph_sensor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     draw_line_segments(
-        &mut graph_inv,
-        inv_mapping.iter().enumerate().map(|(i, y)| {
-            let x = i as f32 / (inv_mapping.len() - 1) as f32;
+        &mut graph_sensor,
+        sensor_mapping.iter().enumerate().map(|(i, y)| {
+            let x = i as f32 / (sensor_mapping.len() - 1) as f32;
             (x, *y)
         }),
         image::Rgb([255, 255, 255]),
     );
-    graph_inv.save("graph_inv.png").unwrap();
-    let mut graph_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    graph_sensor.save("graph_sensor.png").unwrap();
+    let mut graph_mapping_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     for mapping in mapping_curves.iter() {
         draw_line_segments(
-            &mut graph_linear,
+            &mut graph_mapping_linear,
             mapping.curve.iter().map(|p| {
                 (
                     lerp_slice(&inv_mapping[..], p.0),
@@ -150,7 +151,9 @@ fn main() {
             image::Rgb([64, 64, 64]),
         );
     }
-    graph_linear.save("graph_linear.png").unwrap();
+    graph_mapping_linear
+        .save("graph_mapping_linear.png")
+        .unwrap();
 
     // Create the HDR.
     println!("Building HDR image.");
