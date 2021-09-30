@@ -125,7 +125,7 @@ fn main() {
         dbg!(emor_factors, err);
         emor::emor_factors_to_curve(&emor_factors)
     };
-    let inv_mapping = utils::flip_slice_xy(&sensor_mapping);
+    let inv_mapping = utils::flip_slice_xy(&sensor_mapping, 256);
 
     // Save out debug sensor mapping graphs.
     let mut graph_sensor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
@@ -138,6 +138,18 @@ fn main() {
         image::Rgb([255, 255, 255]),
     );
     graph_sensor.save("graph_sensor.png").unwrap();
+
+    let mut graph_sensor_inv = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    draw_line_segments(
+        &mut graph_sensor_inv,
+        inv_mapping.iter().enumerate().map(|(i, y)| {
+            let x = i as f32 / (inv_mapping.len() - 1) as f32;
+            (x, *y)
+        }),
+        image::Rgb([255, 255, 255]),
+    );
+    graph_sensor_inv.save("graph_sensor_inv.png").unwrap();
+
     let mut graph_mapping_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     for mapping in mapping_curves.iter() {
         draw_line_segments(

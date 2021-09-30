@@ -4,7 +4,7 @@ use crate::utils::lerp_slice;
 // Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
-const EMOR_FACTOR_COUNT: usize = 8;
+const EMOR_FACTOR_COUNT: usize = 6;
 
 pub fn emor_at_index(factors: &[f32], i: usize) -> f32 {
     let mut y = EMOR_TABLE[0][i] + EMOR_TABLE[1][i];
@@ -28,19 +28,18 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
         let mut err_sum = 0.0f32;
         let mut err_weight_sum = 0.0f32;
 
-        // Heavily discourage curves with a range outside of [0.0, 1.0].
+        // Discourage non-monotonic curves by strongly encouraging a minimum slope.
+        const MIN_SLOPE: f32 = 1.0 / 256.0;
+        const MIN_DELTA: f32 = MIN_SLOPE / EMOR_TABLE[0].len() as f32;
+        let non_mono_weight =
+            1024.0 * mappings.len() as f32 * POINTS as f32 * (1.0 / EMOR_TABLE[0].len() as f32);
+        let mut last_y = -MIN_DELTA;
         for i in 0..EMOR_TABLE[0].len() {
             let y = emor_at_index(emor_factors, i);
-            let outness = if y < 0.0 {
-                -y
-            } else if y > 1.0 {
-                y - 1.0
-            } else {
-                0.0
-            };
-            let weight = mappings.len() as f32 * POINTS as f32 * (1.0 / EMOR_TABLE[0].len() as f32);
-
-            err_sum += outness * weight;
+            let non_mono = (last_y - y + MIN_DELTA).max(0.0);
+            last_y = y;
+            err_sum += non_mono * non_mono_weight;
+            err_weight_sum += non_mono_weight;
         }
 
         // Calculate the actual errors.
