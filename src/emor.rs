@@ -4,7 +4,15 @@ use crate::utils::lerp_slice;
 // Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
-const EMOR_FACTOR_COUNT: usize = 4;
+const EMOR_FACTOR_COUNT: usize = 8;
+
+pub fn emor_at_index(factors: &[f32], i: usize) -> f32 {
+    let mut y = EMOR_TABLE[0][i] + EMOR_TABLE[1][i];
+    for j in 0..factors.len() {
+        y += EMOR_TABLE[j + 2][i] * factors[j];
+    }
+    y
+}
 
 pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
     let mut y = x + lerp_slice(&EMOR_TABLE[1], x);
@@ -16,55 +24,79 @@ pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
 
 pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT], f32) {
     pub fn calc_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
-        const POINTS: usize = 32;
+        const POINTS: usize = 64;
         let mut err_sum = 0.0f32;
-        let mut err_count = 0usize;
+        let mut err_weight_sum = 0.0f32;
 
         // Heavily discourage curves with a range outside of [0.0, 1.0].
-        for i in 0..POINTS {
-            let x = (i + 1) as f32 / (POINTS + 1) as f32;
-            let y = eval_emor(emor_factors, x);
-            if y < 0.0 || y > 1.0 {
-                err_sum += 1.0 * mappings.len() as f32;
-            }
+        for i in 0..EMOR_TABLE[0].len() {
+            let y = emor_at_index(emor_factors, i);
+            let outness = if y < 0.0 {
+                -y
+            } else if y > 1.0 {
+                y - 1.0
+            } else {
+                0.0
+            };
+            let weight = mappings.len() as f32 * POINTS as f32 * (1.0 / EMOR_TABLE[0].len() as f32);
+
+            err_sum += outness * weight;
         }
 
         // Calculate the actual errors.
         for mapping in mappings {
+            let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
+            if y_extent < 0.5 {
+                continue;
+            }
+            let weight = mapping.curve.len() as f32 / 256.0 * y_extent * y_extent;
             for i in 0..POINTS {
-                let y_linear = (i + 1) as f32 / (POINTS + 1) as f32;
+                let y_linear = i as f32 / (POINTS - 1) as f32;
                 let x_linear = y_linear / mapping.exposure_ratio;
                 let x = eval_emor(emor_factors, x_linear);
                 let y = eval_emor(emor_factors, y_linear);
 
-                if let Some(map_y) = mapping.eval_at_x(x) {
-                    let err = (y - map_y).abs();
-                    err_sum += err * err;
-                    err_count += 1;
+                if let Some(x_err) = mapping.eval_at_y(y).map(|x_map| (x - x_map).abs()) {
+                    err_sum += x_err * weight;
+                    err_weight_sum += weight;
+                }
+                if let Some(y_err) = mapping.eval_at_x(x).map(|y_map| (y - y_map).abs()) {
+                    err_sum += y_err * weight;
+                    err_weight_sum += weight;
                 }
             }
         }
 
-        err_sum / err_count as f32
+        err_sum / err_weight_sum as f32
     }
 
+    // Use gradient descent to find the lowest error.
     let mut factors = [0.0f32; EMOR_FACTOR_COUNT];
-    let mut test_factors = [0.0f32; EMOR_FACTOR_COUNT];
     let mut err = calc_error(mappings, &factors);
-    for _ in 0..4 {
+    const ROUNDS: usize = 300;
+    const DELTA: f32 = 0.001;
+    const START_STEP_SIZE: f32 = 1.0;
+    for step in 0..ROUNDS {
+        let step_size =
+            START_STEP_SIZE + ((step as f32 / ROUNDS as f32) * (DELTA - START_STEP_SIZE));
+
+        let mut error_diffs = [0.0f32; EMOR_FACTOR_COUNT];
         for i in 0..EMOR_FACTOR_COUNT {
-            let increment_res = 256usize;
-            let increment = 1.0 / (increment_res - 1) as f32;
-            for n in 0..increment_res {
-                test_factors[i] = ((n as f32 * increment) - 0.5) * 8.0;
-                let new_err = calc_error(mappings, &test_factors);
-                if new_err < err {
-                    factors = test_factors;
-                    err = new_err;
-                } else {
-                    test_factors = factors;
-                }
+            let mut test_factors = factors;
+            test_factors[i] += DELTA;
+            error_diffs[i] = calc_error(mappings, &test_factors) - err;
+        }
+
+        let diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
+
+        if diff_length > 0.0 {
+            let diff_norm = 1.0 / diff_length;
+            for i in 0..EMOR_FACTOR_COUNT {
+                factors[i] -= error_diffs[i] * diff_norm * step_size;
             }
+            err = calc_error(mappings, &factors);
+        } else {
+            break;
         }
     }
 
