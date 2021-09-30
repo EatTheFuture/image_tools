@@ -44,11 +44,16 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
 
         // Calculate the actual errors.
         for mapping in mappings {
-            let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
-            if y_extent < 0.5 {
-                continue;
-            }
-            let weight = mapping.curve.len() as f32 / 256.0 * y_extent * y_extent;
+            let weight = {
+                const MIN_EXTENT: f32 = 0.5;
+                let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
+                let extent_weight = {
+                    let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);
+                    adjusted_extent * adjusted_extent
+                };
+                let sample_count_weight = mapping.curve.len() as f32 / 256.0;
+                sample_count_weight * extent_weight
+            };
             for i in 0..POINTS {
                 let y_linear = i as f32 / (POINTS - 1) as f32;
                 let x_linear = y_linear / mapping.exposure_ratio;
