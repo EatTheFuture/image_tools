@@ -125,7 +125,66 @@ fn main() {
         dbg!(emor_factors, err);
         emor::emor_factors_to_curve(&emor_factors)
     };
-    let inv_mapping = utils::flip_slice_xy(&sensor_mapping, 256);
+    let sensor_mapping_no_srgb: Vec<f32> =
+        sensor_mapping.iter().copied().map(srgb_inv_gamma).collect();
+    let inv_mapping = utils::flip_slice_xy(&sensor_mapping, 512);
+    let inv_mapping_no_srgb = utils::flip_slice_xy(&sensor_mapping_no_srgb, 512);
+
+    // Write out senseor response curve lookup tables.
+    lut::write_cube_1d(
+        &mut std::io::BufWriter::new(std::fs::File::create("forward.cube").unwrap()),
+        (0.0, 1.0),
+        &sensor_mapping,
+        &sensor_mapping,
+        &sensor_mapping,
+    )
+    .unwrap();
+    lut::write_cube_1d(
+        &mut std::io::BufWriter::new(std::fs::File::create("inverse.cube").unwrap()),
+        (0.0, 1.0),
+        &inv_mapping,
+        &inv_mapping,
+        &inv_mapping,
+    )
+    .unwrap();
+    lut::write_cube_1d(
+        &mut std::io::BufWriter::new(std::fs::File::create("forward_no_srgb.cube").unwrap()),
+        (0.0, 1.0),
+        &sensor_mapping_no_srgb,
+        &sensor_mapping_no_srgb,
+        &sensor_mapping_no_srgb,
+    )
+    .unwrap();
+    lut::write_cube_1d(
+        &mut std::io::BufWriter::new(std::fs::File::create("inverse_no_srgb.cube").unwrap()),
+        (0.0, 1.0),
+        &inv_mapping_no_srgb,
+        &inv_mapping_no_srgb,
+        &inv_mapping_no_srgb,
+    )
+    .unwrap();
+
+    let srgb_gamma_curve: Vec<f32> = (0..4096).map(|n| srgb_gamma(n as f32 / 4095.0)).collect();
+    let srgb_inv_gamma_curve: Vec<f32> = (0..4096)
+        .map(|n| srgb_inv_gamma(n as f32 / 4095.0))
+        .collect();
+
+    lut::write_cube_1d(
+        &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma.cube").unwrap()),
+        (0.0, 1.0),
+        &srgb_gamma_curve,
+        &srgb_gamma_curve,
+        &srgb_gamma_curve,
+    )
+    .unwrap();
+    lut::write_cube_1d(
+        &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma_inv.cube").unwrap()),
+        (0.0, 1.0),
+        &srgb_inv_gamma_curve,
+        &srgb_inv_gamma_curve,
+        &srgb_inv_gamma_curve,
+    )
+    .unwrap();
 
     // Save out debug sensor mapping graphs.
     let mut graph_sensor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
@@ -149,6 +208,20 @@ fn main() {
         image::Rgb([255, 255, 255]),
     );
     graph_sensor_inv.save("graph_sensor_inv.png").unwrap();
+
+    let mut graph_sensor_inv_no_srgb =
+        image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    draw_line_segments(
+        &mut graph_sensor_inv_no_srgb,
+        inv_mapping_no_srgb.iter().enumerate().map(|(i, y)| {
+            let x = i as f32 / (inv_mapping_no_srgb.len() - 1) as f32;
+            (x, *y)
+        }),
+        image::Rgb([255, 255, 255]),
+    );
+    graph_sensor_inv_no_srgb
+        .save("graph_sensor_inv_no_srgb.png")
+        .unwrap();
 
     let mut graph_mapping_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     for mapping in mapping_curves.iter() {
@@ -193,15 +266,13 @@ fn main() {
             let r_linear = lerp_slice(&inv_mapping[..], r);
             let g_linear = lerp_slice(&inv_mapping[..], g);
             let b_linear = lerp_slice(&inv_mapping[..], b);
-            let r_weight = calc_weight(r, img_i == 0);
-            let g_weight = calc_weight(g, img_i == 0);
-            let b_weight = calc_weight(b, img_i == 0);
-            hdr_image[i][0] += r_linear * inv_exposure * r_weight;
-            hdr_image[i][1] += g_linear * inv_exposure * g_weight;
-            hdr_image[i][2] += b_linear * inv_exposure * b_weight;
-            hdr_weights[i][0] += r_weight;
-            hdr_weights[i][1] += g_weight;
-            hdr_weights[i][2] += b_weight;
+            let weight = calc_weight(r_linear.max(g_linear).max(b_linear), img_i == 0);
+            hdr_image[i][0] += r_linear * inv_exposure * weight;
+            hdr_image[i][1] += g_linear * inv_exposure * weight;
+            hdr_image[i][2] += b_linear * inv_exposure * weight;
+            hdr_weights[i][0] += weight;
+            hdr_weights[i][1] += weight;
+            hdr_weights[i][2] += weight;
         }
     }
     for i in 0..(width * height) {
@@ -224,6 +295,35 @@ fn main() {
         height,
     )
     .unwrap();
+
+    // Write out sRGB-ified versions of each image.
+    for i in 0..images.len() {
+        let mut linear = images[i].0.clone();
+        for pixel in linear.pixels_mut() {
+            for channel in 0..3 {
+                let v = pixel[channel] as f32 / 255.0;
+                let v_linear = lerp_slice(&inv_mapping[..], v);
+                pixel[channel] = (srgb_gamma(v_linear) * 255.0) as u8;
+            }
+        }
+        linear.save(format!("lin_{:02}.jpg", i + 1)).unwrap();
+    }
+}
+
+fn srgb_gamma(n: f32) -> f32 {
+    if n < 0.003_130_8 {
+        n * 12.92
+    } else {
+        (1.055 * n.powf(1.0 / 2.4)) - 0.055
+    }
+}
+
+fn srgb_inv_gamma(n: f32) -> f32 {
+    if n < 0.04045 {
+        n / 12.92
+    } else {
+        ((n + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 pub fn draw_line_segments<Itr>(img: &mut image::RgbImage, points: Itr, color: image::Rgb<u8>)

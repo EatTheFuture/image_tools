@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "sub_crates/hdr",
+    "sub_crates/lut",
 ]
 
 [package]
@@ -20,3 +21,6 @@ sobol_burley = "0.3"
 
 [dependencies.hdr]
 path = "sub_crates/hdr"
+
+[dependencies.lut]
+path = "sub_crates/lut"

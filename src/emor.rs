@@ -77,7 +77,7 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
     // Use gradient descent to find the lowest error.
     let mut factors = [0.0f32; EMOR_FACTOR_COUNT];
     let mut err = calc_error(mappings, &factors);
-    const ROUNDS: usize = 300;
+    const ROUNDS: usize = 500;
     const DELTA: f32 = 0.001;
     const START_STEP_SIZE: f32 = 1.0;
     for step in 0..ROUNDS {
