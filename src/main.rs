@@ -133,8 +133,8 @@ fn main() {
         let combined: Vec<_> = r.drain(..).chain(g.drain(..)).chain(b.drain(..)).collect();
         combined
     };
-    let graph_mapping = exposure_mapping::generate_mapping_graph(&mapping_curves);
-    graph_mapping.save("graph_mapping.png").unwrap();
+    // let graph_mapping = exposure_mapping::generate_mapping_graph(&mapping_curves);
+    // graph_mapping.save("graph_mapping.png").unwrap();
 
     // Estimate sensor response curves from the exposure mappings.
     println!("Calculating sensor mapping.");
@@ -150,7 +150,7 @@ fn main() {
 
     // Write out senseor response curve lookup tables.
     lut::write_cube_1d(
-        &mut std::io::BufWriter::new(std::fs::File::create("forward.cube").unwrap()),
+        &mut std::io::BufWriter::new(std::fs::File::create("linear_to_sensor.cube").unwrap()),
         (0.0, 1.0),
         &sensor_mapping,
         &sensor_mapping,
@@ -158,7 +158,7 @@ fn main() {
     )
     .unwrap();
     lut::write_cube_1d(
-        &mut std::io::BufWriter::new(std::fs::File::create("inverse.cube").unwrap()),
+        &mut std::io::BufWriter::new(std::fs::File::create("sensor_to_linear.cube").unwrap()),
         (0.0, 1.0),
         &inv_mapping,
         &inv_mapping,
@@ -166,7 +166,9 @@ fn main() {
     )
     .unwrap();
     lut::write_cube_1d(
-        &mut std::io::BufWriter::new(std::fs::File::create("forward_no_srgb.cube").unwrap()),
+        &mut std::io::BufWriter::new(
+            std::fs::File::create("linear_to_sensor_no_srgb.cube").unwrap(),
+        ),
         (0.0, 1.0),
         &sensor_mapping_no_srgb,
         &sensor_mapping_no_srgb,
@@ -174,7 +176,9 @@ fn main() {
     )
     .unwrap();
     lut::write_cube_1d(
-        &mut std::io::BufWriter::new(std::fs::File::create("inverse_no_srgb.cube").unwrap()),
+        &mut std::io::BufWriter::new(
+            std::fs::File::create("sensor_to_linear_no_srgb.cube").unwrap(),
+        ),
         (0.0, 1.0),
         &inv_mapping_no_srgb,
         &inv_mapping_no_srgb,
@@ -182,81 +186,81 @@ fn main() {
     )
     .unwrap();
 
-    let srgb_gamma_curve: Vec<f32> = (0..4096).map(|n| srgb_gamma(n as f32 / 4095.0)).collect();
-    let srgb_inv_gamma_curve: Vec<f32> = (0..4096)
-        .map(|n| srgb_inv_gamma(n as f32 / 4095.0))
-        .collect();
+    // let srgb_gamma_curve: Vec<f32> = (0..4096).map(|n| srgb_gamma(n as f32 / 4095.0)).collect();
+    // let srgb_inv_gamma_curve: Vec<f32> = (0..4096)
+    //     .map(|n| srgb_inv_gamma(n as f32 / 4095.0))
+    //     .collect();
 
-    lut::write_cube_1d(
-        &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma.cube").unwrap()),
-        (0.0, 1.0),
-        &srgb_gamma_curve,
-        &srgb_gamma_curve,
-        &srgb_gamma_curve,
-    )
-    .unwrap();
-    lut::write_cube_1d(
-        &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma_inv.cube").unwrap()),
-        (0.0, 1.0),
-        &srgb_inv_gamma_curve,
-        &srgb_inv_gamma_curve,
-        &srgb_inv_gamma_curve,
-    )
-    .unwrap();
+    // lut::write_cube_1d(
+    //     &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma.cube").unwrap()),
+    //     (0.0, 1.0),
+    //     &srgb_gamma_curve,
+    //     &srgb_gamma_curve,
+    //     &srgb_gamma_curve,
+    // )
+    // .unwrap();
+    // lut::write_cube_1d(
+    //     &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma_inv.cube").unwrap()),
+    //     (0.0, 1.0),
+    //     &srgb_inv_gamma_curve,
+    //     &srgb_inv_gamma_curve,
+    //     &srgb_inv_gamma_curve,
+    // )
+    // .unwrap();
 
-    // Save out debug sensor mapping graphs.
-    let mut graph_sensor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    draw_line_segments(
-        &mut graph_sensor,
-        sensor_mapping.iter().enumerate().map(|(i, y)| {
-            let x = i as f32 / (sensor_mapping.len() - 1) as f32;
-            (x, *y)
-        }),
-        image::Rgb([255, 255, 255]),
-    );
-    graph_sensor.save("graph_sensor.png").unwrap();
+    // // Save out debug sensor mapping graphs.
+    // let mut graph_sensor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    // draw_line_segments(
+    //     &mut graph_sensor,
+    //     sensor_mapping.iter().enumerate().map(|(i, y)| {
+    //         let x = i as f32 / (sensor_mapping.len() - 1) as f32;
+    //         (x, *y)
+    //     }),
+    //     image::Rgb([255, 255, 255]),
+    // );
+    // graph_sensor.save("graph_sensor.png").unwrap();
 
-    let mut graph_sensor_inv = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    draw_line_segments(
-        &mut graph_sensor_inv,
-        inv_mapping.iter().enumerate().map(|(i, y)| {
-            let x = i as f32 / (inv_mapping.len() - 1) as f32;
-            (x, *y)
-        }),
-        image::Rgb([255, 255, 255]),
-    );
-    graph_sensor_inv.save("graph_sensor_inv.png").unwrap();
+    // let mut graph_sensor_inv = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    // draw_line_segments(
+    //     &mut graph_sensor_inv,
+    //     inv_mapping.iter().enumerate().map(|(i, y)| {
+    //         let x = i as f32 / (inv_mapping.len() - 1) as f32;
+    //         (x, *y)
+    //     }),
+    //     image::Rgb([255, 255, 255]),
+    // );
+    // graph_sensor_inv.save("graph_sensor_inv.png").unwrap();
 
-    let mut graph_sensor_inv_no_srgb =
-        image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    draw_line_segments(
-        &mut graph_sensor_inv_no_srgb,
-        inv_mapping_no_srgb.iter().enumerate().map(|(i, y)| {
-            let x = i as f32 / (inv_mapping_no_srgb.len() - 1) as f32;
-            (x, *y)
-        }),
-        image::Rgb([255, 255, 255]),
-    );
-    graph_sensor_inv_no_srgb
-        .save("graph_sensor_inv_no_srgb.png")
-        .unwrap();
+    // let mut graph_sensor_inv_no_srgb =
+    //     image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    // draw_line_segments(
+    //     &mut graph_sensor_inv_no_srgb,
+    //     inv_mapping_no_srgb.iter().enumerate().map(|(i, y)| {
+    //         let x = i as f32 / (inv_mapping_no_srgb.len() - 1) as f32;
+    //         (x, *y)
+    //     }),
+    //     image::Rgb([255, 255, 255]),
+    // );
+    // graph_sensor_inv_no_srgb
+    //     .save("graph_sensor_inv_no_srgb.png")
+    //     .unwrap();
 
-    let mut graph_mapping_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    for mapping in mapping_curves.iter() {
-        draw_line_segments(
-            &mut graph_mapping_linear,
-            mapping.curve.iter().map(|p| {
-                (
-                    lerp_slice(&inv_mapping[..], p.0),
-                    lerp_slice(&inv_mapping[..], p.1),
-                )
-            }),
-            image::Rgb([64, 64, 64]),
-        );
-    }
-    graph_mapping_linear
-        .save("graph_mapping_linear.png")
-        .unwrap();
+    // let mut graph_mapping_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
+    // for mapping in mapping_curves.iter() {
+    //     draw_line_segments(
+    //         &mut graph_mapping_linear,
+    //         mapping.curve.iter().map(|p| {
+    //             (
+    //                 lerp_slice(&inv_mapping[..], p.0),
+    //                 lerp_slice(&inv_mapping[..], p.1),
+    //             )
+    //         }),
+    //         image::Rgb([64, 64, 64]),
+    //     );
+    // }
+    // graph_mapping_linear
+    //     .save("graph_mapping_linear.png")
+    //     .unwrap();
 
     // Create the HDR.
     println!("Building HDR image.");
@@ -314,18 +318,18 @@ fn main() {
     )
     .unwrap();
 
-    // Write out sRGB-ified versions of each image.
-    for i in 0..images.len() {
-        let mut linear = images[i].0.clone();
-        for pixel in linear.pixels_mut() {
-            for channel in 0..3 {
-                let v = pixel[channel] as f32 / 255.0;
-                let v_linear = lerp_slice(&inv_mapping[..], v);
-                pixel[channel] = (srgb_gamma(v_linear) * 255.0) as u8;
-            }
-        }
-        linear.save(format!("lin_{:02}.jpg", i + 1)).unwrap();
-    }
+    // // Write out sRGB-ified versions of each image.
+    // for i in 0..images.len() {
+    //     let mut linear = images[i].0.clone();
+    //     for pixel in linear.pixels_mut() {
+    //         for channel in 0..3 {
+    //             let v = pixel[channel] as f32 / 255.0;
+    //             let v_linear = lerp_slice(&inv_mapping[..], v);
+    //             pixel[channel] = (srgb_gamma(v_linear) * 255.0) as u8;
+    //         }
+    //     }
+    //     linear.save(format!("lin_{:02}.jpg", i + 1)).unwrap();
+    // }
 }
 
 fn srgb_gamma(n: f32) -> f32 {
