@@ -87,6 +87,24 @@ fn main() {
 
     images.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
+    // let pix_ranges: Vec<_> = images.iter().map(|img|
+    //     (img.0.pixels().fold((255u8, 255u8, 255u8), |a, b| {
+    //         (
+    //             a.0.min(b[0]),
+    //             a.1.min(b[1]),
+    //             a.2.min(b[2]),
+    //         )
+    //     }),
+    //     img.0.pixels().fold((0u8, 0u8, 0u8), |a, b| {
+    //         (
+    //             a.0.max(b[0]),
+    //             a.1.max(b[1]),
+    //             a.2.max(b[2]),
+    //         )
+    //     }))
+    // ).collect();
+    // dbg!(pix_ranges);
+
     // // Write out a graph of the EMoR curves.
     // let mut graph_emor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     // let n = 8;

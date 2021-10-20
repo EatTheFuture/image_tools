@@ -29,7 +29,7 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
         let mut err_weight_sum = 0.0f32;
 
         // Discourage non-monotonic curves by strongly encouraging a minimum slope.
-        const MIN_SLOPE: f32 = 1.0 / 256.0;
+        const MIN_SLOPE: f32 = 1.0 / 1024.0;
         const MIN_DELTA: f32 = MIN_SLOPE / EMOR_TABLE[0].len() as f32;
         let non_mono_weight =
             1024.0 * mappings.len() as f32 * POINTS as f32 * (1.0 / EMOR_TABLE[0].len() as f32);
@@ -45,7 +45,7 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
         // Calculate the actual errors.
         for mapping in mappings {
             let weight = {
-                const MIN_EXTENT: f32 = 0.5;
+                const MIN_EXTENT: f32 = 0.33;
                 let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
                 let extent_weight = {
                     let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);
@@ -54,19 +54,21 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
                 let sample_count_weight = mapping.curve.len() as f32 / 256.0;
                 sample_count_weight * extent_weight
             };
-            for i in 0..POINTS {
-                let y_linear = i as f32 / (POINTS - 1) as f32;
-                let x_linear = y_linear / mapping.exposure_ratio;
-                let x = eval_emor(emor_factors, x_linear);
-                let y = eval_emor(emor_factors, y_linear);
+            if weight > 0.0 {
+                for i in 0..POINTS {
+                    let y_linear = i as f32 / (POINTS - 1) as f32;
+                    let x_linear = y_linear / mapping.exposure_ratio;
+                    let x = eval_emor(emor_factors, x_linear);
+                    let y = eval_emor(emor_factors, y_linear);
 
-                if let Some(x_err) = mapping.eval_at_y(y).map(|x_map| (x - x_map).abs()) {
-                    err_sum += x_err * weight;
-                    err_weight_sum += weight;
-                }
-                if let Some(y_err) = mapping.eval_at_x(x).map(|y_map| (y - y_map).abs()) {
-                    err_sum += y_err * weight;
-                    err_weight_sum += weight;
+                    if let Some(x_err) = mapping.eval_at_y(y).map(|x_map| (x - x_map).abs()) {
+                        err_sum += x_err * weight;
+                        err_weight_sum += weight;
+                    }
+                    if let Some(y_err) = mapping.eval_at_x(x).map(|y_map| (y - y_map).abs()) {
+                        err_sum += y_err * weight;
+                        err_weight_sum += weight;
+                    }
                 }
             }
         }
@@ -77,34 +79,38 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
     // Use gradient descent to find the lowest error.
     let mut factors = [0.0f32; EMOR_FACTOR_COUNT];
     let mut err = calc_error(mappings, &factors);
+    let mut best_factors = factors;
+    let mut best_err = err;
     const ROUNDS: usize = 500;
-    const DELTA: f32 = 0.001;
-    const START_STEP_SIZE: f32 = 1.0;
-    for step in 0..ROUNDS {
-        let step_size =
-            START_STEP_SIZE + ((step as f32 / ROUNDS as f32) * (DELTA - START_STEP_SIZE));
-
+    for _ in 0..ROUNDS {
+        let delta = err;
+        let delta_inv = 1.0 / delta;
         let mut error_diffs = [0.0f32; EMOR_FACTOR_COUNT];
         for i in 0..EMOR_FACTOR_COUNT {
             let mut test_factors = factors;
-            test_factors[i] += DELTA;
-            error_diffs[i] = calc_error(mappings, &test_factors) - err;
+            test_factors[i] += delta;
+            error_diffs[i] = (calc_error(mappings, &test_factors) - err) * delta_inv;
         }
 
-        let diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
+        let diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b));
 
         if diff_length > 0.0 {
             let diff_norm = 1.0 / diff_length;
             for i in 0..EMOR_FACTOR_COUNT {
-                factors[i] -= error_diffs[i] * diff_norm * step_size;
+                factors[i] -= err * error_diffs[i] * diff_norm * 0.7;
             }
             err = calc_error(mappings, &factors);
+
+            if err < best_err {
+                best_err = err;
+                best_factors = factors;
+            }
         } else {
             break;
         }
     }
 
-    (factors, err)
+    (best_factors, best_err)
 }
 
 pub fn emor_factors_to_curve(factors: &[f32]) -> Vec<f32> {
