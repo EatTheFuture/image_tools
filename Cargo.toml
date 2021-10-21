@@ -6,7 +6,7 @@ members = [
 ]
 
 [package]
-name = "hdri_merge"
+name = "image_tools"
 version = "0.1.0"
 edition = "2018"
 
