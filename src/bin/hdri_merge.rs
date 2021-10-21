@@ -32,8 +32,8 @@ fn main() {
 
     let filenames: Vec<_> = matches.values_of("INPUT").unwrap().collect();
 
+    println!("Loading image files.");
     let mut images = Vec::new();
-
     for filename in filenames {
         let img = image::io::Reader::open(filename)
             .unwrap()
@@ -71,11 +71,6 @@ fn main() {
 
         let total_exposure =
             sensitivity as f64 * exposure_time.to_f64() / (fstop.to_f64() * fstop.to_f64());
-
-        println!(
-            "{}\n{} {} {}\n{}\n",
-            filename, exposure_time, fstop, sensitivity, total_exposure,
-        );
 
         images.push((img, total_exposure as f32));
     }
