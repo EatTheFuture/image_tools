@@ -1,11 +1,6 @@
 use clap::{App, Arg};
 
-mod emor;
-mod exposure_mapping;
-mod histogram;
-mod utils;
-
-use utils::lerp_slice;
+use sensor_analysis::{eval_luma_map, invert_luma_map};
 
 fn main() {
     let matches = App::new("My Super Program")
@@ -87,66 +82,13 @@ fn main() {
 
     images.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-    // let pix_ranges: Vec<_> = images.iter().map(|img|
-    //     (img.0.pixels().fold((255u8, 255u8, 255u8), |a, b| {
-    //         (
-    //             a.0.min(b[0]),
-    //             a.1.min(b[1]),
-    //             a.2.min(b[2]),
-    //         )
-    //     }),
-    //     img.0.pixels().fold((0u8, 0u8, 0u8), |a, b| {
-    //         (
-    //             a.0.max(b[0]),
-    //             a.1.max(b[1]),
-    //             a.2.max(b[2]),
-    //         )
-    //     }))
-    // ).collect();
-    // dbg!(pix_ranges);
-
-    // // Write out a graph of the EMoR curves.
-    // let mut graph_emor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    // let n = 8;
-    // for i in 0..n {
-    //     let table = &emor::EMOR_TABLE[i + 1];
-    //     let v = (255 - (i * (255 / n))) as u8;
-    //     let rgb = image::Rgb([v, v, v]);
-
-    //     draw_line_segments(
-    //         &mut graph_emor,
-    //         (0..table.len()).zip(table.iter()).map(|(x, y)| {
-    //             (
-    //                 x as f32 / table.len() as f32,
-    //                 (0.5 + y).max(0.0).min(1.0),
-    //             )
-    //         }),
-    //         rgb,
-    //     );
-    // }
-    // graph_emor.save("graph_emor.png").unwrap();
-
-    // Calculate exposure mappings.
-    println!("Calculating exposure mappings.");
-    let mapping_curves = {
-        let [mut r, mut g, mut b] = exposure_mapping::generate_image_mapping_curves(&images[..]);
-        let combined: Vec<_> = r.drain(..).chain(g.drain(..)).chain(b.drain(..)).collect();
-        combined
-    };
-    // let graph_mapping = exposure_mapping::generate_mapping_graph(&mapping_curves);
-    // graph_mapping.save("graph_mapping.png").unwrap();
-
-    // Estimate sensor response curves from the exposure mappings.
-    println!("Calculating sensor mapping.");
-    let sensor_mapping = {
-        let (emor_factors, err) = emor::estimate_emor(&mapping_curves[..]);
-        dbg!(emor_factors, err);
-        emor::emor_factors_to_curve(&emor_factors)
-    };
+    // Estimate sensor response curve from the image-exposure pairs.
+    println!("Calculating sensor response curve.");
+    let sensor_mapping = estimate_luma_map(&images).0;
     let sensor_mapping_no_srgb: Vec<f32> =
         sensor_mapping.iter().copied().map(srgb_inv_gamma).collect();
-    let inv_mapping = utils::flip_slice_xy(&sensor_mapping, 512);
-    let inv_mapping_no_srgb = utils::flip_slice_xy(&sensor_mapping_no_srgb, 512);
+    let inv_mapping = invert_luma_map(&sensor_mapping);
+    let inv_mapping_no_srgb = invert_luma_map(&sensor_mapping_no_srgb);
 
     // Write out senseor response curve lookup tables.
     lut::write_cube_1d(
@@ -186,28 +128,6 @@ fn main() {
     )
     .unwrap();
 
-    // let srgb_gamma_curve: Vec<f32> = (0..4096).map(|n| srgb_gamma(n as f32 / 4095.0)).collect();
-    // let srgb_inv_gamma_curve: Vec<f32> = (0..4096)
-    //     .map(|n| srgb_inv_gamma(n as f32 / 4095.0))
-    //     .collect();
-
-    // lut::write_cube_1d(
-    //     &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma.cube").unwrap()),
-    //     (0.0, 1.0),
-    //     &srgb_gamma_curve,
-    //     &srgb_gamma_curve,
-    //     &srgb_gamma_curve,
-    // )
-    // .unwrap();
-    // lut::write_cube_1d(
-    //     &mut std::io::BufWriter::new(std::fs::File::create("srgb_gamma_inv.cube").unwrap()),
-    //     (0.0, 1.0),
-    //     &srgb_inv_gamma_curve,
-    //     &srgb_inv_gamma_curve,
-    //     &srgb_inv_gamma_curve,
-    // )
-    // .unwrap();
-
     // // Save out debug sensor mapping graphs.
     // let mut graph_sensor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     // draw_line_segments(
@@ -245,23 +165,6 @@ fn main() {
     //     .save("graph_sensor_inv_no_srgb.png")
     //     .unwrap();
 
-    // let mut graph_mapping_linear = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
-    // for mapping in mapping_curves.iter() {
-    //     draw_line_segments(
-    //         &mut graph_mapping_linear,
-    //         mapping.curve.iter().map(|p| {
-    //             (
-    //                 lerp_slice(&inv_mapping[..], p.0),
-    //                 lerp_slice(&inv_mapping[..], p.1),
-    //             )
-    //         }),
-    //         image::Rgb([64, 64, 64]),
-    //     );
-    // }
-    // graph_mapping_linear
-    //     .save("graph_mapping_linear.png")
-    //     .unwrap();
-
     // Create the HDR.
     println!("Building HDR image.");
     fn calc_weight(n: f32, is_lowest_exposed: bool) -> f32 {
@@ -285,9 +188,9 @@ fn main() {
             let r = pixel[0] as f32 / 255.0;
             let g = pixel[1] as f32 / 255.0;
             let b = pixel[2] as f32 / 255.0;
-            let r_linear = lerp_slice(&inv_mapping[..], r);
-            let g_linear = lerp_slice(&inv_mapping[..], g);
-            let b_linear = lerp_slice(&inv_mapping[..], b);
+            let r_linear = eval_luma_map(&inv_mapping[..], r);
+            let g_linear = eval_luma_map(&inv_mapping[..], g);
+            let b_linear = eval_luma_map(&inv_mapping[..], b);
             let weight = calc_weight(r_linear.max(g_linear).max(b_linear), img_i == 0);
             hdr_image[i][0] += r_linear * inv_exposure * weight;
             hdr_image[i][1] += g_linear * inv_exposure * weight;
@@ -332,6 +235,44 @@ fn main() {
     // }
 }
 
+/// Estimates a linearizing luma map for the given set of image-exposure
+/// pairs.
+///
+/// Returns the luminance map and the average fitting error.
+pub fn estimate_luma_map(images: &[(image::RgbImage, f32)]) -> (Vec<f32>, f32) {
+    use sensor_analysis::{estimate_luma_map_emor, ExposureMapping, Histogram};
+
+    assert!(images.len() > 1);
+
+    let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
+    for chan in 0..3 {
+        for i in 0..images.len() {
+            histograms[chan].push(Histogram::from_iter(
+                images[i]
+                    .0
+                    .enumerate_pixels()
+                    .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+                256,
+            ));
+        }
+    }
+
+    let mut mappings = Vec::new();
+    for chan in 0..3 {
+        for i in 0..(images.len() - 1) {
+            mappings.push(ExposureMapping::from_histograms(
+                &histograms[chan][i],
+                &histograms[chan][i + 1],
+                images[i].1,
+                images[i + 1].1,
+            ));
+        }
+    }
+
+    estimate_luma_map_emor(&mappings)
+}
+
+#[allow(dead_code)]
 fn srgb_gamma(n: f32) -> f32 {
     if n < 0.003_130_8 {
         n * 12.92
@@ -340,6 +281,7 @@ fn srgb_gamma(n: f32) -> f32 {
     }
 }
 
+#[allow(dead_code)]
 fn srgb_inv_gamma(n: f32) -> f32 {
     if n < 0.04045 {
         n / 12.92

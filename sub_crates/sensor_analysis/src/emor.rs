@@ -22,6 +22,9 @@ pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
     y
 }
 
+/// Estimates EMoR factors to fit the passed mappings.
+///
+/// Returns the EMoR factors and the average error of the fit.
 pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT], f32) {
     pub fn calc_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
         const POINTS: usize = 64;

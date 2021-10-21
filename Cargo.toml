@@ -2,6 +2,7 @@
 members = [
     "sub_crates/hdr",
     "sub_crates/lut",
+    "sub_crates/sensor_analysis",
 ]
 
 [package]
@@ -16,11 +17,12 @@ image = "0.23"
 rawloader = "0.37"
 kamadak-exif = "0.5"
 clap = "2"
-fastrand = "1.5"
-sobol_burley = "0.3"
 
 [dependencies.hdr]
 path = "sub_crates/hdr"
 
 [dependencies.lut]
 path = "sub_crates/lut"
+
+[dependencies.sensor_analysis]
+path = "sub_crates/sensor_analysis"
