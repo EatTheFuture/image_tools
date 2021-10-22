@@ -112,6 +112,36 @@ fn main() {
     );
     graph_sensor.save("graph_sensor.png").unwrap();
 
+    // // Write out senseor response curve lookup tables for S-Log2.
+    // let slog2_mapping: Vec<f32> = (0..1024)
+    //     .map(|i| {
+    //         let x = i as f32 / 1023.0;
+    //         sensor_analysis::known_luma_curves::sony_slog2(x)
+    //     })
+    //     .collect();
+    // lut::write_cube_1d(
+    //     &mut std::io::BufWriter::new(std::fs::File::create("linear_to_slog2.cube").unwrap()),
+    //     (0.0, 1.0),
+    //     &slog2_mapping,
+    //     &slog2_mapping,
+    //     &slog2_mapping,
+    // )
+    // .unwrap();
+    // let slog2_inv_mapping: Vec<f32> = (0..1024)
+    //     .map(|i| {
+    //         let x = i as f32 / 1023.0;
+    //         sensor_analysis::known_luma_curves::sony_slog2_inv(x)
+    //     })
+    //     .collect();
+    // lut::write_cube_1d(
+    //     &mut std::io::BufWriter::new(std::fs::File::create("slog2_to_linear.cube").unwrap()),
+    //     (0.0, 1.0),
+    //     &slog2_inv_mapping,
+    //     &slog2_inv_mapping,
+    //     &slog2_inv_mapping,
+    // )
+    // .unwrap();
+
     // // Write out sRGB-ified versions of each image.
     // for i in 0..images.len() {
     //     let mut linear = images[i].0.clone();
@@ -161,24 +191,6 @@ pub fn estimate_luma_map(images: &[(image::RgbImage, f32)]) -> (Vec<f32>, f32) {
     }
 
     estimate_luma_map_emor(&mappings)
-}
-
-#[allow(dead_code)]
-fn srgb_gamma(n: f32) -> f32 {
-    if n < 0.003_130_8 {
-        n * 12.92
-    } else {
-        (1.055 * n.powf(1.0 / 2.4)) - 0.055
-    }
-}
-
-#[allow(dead_code)]
-fn srgb_inv_gamma(n: f32) -> f32 {
-    if n < 0.04045 {
-        n / 12.92
-    } else {
-        ((n + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 pub fn draw_line_segments<Itr>(img: &mut image::RgbImage, points: Itr, color: image::Rgb<u8>)

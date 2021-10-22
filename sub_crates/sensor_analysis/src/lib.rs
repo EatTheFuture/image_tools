@@ -5,6 +5,8 @@ mod exposure_mapping;
 mod histogram;
 mod utils;
 
+pub mod known_luma_curves;
+
 pub use exposure_mapping::ExposureMapping;
 pub use histogram::Histogram;
 
