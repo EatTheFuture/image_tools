@@ -4,7 +4,7 @@ use crate::utils::lerp_slice;
 // Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
-const EMOR_FACTOR_COUNT: usize = 6;
+const EMOR_FACTOR_COUNT: usize = 5;
 
 pub fn emor_at_index(factors: &[f32], i: usize) -> f32 {
     let mut y = EMOR_TABLE[0][i] + EMOR_TABLE[1][i];
