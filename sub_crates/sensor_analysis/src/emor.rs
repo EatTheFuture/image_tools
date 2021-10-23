@@ -55,7 +55,7 @@ pub fn estimate_emor(
         // Calculate the actual errors.
         for mapping in mappings {
             let weight = {
-                const MIN_EXTENT: f32 = 0.33;
+                const MIN_EXTENT: f32 = 0.5;
                 let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
                 let extent_weight = {
                     let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);

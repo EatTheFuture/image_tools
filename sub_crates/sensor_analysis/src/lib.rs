@@ -28,19 +28,29 @@ pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<f32>, 
     let mut sensor_floor = 0;
     let mut sensor_ceiling = bucket_count - 1;
     for chan in 0..histograms.len() {
-        for i in 0..(histograms[chan].len() - 1) {
-            mappings.push(ExposureMapping::from_histograms(
-                &histograms[chan][i].0,
-                &histograms[chan][i + 1].0,
-                histograms[chan][i].1,
-                histograms[chan][i + 1].1,
-            ));
+        for i in 0..histograms[chan].len() {
+            if (i + 1) < histograms[chan].len() {
+                mappings.push(ExposureMapping::from_histograms(
+                    &histograms[chan][i].0,
+                    &histograms[chan][i + 1].0,
+                    histograms[chan][i].1,
+                    histograms[chan][i + 1].1,
+                ));
+            }
+            if (i + 2) < histograms[chan].len() {
+                mappings.push(ExposureMapping::from_histograms(
+                    &histograms[chan][i].0,
+                    &histograms[chan][i + 2].0,
+                    histograms[chan][i].1,
+                    histograms[chan][i + 2].1,
+                ));
+            }
 
             // Floor.
-            let ratio = histograms[chan][i + 1].1 / histograms[chan][0].1;
+            let ratio = histograms[chan][i].1 / histograms[chan][0].1;
             let tmp_i = ((ratio - 1.0) * 0.5) as usize;
             if tmp_i > 0 && tmp_i < (bucket_count / 4) {
-                let target_sum = histograms[chan][i + 1].0.sum_under(tmp_i);
+                let target_sum = histograms[chan][i].0.sum_under(tmp_i);
                 sensor_floor = sensor_floor.max(histograms[chan][0].0.find_sum(target_sum));
             }
 
@@ -62,6 +72,7 @@ pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<f32>, 
     let (emor_factors, err) = emor::estimate_emor(&mappings, sensor_floor, sensor_ceiling);
     (
         emor::emor_factors_to_curve(&emor_factors, sensor_floor, sensor_ceiling),
+        // emor::emor_factors_to_curve(&emor_factors, 0.0, 1.0),
         err,
     )
 }
