@@ -34,7 +34,7 @@ pub fn estimate_emor(
     let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + sensor_floor };
 
     let calc_error = |mappings: &[ExposureMapping], emor_factors: &[f32]| -> f32 {
-        const POINTS: usize = 64;
+        const POINTS: usize = 200;
         let mut err_sum = 0.0f32;
         let mut err_weight_sum = 0.0f32;
 
@@ -59,7 +59,7 @@ pub fn estimate_emor(
                 let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
                 let extent_weight = {
                     let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);
-                    adjusted_extent * adjusted_extent
+                    adjusted_extent.abs() // * adjusted_extent
                 };
                 let sample_count_weight = mapping.curve.len() as f32 / 256.0;
                 sample_count_weight * extent_weight

@@ -7,6 +7,8 @@ use crate::utils::{lerp_curve_at_x, lerp_curve_at_y, Curve};
 #[derive(Debug, Clone)]
 pub struct ExposureMapping {
     pub curve: Curve,
+    pub x_curve: Vec<f32>,
+    pub y_curve: Vec<f32>,
     pub exposure_ratio: f32,
 }
 
@@ -66,8 +68,20 @@ impl ExposureMapping {
         curve.dedup_by_key(|n| n.0);
         curve.dedup_by_key(|n| n.1);
 
+        // Create curves optimized for fast eval.
+        let res = 2048;
+        let mut x_curve = Vec::with_capacity(res);
+        let mut y_curve = Vec::with_capacity(res);
+        for i in 0..res {
+            let n = i as f32 / (res - 1) as f32;
+            x_curve.push(lerp_curve_at_x(&curve, n));
+            y_curve.push(lerp_curve_at_y(&curve, n));
+        }
+
         ExposureMapping {
             curve: curve,
+            x_curve: x_curve,
+            y_curve: y_curve,
             exposure_ratio: exposure_2 / exposure_1,
         }
     }
@@ -79,7 +93,8 @@ impl ExposureMapping {
     #[allow(dead_code)]
     pub fn eval_at_x(&self, x: f32) -> Option<f32> {
         if x >= self.curve.get(0)?.0 && x <= self.curve.last()?.0 {
-            Some(lerp_curve_at_x(&self.curve, x))
+            // Some(lerp_curve_at_x(&self.curve, x))
+            Some(crate::utils::lerp_slice(&self.x_curve, x))
         } else {
             None
         }
@@ -92,7 +107,8 @@ impl ExposureMapping {
     #[allow(dead_code)]
     pub fn eval_at_y(&self, y: f32) -> Option<f32> {
         if y >= self.curve.get(0)?.1 && y <= self.curve.last()?.1 {
-            Some(lerp_curve_at_y(&self.curve, y))
+            // Some(lerp_curve_at_y(&self.curve, y))
+            Some(crate::utils::lerp_slice(&self.y_curve, y))
         } else {
             None
         }

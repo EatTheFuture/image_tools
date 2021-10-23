@@ -79,7 +79,8 @@ fn main() {
 
     // Estimate sensor response curve from the image-exposure pairs.
     println!("Calculating sensor response curve.");
-    let sensor_mapping = estimate_luma_map(&images).0;
+    let (sensor_mapping, err) = estimate_luma_map(&images);
+    dbg!(err);
     let inv_mapping = invert_luma_map(&sensor_mapping);
 
     // Write out senseor response curve lookup tables.
