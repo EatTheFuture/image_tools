@@ -25,8 +25,15 @@ pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
 /// Estimates EMoR factors to fit the passed mappings.
 ///
 /// Returns the EMoR factors and the average error of the fit.
-pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT], f32) {
-    pub fn calc_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
+pub fn estimate_emor(
+    mappings: &[ExposureMapping],
+    sensor_floor: f32,
+    sensor_ceiling: f32,
+) -> ([f32; EMOR_FACTOR_COUNT], f32) {
+    let sensor_range = sensor_ceiling - sensor_floor;
+    let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + sensor_floor };
+
+    let calc_error = |mappings: &[ExposureMapping], emor_factors: &[f32]| -> f32 {
         const POINTS: usize = 64;
         let mut err_sum = 0.0f32;
         let mut err_weight_sum = 0.0f32;
@@ -61,8 +68,8 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
                 for i in 0..POINTS {
                     let y_linear = i as f32 / (POINTS - 1) as f32;
                     let x_linear = y_linear / mapping.exposure_ratio;
-                    let x = eval_emor(emor_factors, x_linear);
-                    let y = eval_emor(emor_factors, y_linear);
+                    let x = map_floor_ceil(eval_emor(emor_factors, x_linear));
+                    let y = map_floor_ceil(eval_emor(emor_factors, y_linear));
 
                     if let Some(x_err) = mapping.eval_at_y(y).map(|x_map| (x - x_map).abs()) {
                         err_sum += x_err * weight;
@@ -77,7 +84,7 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
         }
 
         err_sum / err_weight_sum as f32
-    }
+    };
 
     // Use gradient descent to find the lowest error.
     let mut factors = [0.0f32; EMOR_FACTOR_COUNT];
@@ -116,7 +123,10 @@ pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT],
     (best_factors, best_err)
 }
 
-pub fn emor_factors_to_curve(factors: &[f32]) -> Vec<f32> {
+pub fn emor_factors_to_curve(factors: &[f32], sensor_floor: f32, sensor_ceiling: f32) -> Vec<f32> {
+    let sensor_range = sensor_ceiling - sensor_floor;
+    let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + sensor_floor };
+
     let mut curve: Vec<_> = EMOR_TABLE[0]
         .iter()
         .zip(EMOR_TABLE[1].iter())
@@ -129,6 +139,11 @@ pub fn emor_factors_to_curve(factors: &[f32]) -> Vec<f32> {
         for i in 0..table.len() {
             curve[i] += table[i] * factor;
         }
+    }
+
+    // Scale all the elements for the sensor floor.
+    for n in curve.iter_mut() {
+        *n = map_floor_ceil(*n);
     }
 
     // Ensure monotonicity.

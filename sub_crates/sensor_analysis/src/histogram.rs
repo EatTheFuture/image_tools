@@ -25,4 +25,20 @@ impl Histogram {
         }
         hist
     }
+
+    pub fn sum_under(&self, bucket_index: usize) -> usize {
+        self.buckets[0..bucket_index].iter().sum()
+    }
+
+    pub fn find_sum(&self, sum: usize) -> usize {
+        let mut cur_sum = 0;
+        for (i, b) in self.buckets.iter().enumerate() {
+            cur_sum += *b;
+            if cur_sum >= sum {
+                return i;
+            }
+        }
+
+        self.buckets.len() - 1
+    }
 }

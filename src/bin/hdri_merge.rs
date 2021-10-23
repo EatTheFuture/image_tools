@@ -143,34 +143,25 @@ fn main() {
 ///
 /// Returns the luminance map and the average fitting error.
 pub fn estimate_luma_map(images: &[(image::RgbImage, f32)]) -> (Vec<f32>, f32) {
-    use sensor_analysis::{estimate_luma_map_emor, ExposureMapping, Histogram};
+    use sensor_analysis::{estimate_luma_map_emor, Histogram};
 
     assert!(images.len() > 1);
 
     let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
-    for chan in 0..3 {
-        for i in 0..images.len() {
-            histograms[chan].push(Histogram::from_iter(
-                images[i]
-                    .0
-                    .enumerate_pixels()
-                    .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
-                256,
-            ));
-        }
-    }
-
-    let mut mappings = Vec::new();
-    for chan in 0..3 {
-        for i in 0..(images.len() - 1) {
-            mappings.push(ExposureMapping::from_histograms(
-                &histograms[chan][i],
-                &histograms[chan][i + 1],
+    for i in 0..images.len() {
+        for chan in 0..3 {
+            histograms[chan].push((
+                Histogram::from_iter(
+                    images[i]
+                        .0
+                        .enumerate_pixels()
+                        .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+                    256,
+                ),
                 images[i].1,
-                images[i + 1].1,
             ));
         }
     }
 
-    estimate_luma_map_emor(&mappings)
+    estimate_luma_map_emor(&[&histograms[0], &histograms[1], &histograms[2]])
 }
