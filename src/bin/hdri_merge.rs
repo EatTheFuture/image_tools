@@ -83,9 +83,9 @@ fn main() {
 
     // Create the HDR.
     println!("Building HDR image.");
-    fn calc_weight(n: f32, is_lowest_exposed: bool) -> f32 {
+    fn calc_weight(n: f32, is_lowest_exposed: bool, is_heighest_exposed: bool) -> f32 {
         // Triangle weight.
-        let tri = if is_lowest_exposed && n > 0.5 {
+        let tri = if (is_lowest_exposed && n > 0.5) || (is_heighest_exposed && n < 0.5) {
             1.0
         } else {
             (0.5 - (n - 0.5).abs()) * 2.0
@@ -107,7 +107,11 @@ fn main() {
             let r_linear = eval_luma_map(&inv_mapping[..], r);
             let g_linear = eval_luma_map(&inv_mapping[..], g);
             let b_linear = eval_luma_map(&inv_mapping[..], b);
-            let weight = calc_weight(r_linear.max(g_linear).max(b_linear), img_i == 0);
+            let weight = calc_weight(
+                r_linear.max(g_linear).max(b_linear),
+                img_i == 0,
+                img_i == images.len() - 1,
+            );
             hdr_image[i][0] += r_linear * inv_exposure * weight;
             hdr_image[i][1] += g_linear * inv_exposure * weight;
             hdr_image[i][2] += b_linear * inv_exposure * weight;
