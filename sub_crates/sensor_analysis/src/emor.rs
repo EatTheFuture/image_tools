@@ -4,7 +4,7 @@ use crate::utils::lerp_slice;
 // Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
-const EMOR_FACTOR_COUNT: usize = 5;
+const EMOR_FACTOR_COUNT: usize = 6;
 
 pub fn emor_at_index(factors: &[f32], i: usize) -> f32 {
     eval_emor(factors, (i as f32 * (1.0 / 1023.0)).min(1.0))
