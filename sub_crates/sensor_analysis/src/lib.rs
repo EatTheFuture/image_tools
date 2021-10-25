@@ -32,25 +32,18 @@ pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<Vec<f3
     let mut mappings = Vec::new();
     for chan in 0..histograms.len() {
         for i in 0..histograms[chan].len() {
-            if (i + 1) < histograms[chan].len() {
-                mappings.push(ExposureMapping::from_histograms(
-                    &histograms[chan][i].0,
-                    &histograms[chan][i + 1].0,
-                    histograms[chan][i].1,
-                    histograms[chan][i + 1].1,
-                    floor_ceil_pairs[chan].0,
-                    floor_ceil_pairs[chan].1,
-                ));
-            }
-            if (i + 2) < histograms[chan].len() {
-                mappings.push(ExposureMapping::from_histograms(
-                    &histograms[chan][i].0,
-                    &histograms[chan][i + 2].0,
-                    histograms[chan][i].1,
-                    histograms[chan][i + 2].1,
-                    floor_ceil_pairs[chan].0,
-                    floor_ceil_pairs[chan].1,
-                ));
+            for j in 0..1 {
+                let j = j + 1;
+                if (i + j) < histograms[chan].len() {
+                    mappings.push(ExposureMapping::from_histograms(
+                        &histograms[chan][i].0,
+                        &histograms[chan][i + j].0,
+                        histograms[chan][i].1,
+                        histograms[chan][i + j].1,
+                        floor_ceil_pairs[chan].0,
+                        floor_ceil_pairs[chan].1,
+                    ));
+                }
             }
         }
     }
