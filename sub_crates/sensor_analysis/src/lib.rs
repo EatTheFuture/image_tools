@@ -20,13 +20,16 @@ use exposure_mapping::ExposureMapping;
 /// convert sRGB gamma -> linear.
 ///
 /// Also returns the average error of the fit.
-pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<f32>, f32) {
-    let bucket_count = histograms[0][0].0.buckets.len();
+pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<Vec<f32>>, f32) {
+    // Get the floor/ceiling values.
+    let floor_ceil_pairs: Vec<_> = histograms
+        .iter()
+        .map(|h| estimate_sensor_floor_ceiling(h))
+        .collect();
+    dbg!(&floor_ceil_pairs);
 
-    // Build the exposure mappings and also estimate the sensor floor/ceiling.
+    // Build the exposure mappings.
     let mut mappings = Vec::new();
-    let mut sensor_floor = 0;
-    let mut sensor_ceiling = bucket_count - 1;
     for chan in 0..histograms.len() {
         for i in 0..histograms[chan].len() {
             if (i + 1) < histograms[chan].len() {
@@ -35,6 +38,8 @@ pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<f32>, 
                     &histograms[chan][i + 1].0,
                     histograms[chan][i].1,
                     histograms[chan][i + 1].1,
+                    floor_ceil_pairs[chan].0,
+                    floor_ceil_pairs[chan].1,
                 ));
             }
             if (i + 2) < histograms[chan].len() {
@@ -43,38 +48,61 @@ pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<f32>, 
                     &histograms[chan][i + 2].0,
                     histograms[chan][i].1,
                     histograms[chan][i + 2].1,
+                    floor_ceil_pairs[chan].0,
+                    floor_ceil_pairs[chan].1,
                 ));
-            }
-
-            // Floor.
-            let ratio = histograms[chan][i].1 / histograms[chan][0].1;
-            let tmp_i = ((ratio - 1.0) * 0.5) as usize;
-            if tmp_i > 0 && tmp_i < (bucket_count / 4) {
-                let target_sum = histograms[chan][i].0.sum_under(tmp_i);
-                sensor_floor = sensor_floor.max(histograms[chan][0].0.find_sum(target_sum));
-            }
-
-            // Ceiling.
-            let ratio = histograms[chan][i].1 / histograms[chan].last().unwrap().1;
-            let tmp_i = (bucket_count as f32 * ((31.0 + ratio) * (1.0 / 32.0))) as usize;
-            if tmp_i < (bucket_count - 1) && tmp_i > (bucket_count / 4) {
-                let target_sum = histograms[chan][i].0.sum_under(tmp_i);
-                sensor_ceiling =
-                    sensor_ceiling.min(histograms[chan].last().unwrap().0.find_sum(target_sum));
             }
         }
     }
-    dbg!((sensor_floor, sensor_ceiling));
 
-    let sensor_floor = sensor_floor as f32 / (histograms[0][0].0.buckets.len() - 1) as f32;
-    let sensor_ceiling = sensor_ceiling as f32 / (histograms[0][0].0.buckets.len() - 1) as f32;
+    let (emor_factors, err) = emor::estimate_emor(&mappings);
+    let floor_ceil_norm = 1.0 / (histograms[0][0].0.buckets.len() - 1) as f32;
 
-    let (emor_factors, err) = emor::estimate_emor(&mappings, sensor_floor, sensor_ceiling);
     (
-        emor::emor_factors_to_curve(&emor_factors, sensor_floor, sensor_ceiling),
-        // emor::emor_factors_to_curve(&emor_factors, 0.0, 1.0),
+        floor_ceil_pairs
+            .iter()
+            .copied()
+            .map(|(f, c)| {
+                emor::emor_factors_to_curve(
+                    &emor_factors,
+                    f * floor_ceil_norm,
+                    c.ceil() * floor_ceil_norm,
+                )
+            })
+            .collect(),
         err,
     )
+}
+
+pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> (f32, f32) {
+    const LOOSENESS: f32 = 0.1;
+    let bucket_count = histograms[0].0.buckets.len();
+    let total_samples = histograms[0].0.total_samples;
+
+    let mut sensor_floor = 0.0f32;
+    let mut sensor_ceiling = (bucket_count - 1) as f32;
+    for i in 0..histograms.len() {
+        // Floor.
+        let ratio = histograms[i].1 / histograms[0].1;
+        let tmp_i = ((ratio * LOOSENESS) as usize).min(bucket_count * 3 / 4);
+        if tmp_i > 0 {
+            let target_sum = histograms[i].0.sum_under(tmp_i);
+            sensor_floor = sensor_floor.max(histograms[0].0.find_sum_lerp(target_sum));
+        }
+
+        // Ceiling.
+        let ratio = histograms[i].1 / histograms.last().unwrap().1;
+        let tmp_i = ((bucket_count as f32 * ratio.powf(LOOSENESS)) as usize).max(bucket_count / 4);
+        if tmp_i < (bucket_count - 1) {
+            let target_sum = histograms[i].0.sum_under(tmp_i);
+            if target_sum > (total_samples / 2) {
+                sensor_ceiling =
+                    sensor_ceiling.min(histograms.last().unwrap().0.find_sum_lerp(target_sum));
+            }
+        }
+    }
+
+    (sensor_floor, sensor_ceiling)
 }
 
 /// Calculates the inverse of a luminance map.

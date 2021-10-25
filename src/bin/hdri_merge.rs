@@ -79,7 +79,8 @@ fn main() {
 
     // Estimate sensor response curve from the image-exposure pairs.
     println!("Calculating sensor response curve.");
-    let inv_mapping = invert_luma_map(&estimate_luma_map(&images).0);
+    let (sensor_mapping, _) = estimate_luma_map(&images);
+    let inv_mapping: Vec<_> = sensor_mapping.iter().map(|m| invert_luma_map(&m)).collect();
 
     // Create the HDR.
     println!("Building HDR image.");
@@ -104,9 +105,9 @@ fn main() {
             let r = pixel[0] as f32 / 255.0;
             let g = pixel[1] as f32 / 255.0;
             let b = pixel[2] as f32 / 255.0;
-            let r_linear = eval_luma_map(&inv_mapping[..], r);
-            let g_linear = eval_luma_map(&inv_mapping[..], g);
-            let b_linear = eval_luma_map(&inv_mapping[..], b);
+            let r_linear = eval_luma_map(&inv_mapping[0][..], r);
+            let g_linear = eval_luma_map(&inv_mapping[1][..], g);
+            let b_linear = eval_luma_map(&inv_mapping[2][..], b);
             let weight = calc_weight(
                 r_linear.max(g_linear).max(b_linear),
                 img_i == 0,
@@ -146,7 +147,7 @@ fn main() {
 /// pairs.
 ///
 /// Returns the luminance map and the average fitting error.
-pub fn estimate_luma_map(images: &[(image::RgbImage, f32)]) -> (Vec<f32>, f32) {
+pub fn estimate_luma_map(images: &[(image::RgbImage, f32)]) -> (Vec<Vec<f32>>, f32) {
     use sensor_analysis::{estimate_luma_map_emor, Histogram};
 
     assert!(images.len() > 1);

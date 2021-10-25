@@ -25,14 +25,7 @@ pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
 /// Estimates EMoR factors to fit the passed mappings.
 ///
 /// Returns the EMoR factors and the average error of the fit.
-pub fn estimate_emor(
-    mappings: &[ExposureMapping],
-    sensor_floor: f32,
-    sensor_ceiling: f32,
-) -> ([f32; EMOR_FACTOR_COUNT], f32) {
-    let sensor_range = sensor_ceiling - sensor_floor;
-    let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + sensor_floor };
-
+pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT], f32) {
     let calc_error = |mappings: &[ExposureMapping], emor_factors: &[f32]| -> f32 {
         const POINTS: usize = 200;
         let mut err_sum = 0.0f32;
@@ -54,6 +47,9 @@ pub fn estimate_emor(
 
         // Calculate the actual errors.
         for mapping in mappings {
+            let sensor_range = mapping.ceiling - mapping.floor;
+            let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + mapping.floor };
+
             let weight = {
                 const MIN_EXTENT: f32 = 0.5;
                 let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();

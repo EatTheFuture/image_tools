@@ -81,23 +81,23 @@ fn main() {
     println!("Calculating sensor response curve.");
     let (sensor_mapping, err) = estimate_luma_map(&images);
     dbg!(err);
-    let inv_mapping = invert_luma_map(&sensor_mapping);
+    let inv_mapping: Vec<_> = sensor_mapping.iter().map(|m| invert_luma_map(&m)).collect();
 
     // Write out senseor response curve lookup tables.
     lut::write_cube_1d(
         &mut std::io::BufWriter::new(std::fs::File::create("linear_to_sensor.cube").unwrap()),
         (0.0, 1.0),
-        &sensor_mapping,
-        &sensor_mapping,
-        &sensor_mapping,
+        &sensor_mapping[0],
+        &sensor_mapping[1],
+        &sensor_mapping[2],
     )
     .unwrap();
     lut::write_cube_1d(
         &mut std::io::BufWriter::new(std::fs::File::create("sensor_to_linear.cube").unwrap()),
         (0.0, 1.0),
-        &inv_mapping,
-        &inv_mapping,
-        &inv_mapping,
+        &inv_mapping[0],
+        &inv_mapping[1],
+        &inv_mapping[2],
     )
     .unwrap();
 
@@ -105,11 +105,27 @@ fn main() {
     let mut graph_sensor = image::RgbImage::from_pixel(1024, 1024, image::Rgb([0u8, 0, 0]));
     draw_line_segments(
         &mut graph_sensor,
-        sensor_mapping.iter().enumerate().map(|(i, y)| {
-            let x = i as f32 / (sensor_mapping.len() - 1) as f32;
+        sensor_mapping[0].iter().enumerate().map(|(i, y)| {
+            let x = i as f32 / (sensor_mapping[0].len() - 1) as f32;
             (x, *y)
         }),
-        image::Rgb([255, 255, 255]),
+        image::Rgb([255, 0, 0]),
+    );
+    draw_line_segments(
+        &mut graph_sensor,
+        sensor_mapping[1].iter().enumerate().map(|(i, y)| {
+            let x = i as f32 / (sensor_mapping[1].len() - 1) as f32;
+            (x, *y)
+        }),
+        image::Rgb([0, 255, 0]),
+    );
+    draw_line_segments(
+        &mut graph_sensor,
+        sensor_mapping[2].iter().enumerate().map(|(i, y)| {
+            let x = i as f32 / (sensor_mapping[2].len() - 1) as f32;
+            (x, *y)
+        }),
+        image::Rgb([0, 0, 255]),
     );
     graph_sensor.save("graph_sensor.png").unwrap();
 
@@ -161,7 +177,7 @@ fn main() {
 /// pairs.
 ///
 /// Returns the luminance map and the average fitting error.
-pub fn estimate_luma_map(images: &[(image::RgbImage, f32)]) -> (Vec<f32>, f32) {
+pub fn estimate_luma_map(images: &[(image::RgbImage, f32)]) -> (Vec<Vec<f32>>, f32) {
     use sensor_analysis::{estimate_luma_map_emor, Histogram};
 
     assert!(images.len() > 1);

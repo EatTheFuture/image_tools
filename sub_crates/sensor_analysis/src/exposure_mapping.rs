@@ -10,6 +10,8 @@ pub struct ExposureMapping {
     pub x_curve: Vec<f32>,
     pub y_curve: Vec<f32>,
     pub exposure_ratio: f32,
+    pub floor: f32,
+    pub ceiling: f32,
 }
 
 impl ExposureMapping {
@@ -19,6 +21,8 @@ impl ExposureMapping {
         h2: &Histogram,
         exposure_1: f32,
         exposure_2: f32,
+        floor: f32,
+        ceiling: f32,
     ) -> Self {
         assert_eq!(h1.total_samples, h2.total_samples);
 
@@ -83,6 +87,8 @@ impl ExposureMapping {
             x_curve: x_curve,
             y_curve: y_curve,
             exposure_ratio: exposure_2 / exposure_1,
+            floor: floor / (h1.buckets.len() - 1) as f32,
+            ceiling: ceiling / (h1.buckets.len() - 1) as f32,
         }
     }
 

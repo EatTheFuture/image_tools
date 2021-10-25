@@ -41,4 +41,23 @@ impl Histogram {
 
         self.buckets.len() - 1
     }
+
+    pub fn find_sum_lerp(&self, sum: usize) -> f32 {
+        let mut prev_sum;
+        let mut cur_sum = 0;
+        for (i, b) in self.buckets.iter().enumerate() {
+            prev_sum = cur_sum;
+            cur_sum += *b;
+            if cur_sum >= sum {
+                if i == 0 {
+                    return 0.0;
+                } else {
+                    let a = (sum - prev_sum) as f32 / (cur_sum - prev_sum) as f32;
+                    return ((i - 1) as f32 * (1.0 - a)) + (i as f32 * a);
+                }
+            }
+        }
+
+        (self.buckets.len() - 1) as f32
+    }
 }
