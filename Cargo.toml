@@ -2,6 +2,7 @@
 members = [
     "sub_crates/hdr",
     "sub_crates/lut",
+    "sub_crates/job_queue",
     "sub_crates/sensor_analysis",
 ]
 
@@ -25,6 +26,9 @@ path = "sub_crates/hdr"
 
 [dependencies.lut]
 path = "sub_crates/lut"
+
+[dependencies.job_queue]
+path = "sub_crates/job_queue"
 
 [dependencies.sensor_analysis]
 path = "sub_crates/sensor_analysis"

@@ -959,10 +959,12 @@ dependencies = [
  "eframe",
  "hdr",
  "image",
+ "job_queue",
  "kamadak-exif",
  "lut",
  "rawloader",
  "rfd",
+ "scheduled-thread-pool",
  "sensor_analysis",
 ]
 
@@ -989,6 +991,13 @@ name = "jni-sys"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
+
+[[package]]
+name = "job_queue"
+version = "0.1.0"
+dependencies = [
+ "scheduled-thread-pool",
+]
 
 [[package]]
 name = "jpeg-decoder"
@@ -1668,6 +1677,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "scheduled-thread-pool"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6f74fd1204073fa02d5d5d68bec8021be4c38690b61264b2fdb48083d0e7d7"
+dependencies = [
+ "parking_lot",
 ]
 
 [[package]]
