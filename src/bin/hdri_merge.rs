@@ -119,11 +119,14 @@ impl epi::App for HDRIMergeApp {
             }
 
             // Image thumbnails.
-            for src_img in self.images.iter() {
-                let height = 64.0;
-                let width = height / src_img.image.height() as f32 * src_img.image.width() as f32;
-                ui.image(src_img.thumbnail_tex_id, egui::Vec2::new(width, height));
-            }
+            egui::containers::ScrollArea::vertical().show(ui, |ui| {
+                for src_img in self.images.iter() {
+                    let height = 64.0;
+                    let width =
+                        height / src_img.image.height() as f32 * src_img.image.width() as f32;
+                    ui.image(src_img.thumbnail_tex_id, egui::Vec2::new(width, height));
+                }
+            });
         });
 
         // Status bar.
@@ -230,11 +233,20 @@ impl epi::App for HDRIMergeApp {
 
                     // Make a thumbnail texture.
                     let thumbnail_tex_id = {
-                        assert_eq!(
-                            img.width() as usize * img.height() as usize * 3,
-                            img.as_raw().len()
+                        let height = 128;
+                        let width = height * img.width() / img.height();
+                        let thumbnail = image::imageops::resize(
+                            &img,
+                            width,
+                            height,
+                            image::imageops::FilterType::Triangle,
                         );
-                        let pixels: Vec<_> = img
+
+                        assert_eq!(
+                            thumbnail.width() as usize * thumbnail.height() as usize * 3,
+                            thumbnail.as_raw().len()
+                        );
+                        let pixels: Vec<_> = thumbnail
                             .as_raw()
                             .chunks_exact(3)
                             .map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], 255))
@@ -242,7 +254,7 @@ impl epi::App for HDRIMergeApp {
 
                         // Allocate the texture.
                         frame.tex_allocator().alloc_srgba_premultiplied(
-                            (img.width() as usize, img.height() as usize),
+                            (thumbnail.width() as usize, thumbnail.height() as usize),
                             &pixels,
                         )
                     };
