@@ -617,7 +617,8 @@ impl HDRIMerger {
             let r_linear = eval_luma_map(&linearizing_curves[0][..], r);
             let g_linear = eval_luma_map(&linearizing_curves[1][..], g);
             let b_linear = eval_luma_map(&linearizing_curves[2][..], b);
-            let weight = calc_weight(r_linear.max(g_linear).max(b_linear));
+            let weight =
+                calc_weight(r.max(g).max(b)) + calc_weight(r_linear.max(g_linear).max(b_linear));
 
             self.pixels[i][0] += r_linear * inv_exposure * weight;
             self.pixels[i][1] += g_linear * inv_exposure * weight;
