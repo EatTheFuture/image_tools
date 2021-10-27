@@ -29,12 +29,10 @@ fn main() {
             job_queue: job_queue::JobQueue::new(),
 
             images: Arc::new(Mutex::new(Vec::new())),
-
             hdri: Arc::new(Mutex::new(None)),
 
             ui_data: Arc::new(Mutex::new(UIData {
                 thumbnails: Vec::new(),
-                have_hdri: false,
             })),
         }),
         eframe::NativeOptions {
@@ -58,7 +56,6 @@ struct HDRIMergeApp {
 /// The data that the UI needs realtime access to for responsiveness.
 struct UIData {
     thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, f32)>,
-    have_hdri: bool,
 }
 
 impl epi::App for HDRIMergeApp {
@@ -104,12 +101,15 @@ impl epi::App for HDRIMergeApp {
             }
 
             // Save .hdr button.
-            if self.ui_data.lock().unwrap().have_hdri {
-                if ui.add(egui::widgets::Button::new("Save .hdr")).clicked() {
-                    if let Some(path) = rfd::FileDialog::new().save_file() {
-                        self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
+            match self.hdri.try_lock() {
+                Ok(hdri) if hdri.is_some() => {
+                    if ui.add(egui::widgets::Button::new("Save .hdr")).clicked() {
+                        if let Some(path) = rfd::FileDialog::new().save_file() {
+                            self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
+                        }
                     }
                 }
+                _ => {}
             }
 
             // Image thumbnails.
@@ -277,7 +277,6 @@ impl HDRIMergeApp {
 
         let images = Arc::clone(&self.images);
         let hdri = Arc::clone(&self.hdri);
-        let ui_data = Arc::clone(&self.ui_data);
 
         self.job_queue.add_job(move |status| {
             let img_len = images.lock().unwrap().len();
@@ -359,7 +358,6 @@ impl HDRIMergeApp {
             hdri_merger.finish();
 
             *hdri.lock().unwrap() = Some(hdri_merger);
-            ui_data.lock().unwrap().have_hdri = true;
             repaint_signal.request_repaint();
         });
     }
