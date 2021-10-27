@@ -80,102 +80,192 @@ impl epi::App for HDRIMergeApp {
     }
 
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
+        // Some simple queries we use in drawing the UI.
+        let have_enough_images = self.ui_data.lock().unwrap().thumbnails.len() >= 2;
+        let have_hdri = match Arc::clone(&self.hdri).try_lock() {
+            Ok(hdri) => hdri.is_some(),
+            _ => false,
+        };
+        let unread_log_count = self.job_queue.log_count() - self.log_read;
+        let jobs_are_canceling = self.job_queue.is_canceling();
+        let job_count = self.job_queue.job_count();
+
         //----------------
         // GUI.
 
-        // Main area.
-        egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
-            // Image add button.
-            if ui.add(egui::widgets::Button::new("Add Image(s)")).clicked() {
-                if let Some(paths) = rfd::FileDialog::new().pick_files() {
-                    self.add_image_files(
-                        Arc::clone(&frame.repaint_signal()),
-                        paths.iter().map(|pathbuf| pathbuf.as_path()),
-                    );
-                }
-            }
+        // Menu bar.
+        egui::containers::panel::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                egui::menu::menu(ui, "File", |ui| {
+                    if ui
+                        .add_enabled(job_count == 0, egui::widgets::Button::new("Add Images..."))
+                        .clicked()
+                    {
+                        if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                            self.add_image_files(
+                                Arc::clone(&frame.repaint_signal()),
+                                paths.iter().map(|pathbuf| pathbuf.as_path()),
+                            );
+                        }
+                    }
 
-            // Build HDRI button.
-            if self.ui_data.lock().unwrap().thumbnails.len() >= 2 {
-                if ui.add(egui::widgets::Button::new("Build HDRI")).clicked() {
-                    self.build_hdri(Arc::clone(&frame.repaint_signal()));
-                }
-            }
-
-            // Save .hdr button.
-            match Arc::clone(&self.hdri).try_lock() {
-                Ok(hdri) if hdri.is_some() => {
-                    if ui.add(egui::widgets::Button::new("Save .hdr")).clicked() {
+                    if ui
+                        .add_enabled(
+                            have_hdri && job_count == 0,
+                            egui::widgets::Button::new("Export HDRI..."),
+                        )
+                        .clicked()
+                    {
                         if let Some(path) = rfd::FileDialog::new().save_file() {
                             self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
                         }
                     }
-                }
-                _ => {}
-            }
 
-            // Image thumbnails.
-            egui::containers::ScrollArea::vertical().show(ui, |ui| {
-                for (thumbnail, ref mut tex_id, _) in
-                    self.ui_data.lock().unwrap().thumbnails.iter_mut()
-                {
-                    let height = 64.0;
-                    let width = height / thumbnail.height() as f32 * thumbnail.width() as f32;
-
-                    // Build thumbnail texture if it doesn't already exist.
-                    if tex_id.is_none() {
-                        assert_eq!(
-                            thumbnail.width() as usize * thumbnail.height() as usize * 3,
-                            thumbnail.as_raw().len()
-                        );
-                        let pixels: Vec<_> = thumbnail
-                            .as_raw()
-                            .chunks_exact(3)
-                            .map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], 255))
-                            .collect();
-
-                        *tex_id = Some(frame.tex_allocator().alloc_srgba_premultiplied(
-                            (thumbnail.width() as usize, thumbnail.height() as usize),
-                            &pixels,
-                        ));
+                    ui.separator();
+                    if ui.add(egui::widgets::Button::new("Quit")).clicked() {
+                        frame.quit();
                     }
-
-                    ui.image(tex_id.unwrap(), egui::Vec2::new(width, height));
-                }
+                });
             });
         });
 
-        // Status bar.
+        // Status bar (footer).
         egui::containers::panel::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            // Draw progress bar for any in-progress jobs.
-            if let Some((text, ratio)) = self.job_queue.progress() {
-                ui.add(
-                    egui::widgets::ProgressBar::new(ratio)
-                        .text(text)
-                        .animate(true),
-                );
-            }
-            // Draw error message if there are any errors.
-            else if (self.job_queue.log_count() - self.log_read) > 0 {
-                let unread_count = (self.job_queue.log_count() - self.log_read);
-                for i in 0..unread_count {
-                    let log_i = (unread_count - 1) - i;
-                    let (message, level) = self.job_queue.get_log(log_i);
-                    ui.add(match level {
-                        job_queue::LogLevel::Error => {
-                            egui::widgets::Label::new(format!("ERROR: {}", message))
-                                .strong()
-                                .background_color(egui::Rgba::from_rgb(0.5, 0.05, 0.05))
-                        }
-                        job_queue::LogLevel::Warning => {
-                            egui::widgets::Label::new(format!("Warning: {}", message)).strong()
-                        }
-                        job_queue::LogLevel::Note => {
-                            egui::widgets::Label::new(format!("{}", message))
+            // Draw unread log messages, if any.
+            if unread_log_count > 0 {
+                egui::containers::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .max_height(100.0)
+                    .stick_to_bottom()
+                    .show(ui, |ui| {
+                        for i in 0..unread_log_count {
+                            let log_i = (unread_log_count - 1) - i;
+                            let (message, level) = self.job_queue.get_log(log_i);
+                            ui.add(match level {
+                                job_queue::LogLevel::Error => {
+                                    egui::widgets::Label::new(format!("ERROR: {}", message))
+                                        .strong()
+                                        .background_color(egui::Rgba::from_rgb(0.5, 0.05, 0.05))
+                                }
+                                job_queue::LogLevel::Warning => {
+                                    egui::widgets::Label::new(format!("Warning: {}", message))
+                                        .strong()
+                                }
+                                job_queue::LogLevel::Note => {
+                                    egui::widgets::Label::new(format!("{}", message))
+                                }
+                            });
                         }
                     });
+            }
+
+            // Draw progress bar for any in-progress jobs.
+            if let Some((text, ratio)) = self.job_queue.progress() {
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!jobs_are_canceling, egui::widgets::Button::new("Cancel"))
+                        .clicked()
+                    {
+                        self.job_queue.cancel_all_jobs();
+                    }
+                    ui.add(
+                        egui::widgets::ProgressBar::new(ratio)
+                            .text(if jobs_are_canceling {
+                                "Canceling..."
+                            } else {
+                                &text
+                            })
+                            .animate(true),
+                    );
+                });
+            } else if unread_log_count > 0 {
+                if ui.add(egui::widgets::Button::new("Clear Log")).clicked() {
+                    self.log_read = self.job_queue.log_count();
                 }
             }
+        });
+
+        // Image list (left-side panel).
+        egui::containers::panel::SidePanel::left("image_list")
+            .resizable(false)
+            .show(ctx, |ui| {
+                // Image thumbnails.
+                egui::containers::ScrollArea::vertical().show(ui, |ui| {
+                    for (thumbnail, ref mut tex_id, _) in
+                        self.ui_data.lock().unwrap().thumbnails.iter_mut()
+                    {
+                        let height = 64.0;
+                        let width = height / thumbnail.height() as f32 * thumbnail.width() as f32;
+
+                        // Build thumbnail texture if it doesn't already exist.
+                        if tex_id.is_none() {
+                            assert_eq!(
+                                thumbnail.width() as usize * thumbnail.height() as usize * 3,
+                                thumbnail.as_raw().len()
+                            );
+                            let pixels: Vec<_> = thumbnail
+                                .as_raw()
+                                .chunks_exact(3)
+                                .map(|p| {
+                                    egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], 255)
+                                })
+                                .collect();
+
+                            *tex_id = Some(frame.tex_allocator().alloc_srgba_premultiplied(
+                                (thumbnail.width() as usize, thumbnail.height() as usize),
+                                &pixels,
+                            ));
+                        }
+
+                        ui.image(tex_id.unwrap(), egui::Vec2::new(width, height));
+                    }
+                });
+            });
+
+        // Main area.
+        egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                // Image add button.
+                if ui
+                    .add_enabled(job_count == 0, egui::widgets::Button::new("Add Images..."))
+                    .clicked()
+                {
+                    if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                        self.add_image_files(
+                            Arc::clone(&frame.repaint_signal()),
+                            paths.iter().map(|pathbuf| pathbuf.as_path()),
+                        );
+                    }
+                }
+
+                ui.label(" ➡ ");
+
+                // Build HDRI button.
+                if ui
+                    .add_enabled(
+                        have_enough_images && job_count == 0,
+                        egui::widgets::Button::new("Build HDRI"),
+                    )
+                    .clicked()
+                {
+                    self.build_hdri(Arc::clone(&frame.repaint_signal()));
+                }
+
+                ui.label(" ➡ ");
+
+                // Save .hdr button.
+                if ui
+                    .add_enabled(
+                        have_hdri && job_count == 0,
+                        egui::widgets::Button::new("Save HDRI..."),
+                    )
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new().save_file() {
+                        self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
+                    }
+                }
+            });
         });
 
         //----------------
@@ -206,7 +296,6 @@ impl HDRIMergeApp {
         let ui_data = Arc::clone(&self.ui_data);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
-        self.log_read = self.job_queue.log_count();
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
             for (img_i, path) in image_paths.drain(..).enumerate() {
@@ -341,7 +430,6 @@ impl HDRIMergeApp {
         let hdri = Arc::clone(&self.hdri);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
-        self.log_read = self.job_queue.log_count();
         self.job_queue.add_job("Build HDRI", move |status| {
             let img_len = images.lock().unwrap().len();
             let width = images.lock().unwrap()[0].image.width() as usize;
@@ -430,7 +518,6 @@ impl HDRIMergeApp {
         let hdri = Arc::clone(&self.hdri);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
-        self.log_read = self.job_queue.log_count();
         self.job_queue.add_job("Save HDRI", move |status| {
             status
                 .lock()

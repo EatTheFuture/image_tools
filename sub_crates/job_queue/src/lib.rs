@@ -78,6 +78,10 @@ impl JobQueue {
         }
     }
 
+    pub fn is_canceling(&self) -> bool {
+        self.job_status.lock().unwrap().do_cancel
+    }
+
     pub fn log_count(&self) -> usize {
         self.job_status.lock().unwrap().log.len()
     }
