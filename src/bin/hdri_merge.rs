@@ -149,7 +149,11 @@ impl epi::App for HDRIMergeApp {
         egui::containers::panel::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             // Draw progress bar for any in-progress jobs.
             if let Some((text, ratio)) = self.job_queue.progress() {
-                ui.add(egui::widgets::ProgressBar::new(ratio).text(text));
+                ui.add(
+                    egui::widgets::ProgressBar::new(ratio)
+                        .text(text)
+                        .animate(true),
+                );
             }
             // Draw error message if there are any errors.
             else if (self.job_queue.log_count() - self.log_read) > 0 {
