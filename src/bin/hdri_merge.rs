@@ -30,10 +30,11 @@ fn main() {
 
             images: Arc::new(Mutex::new(Vec::new())),
             hdri: Arc::new(Mutex::new(None)),
-
             ui_data: Arc::new(Mutex::new(UIData {
                 thumbnails: Vec::new(),
             })),
+
+            log_read: 0,
         }),
         eframe::NativeOptions {
             drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
@@ -49,8 +50,9 @@ struct HDRIMergeApp {
 
     images: SharedData<Vec<SourceImage>>,
     hdri: SharedData<Option<HDRIMerger>>,
-
     ui_data: SharedData<UIData>,
+
+    log_read: usize,
 }
 
 /// The data that the UI needs realtime access to for responsiveness.
@@ -101,7 +103,7 @@ impl epi::App for HDRIMergeApp {
             }
 
             // Save .hdr button.
-            match self.hdri.try_lock() {
+            match Arc::clone(&self.hdri).try_lock() {
                 Ok(hdri) if hdri.is_some() => {
                     if ui.add(egui::widgets::Button::new("Save .hdr")).clicked() {
                         if let Some(path) = rfd::FileDialog::new().save_file() {
@@ -149,6 +151,27 @@ impl epi::App for HDRIMergeApp {
             if let Some((text, ratio)) = self.job_queue.progress() {
                 ui.add(egui::widgets::ProgressBar::new(ratio).text(text));
             }
+            // Draw error message if there are any errors.
+            else if (self.job_queue.log_count() - self.log_read) > 0 {
+                let unread_count = (self.job_queue.log_count() - self.log_read);
+                for i in 0..unread_count {
+                    let log_i = (unread_count - 1) - i;
+                    let (message, level) = self.job_queue.get_log(log_i);
+                    ui.add(match level {
+                        job_queue::LogLevel::Error => {
+                            egui::widgets::Label::new(format!("ERROR: {}", message))
+                                .strong()
+                                .background_color(egui::Rgba::from_rgb(0.5, 0.05, 0.05))
+                        }
+                        job_queue::LogLevel::Warning => {
+                            egui::widgets::Label::new(format!("Warning: {}", message)).strong()
+                        }
+                        job_queue::LogLevel::Note => {
+                            egui::widgets::Label::new(format!("{}", message))
+                        }
+                    });
+                }
+            }
         });
 
         //----------------
@@ -177,8 +200,10 @@ impl HDRIMergeApp {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let images = Arc::clone(&self.images);
         let ui_data = Arc::clone(&self.ui_data);
+        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
-        self.job_queue.add_job(move |status| {
+        self.log_read = self.job_queue.log_count();
+        self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
             for (img_i, path) in image_paths.drain(..).enumerate() {
                 if status.lock().unwrap().is_canceled() {
@@ -192,44 +217,77 @@ impl HDRIMergeApp {
                 repaint_signal.request_repaint();
 
                 // Load image.
-                let img = image::io::Reader::open(&path)
-                    .unwrap()
-                    .with_guessed_format()
-                    .unwrap()
-                    .decode()
-                    .unwrap()
-                    .to_rgb8();
+                let img = if let Ok(f) = image::io::Reader::open(&path) {
+                    if let Some(Some(img)) = f
+                        .with_guessed_format()
+                        .ok()
+                        .map(|f| f.decode().ok().map(|f| f.to_rgb8()))
+                    {
+                        img
+                    } else {
+                        status.lock().unwrap().log_error(format!(
+                            "Unrecognized image file format: \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        repaint_signal.request_repaint();
+                        return;
+                    }
+                } else {
+                    status.lock().unwrap().log_error(format!(
+                        "Unable to access file \"{}\".",
+                        path.to_string_lossy()
+                    ));
+                    repaint_signal.request_repaint();
+                    return;
+                };
+
+                // Ensure it has the same resolution as the other images.
+                if !images.lock().unwrap().is_empty() {
+                    let needed_width = images.lock().unwrap()[0].image.width();
+                    let needed_height = images.lock().unwrap()[0].image.height();
+                    if img.width() != needed_width || img.height() != needed_height {
+                        status.lock().unwrap().log_error(format!(
+                            "Image has a different resolution: \"{}\".  Not loading.  Note: all images must have the same resolution.",
+                            path.to_string_lossy()
+                        ));
+                        repaint_signal.request_repaint();
+                        continue;
+                    }
+                }
 
                 // Get exposure metadata from EXIF data.
-                let img_exif = {
+                let (exposure_time, fstop, sensitivity) = {
+                    let mut exposure_time = None;
+                    let mut fstop = None;
+                    let mut sensitivity = None;
+
                     let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
-                    exif::Reader::new().read_from_container(&mut file).unwrap()
+                    if let Ok(img_exif) = exif::Reader::new().read_from_container(&mut file) {
+                        if let Some(&exif::Value::Rational(ref n)) = img_exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY).map(|n| &n.value) {
+                            exposure_time = Some(n[0]);
+                        }
+                        if let Some(&exif::Value::Rational(ref n)) = img_exif.get_field(exif::Tag::FNumber, exif::In::PRIMARY).map(|n| &n.value) {
+                            fstop = Some(n[0]);
+                        }
+                        if let Some(Some(n)) = img_exif.get_field(exif::Tag::PhotographicSensitivity, exif::In::PRIMARY).map(|n| n.value.get_uint(0)) {
+                            sensitivity = Some(n);
+                        }
+                    }
+
+                    (exposure_time, fstop, sensitivity)
                 };
-                let exposure_time =
-                    match img_exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY) {
-                        Some(n) => match n.value {
-                            exif::Value::Rational(ref v) => v[0],
-                            _ => panic!(),
-                        },
-                        None => panic!(),
-                    };
-                let fstop = match img_exif.get_field(exif::Tag::FNumber, exif::In::PRIMARY) {
-                    Some(n) => match n.value {
-                        exif::Value::Rational(ref v) => v[0],
-                        _ => panic!(),
-                    },
-                    None => panic!(),
-                };
-                let sensitivity = img_exif
-                    .get_field(exif::Tag::PhotographicSensitivity, exif::In::PRIMARY)
-                    .unwrap()
-                    .value
-                    .get_uint(0)
-                    .unwrap();
 
                 // Calculate over-all exposure.
-                let total_exposure =
-                    sensitivity as f64 * exposure_time.to_f64() / (fstop.to_f64() * fstop.to_f64());
+                let total_exposure = if let (Some(exp), Some(fst), Some(sns)) = (exposure_time, fstop, sensitivity) {
+                    sns as f64 * exp.to_f64() / (fst.to_f64() * fst.to_f64())
+                } else {
+                    status.lock().unwrap().log_warning(format!(
+                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  Defaulting to 1.0.",
+                        path.to_string_lossy()
+                    ));
+                    repaint_signal.request_repaint();
+                    1.0
+                };
 
                 // Make a thumbnail texture.
                 let thumbnail = {
@@ -249,9 +307,9 @@ impl HDRIMergeApp {
                     image: img,
                     exposure: total_exposure as f32,
 
-                    meta_exposure_time: Some((exposure_time.num, exposure_time.denom)),
-                    meta_fstop: Some((fstop.num, fstop.denom)),
-                    meta_iso: Some(sensitivity),
+                    meta_exposure_time: exposure_time.map(|n| (n.num, n.denom)),
+                    meta_fstop: fstop.map(|n| (n.num, n.denom)),
+                    meta_iso: sensitivity,
                 });
                 ui_data
                     .lock()
@@ -272,13 +330,15 @@ impl HDRIMergeApp {
         });
     }
 
-    fn build_hdri(&self, repaint_signal: Arc<dyn epi::RepaintSignal>) {
+    fn build_hdri(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>) {
         use sensor_analysis::Histogram;
 
         let images = Arc::clone(&self.images);
         let hdri = Arc::clone(&self.hdri);
+        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
-        self.job_queue.add_job(move |status| {
+        self.log_read = self.job_queue.log_count();
+        self.job_queue.add_job("Build HDRI", move |status| {
             let img_len = images.lock().unwrap().len();
             let width = images.lock().unwrap()[0].image.width() as usize;
             let height = images.lock().unwrap()[0].image.height() as usize;
@@ -362,10 +422,12 @@ impl HDRIMergeApp {
         });
     }
 
-    fn save_hdri(&self, repaint_signal: Arc<dyn epi::RepaintSignal>, path: PathBuf) {
+    fn save_hdri(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>, path: PathBuf) {
         let hdri = Arc::clone(&self.hdri);
+        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
-        self.job_queue.add_job(move |status| {
+        self.log_read = self.job_queue.log_count();
+        self.job_queue.add_job("Save HDRI", move |status| {
             status
                 .lock()
                 .unwrap()
