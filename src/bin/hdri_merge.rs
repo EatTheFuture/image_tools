@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use clap::{App, Arg};
 use eframe::{egui, epi};
@@ -23,44 +26,39 @@ fn main() {
 
     eframe::run_native(
         Box::new(HDRIMergeApp {
-            images: Vec::new(),
-            job: AppJob::None,
-            sensor_inv_mapping: None,
-            hdri: None,
+            job_queue: job_queue::JobQueue::new(),
+
+            images: Arc::new(Mutex::new(Vec::new())),
+
+            hdri: Arc::new(Mutex::new(None)),
+
+            ui_data: Arc::new(Mutex::new(UIData {
+                thumbnails: Vec::new(),
+                have_hdri: false,
+            })),
         }),
-        {
-            let mut options = eframe::NativeOptions::default();
-            options.drag_and_drop_support = true; // Enable drag-and-dropping files on Windows.
-            options
+        eframe::NativeOptions {
+            drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
+            ..eframe::NativeOptions::default()
         },
     );
 }
 
-#[derive(Debug)]
+type SharedData<T> = Arc<Mutex<T>>;
+
 struct HDRIMergeApp {
-    images: Vec<SourceImage>,
-    job: AppJob,
+    job_queue: job_queue::JobQueue,
 
-    sensor_inv_mapping: Option<[Vec<f32>; 3]>,
-    hdri: Option<HDRIMerger>,
+    images: SharedData<Vec<SourceImage>>,
+    hdri: SharedData<Option<HDRIMerger>>,
+
+    ui_data: SharedData<UIData>,
 }
 
-#[derive(Debug)]
-enum AppJob {
-    None,
-    LoadImages {
-        image_list: Vec<std::path::PathBuf>,
-        total: usize,
-    },
-    BuildHDRI(HDRIBuildStage),
-    SaveHDRI(PathBuf),
-}
-
-#[derive(Debug, Copy, Clone)]
-enum HDRIBuildStage {
-    EstimateLinearization,
-    AddImage(usize),
-    Finalize,
+/// The data that the UI needs realtime access to for responsiveness.
+struct UIData {
+    thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, f32)>,
+    have_hdri: bool,
 }
 
 impl epi::App for HDRIMergeApp {
@@ -91,157 +89,39 @@ impl epi::App for HDRIMergeApp {
             // Image add button.
             if ui.add(egui::widgets::Button::new("Add Image(s)")).clicked() {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
-                    self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
+                    self.add_image_files(
+                        Arc::clone(&frame.repaint_signal()),
+                        paths.iter().map(|pathbuf| pathbuf.as_path()),
+                    );
                 }
             }
 
             // Build HDRI button.
-            if self.images.len() >= 2 {
+            if self.ui_data.lock().unwrap().thumbnails.len() >= 2 {
                 if ui.add(egui::widgets::Button::new("Build HDRI")).clicked() {
-                    match self.job {
-                        AppJob::None => {
-                            self.job = AppJob::BuildHDRI(HDRIBuildStage::EstimateLinearization);
-                        }
-                        _ => {}
-                    }
+                    self.build_hdri(Arc::clone(&frame.repaint_signal()));
                 }
             }
 
             // Save .hdr button.
-            if let Some(_) = self.hdri {
-                if let AppJob::None = self.job {
-                    if ui.add(egui::widgets::Button::new("Save .hdr")).clicked() {
-                        if let Some(path) = rfd::FileDialog::new().save_file() {
-                            self.job = AppJob::SaveHDRI(path);
-                        }
+            if self.ui_data.lock().unwrap().have_hdri {
+                if ui.add(egui::widgets::Button::new("Save .hdr")).clicked() {
+                    if let Some(path) = rfd::FileDialog::new().save_file() {
+                        self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
                     }
                 }
             }
 
             // Image thumbnails.
             egui::containers::ScrollArea::vertical().show(ui, |ui| {
-                for src_img in self.images.iter() {
+                for (thumbnail, ref mut tex_id, _) in
+                    self.ui_data.lock().unwrap().thumbnails.iter_mut()
+                {
                     let height = 64.0;
-                    let width =
-                        height / src_img.image.height() as f32 * src_img.image.width() as f32;
-                    ui.image(src_img.thumbnail_tex_id, egui::Vec2::new(width, height));
-                }
-            });
-        });
+                    let width = height / thumbnail.height() as f32 * thumbnail.width() as f32;
 
-        // Status bar.
-        egui::containers::panel::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            // Draw progress bar for any in-progress jobs.
-            match self.job {
-                AppJob::LoadImages {
-                    ref image_list,
-                    total,
-                } => {
-                    ui.add(
-                        egui::widgets::ProgressBar::new(
-                            1.0 - (image_list.len() as f32 / total as f32),
-                        )
-                        .text(format!("Loading: {}", image_list[0].to_string_lossy())),
-                    );
-                }
-
-                AppJob::BuildHDRI(stage) => {
-                    let total = 2 + self.images.len();
-                    match stage {
-                        HDRIBuildStage::EstimateLinearization => {
-                            ui.add(
-                                egui::widgets::ProgressBar::new(0.0)
-                                    .text("Estimating color linearization"),
-                            );
-                        }
-                        HDRIBuildStage::AddImage(img_i) => {
-                            ui.add(
-                                egui::widgets::ProgressBar::new((img_i + 1) as f32 / total as f32)
-                                    .text(format!("Merging image {}", img_i + 1)),
-                            );
-                        }
-                        HDRIBuildStage::Finalize => {
-                            ui.add(
-                                egui::widgets::ProgressBar::new((total - 1) as f32 / total as f32)
-                                    .text("Finalizing"),
-                            );
-                        }
-                    }
-                }
-
-                AppJob::SaveHDRI(ref path) => {
-                    ui.add(
-                        egui::widgets::ProgressBar::new(0.0)
-                            .text(format!("Saving: {}", path.to_string_lossy())),
-                    );
-                }
-
-                AppJob::None => {}
-            }
-        });
-
-        //----------------
-        // Processing.
-
-        match self.job {
-            // Load pending images.
-            AppJob::LoadImages {
-                ref mut image_list, ..
-            } => {
-                if !image_list.is_empty() {
-                    let path = image_list.remove(0);
-
-                    // Load image.
-                    let img = image::io::Reader::open(&path)
-                        .unwrap()
-                        .with_guessed_format()
-                        .unwrap()
-                        .decode()
-                        .unwrap()
-                        .to_rgb8();
-
-                    // Get exposure metadata from EXIF data.
-                    let img_exif = {
-                        let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
-                        exif::Reader::new().read_from_container(&mut file).unwrap()
-                    };
-                    let exposure_time =
-                        match img_exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY) {
-                            Some(n) => match n.value {
-                                exif::Value::Rational(ref v) => v[0],
-                                _ => panic!(),
-                            },
-                            None => panic!(),
-                        };
-                    let fstop = match img_exif.get_field(exif::Tag::FNumber, exif::In::PRIMARY) {
-                        Some(n) => match n.value {
-                            exif::Value::Rational(ref v) => v[0],
-                            _ => panic!(),
-                        },
-                        None => panic!(),
-                    };
-                    let sensitivity = img_exif
-                        .get_field(exif::Tag::PhotographicSensitivity, exif::In::PRIMARY)
-                        .unwrap()
-                        .value
-                        .get_uint(0)
-                        .unwrap();
-
-                    // Calculate over-all exposure.
-                    let total_exposure = sensitivity as f64 * exposure_time.to_f64()
-                        / (fstop.to_f64() * fstop.to_f64());
-
-                    // Make a thumbnail texture.
-                    let thumbnail_tex_id = {
-                        let height = 128;
-                        let width = height * img.width() / img.height();
-                        let thumbnail = image::imageops::resize(
-                            &img,
-                            width,
-                            height,
-                            image::imageops::FilterType::Triangle,
-                        );
-
+                    // Build thumbnail texture if it doesn't already exist.
+                    if tex_id.is_none() {
                         assert_eq!(
                             thumbnail.width() as usize * thumbnail.height() as usize * 3,
                             thumbnail.as_raw().len()
@@ -252,104 +132,32 @@ impl epi::App for HDRIMergeApp {
                             .map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], 255))
                             .collect();
 
-                        // Allocate the texture.
-                        frame.tex_allocator().alloc_srgba_premultiplied(
+                        *tex_id = Some(frame.tex_allocator().alloc_srgba_premultiplied(
                             (thumbnail.width() as usize, thumbnail.height() as usize),
                             &pixels,
-                        )
-                    };
-
-                    // Add image to our list of source images.
-                    self.images.push(SourceImage {
-                        image: img,
-                        exposure: total_exposure as f32,
-
-                        thumbnail_tex_id: thumbnail_tex_id,
-
-                        meta_exposure_time: Some((exposure_time.num, exposure_time.denom)),
-                        meta_fstop: Some((fstop.num, fstop.denom)),
-                        meta_iso: Some(sensitivity),
-                    });
-                    self.images
-                        .sort_unstable_by(|a, b| a.exposure.partial_cmp(&b.exposure).unwrap());
-
-                    // Clear job if done loading images.
-                    if image_list.is_empty() {
-                        self.job = AppJob::None;
+                        ));
                     }
 
-                    // Request repaint, to display the thumbnail.
-                    ctx.request_repaint();
+                    ui.image(tex_id.unwrap(), egui::Vec2::new(width, height));
                 }
-            }
+            });
+        });
 
-            // Build HDRI.
-            AppJob::BuildHDRI(build_stage) => {
-                match build_stage {
-                    HDRIBuildStage::EstimateLinearization => {
-                        // Estimate sensor response curve from the image-exposure pairs.
-                        let (sensor_mapping, _) = estimate_luma_map(&self.images);
-                        let mut inv_mapping: Vec<_> =
-                            sensor_mapping.iter().map(|m| invert_luma_map(&m)).collect();
-                        let mut tmp = [vec![], vec![], vec![]];
-                        tmp[0] = inv_mapping.remove(0);
-                        tmp[1] = inv_mapping.remove(0);
-                        tmp[2] = inv_mapping.remove(0);
-                        self.sensor_inv_mapping = Some(tmp);
-                        self.job = AppJob::BuildHDRI(HDRIBuildStage::AddImage(0));
-                    }
-                    HDRIBuildStage::AddImage(img_i) => {
-                        // Create the HDRI.
-                        if img_i == 0 {
-                            let width = self.images[0].image.width() as usize;
-                            let height = self.images[0].image.height() as usize;
-                            self.hdri = Some(HDRIMerger::new(width, height));
-                        }
-                        if let (Some(ref mut hdri), Some(ref inv_mapping)) =
-                            (&mut self.hdri, &self.sensor_inv_mapping)
-                        {
-                            hdri.add_image(
-                                &self.images[img_i].image,
-                                self.images[img_i].exposure,
-                                inv_mapping,
-                                img_i == 0,
-                                img_i == self.images.len() - 1,
-                            );
-                        }
-                        if img_i == self.images.len() - 1 {
-                            self.job = AppJob::BuildHDRI(HDRIBuildStage::Finalize);
-                        } else {
-                            self.job = AppJob::BuildHDRI(HDRIBuildStage::AddImage(img_i + 1));
-                        }
-                    }
-                    HDRIBuildStage::Finalize => {
-                        if let Some(ref mut hdri) = self.hdri {
-                            hdri.finish();
-                        }
-                        self.job = AppJob::None;
-                    }
-                }
+        // Status bar.
+        egui::containers::panel::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            // Draw progress bar for any in-progress jobs.
+            if let Some((text, ratio)) = self.job_queue.progress() {
+                ui.add(egui::widgets::ProgressBar::new(ratio).text(text));
             }
+        });
 
-            AppJob::SaveHDRI(ref path) => {
-                if let Some(ref hdri) = self.hdri {
-                    hdr::write_hdr(
-                        &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
-                        &hdri.pixels,
-                        hdri.width,
-                        hdri.height,
-                    )
-                    .unwrap();
-                }
-                self.job = AppJob::None;
-            }
-
-            AppJob::None => {}
-        }
+        //----------------
+        // Processing.
 
         // Collect dropped files.
         if !ctx.input().raw.dropped_files.is_empty() {
             self.add_image_files(
+                Arc::clone(&frame.repaint_signal()),
                 ctx.input()
                     .raw
                     .dropped_files
@@ -357,72 +165,234 @@ impl epi::App for HDRIMergeApp {
                     .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
             );
         }
-
-        // Request a repaint if we still have pending work to do.
-        match self.job {
-            AppJob::None => {}
-            _ => ctx.request_repaint(),
-        };
     }
 }
 
 impl HDRIMergeApp {
-    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
-        let mut images: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
-        let len = images.len();
-        if let AppJob::None = self.job {
-            // Start a new job.
-            self.job = AppJob::LoadImages {
-                image_list: images,
-                total: len,
+    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(
+        &mut self,
+        repaint_signal: Arc<dyn epi::RepaintSignal>,
+        paths: I,
+    ) {
+        let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
+        let images = Arc::clone(&self.images);
+        let ui_data = Arc::clone(&self.ui_data);
+
+        self.job_queue.add_job(move |status| {
+            let len = image_paths.len() as f32;
+            for (img_i, path) in image_paths.drain(..).enumerate() {
+                if status.lock().unwrap().is_canceled() {
+                    break;
+                }
+
+                status.lock().unwrap().set_progress(
+                    format!("Loading: {}", path.to_string_lossy()),
+                    (img_i + 1) as f32 / len,
+                );
+                repaint_signal.request_repaint();
+
+                // Load image.
+                let img = image::io::Reader::open(&path)
+                    .unwrap()
+                    .with_guessed_format()
+                    .unwrap()
+                    .decode()
+                    .unwrap()
+                    .to_rgb8();
+
+                // Get exposure metadata from EXIF data.
+                let img_exif = {
+                    let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+                    exif::Reader::new().read_from_container(&mut file).unwrap()
+                };
+                let exposure_time =
+                    match img_exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY) {
+                        Some(n) => match n.value {
+                            exif::Value::Rational(ref v) => v[0],
+                            _ => panic!(),
+                        },
+                        None => panic!(),
+                    };
+                let fstop = match img_exif.get_field(exif::Tag::FNumber, exif::In::PRIMARY) {
+                    Some(n) => match n.value {
+                        exif::Value::Rational(ref v) => v[0],
+                        _ => panic!(),
+                    },
+                    None => panic!(),
+                };
+                let sensitivity = img_exif
+                    .get_field(exif::Tag::PhotographicSensitivity, exif::In::PRIMARY)
+                    .unwrap()
+                    .value
+                    .get_uint(0)
+                    .unwrap();
+
+                // Calculate over-all exposure.
+                let total_exposure =
+                    sensitivity as f64 * exposure_time.to_f64() / (fstop.to_f64() * fstop.to_f64());
+
+                // Make a thumbnail texture.
+                let thumbnail = {
+                    let height = 128;
+                    let width = height * img.width() / img.height();
+                    let thumbnail = image::imageops::resize(
+                        &img,
+                        width,
+                        height,
+                        image::imageops::FilterType::Triangle,
+                    );
+                    thumbnail
+                };
+
+                // Add image to our list of source images.
+                images.lock().unwrap().push(SourceImage {
+                    image: img,
+                    exposure: total_exposure as f32,
+
+                    meta_exposure_time: Some((exposure_time.num, exposure_time.denom)),
+                    meta_fstop: Some((fstop.num, fstop.denom)),
+                    meta_iso: Some(sensitivity),
+                });
+                ui_data
+                    .lock()
+                    .unwrap()
+                    .thumbnails
+                    .push((thumbnail, None, total_exposure as f32));
+                images
+                    .lock()
+                    .unwrap()
+                    .sort_unstable_by(|a, b| a.exposure.partial_cmp(&b.exposure).unwrap());
+                ui_data
+                    .lock()
+                    .unwrap()
+                    .thumbnails
+                    .sort_unstable_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+            }
+            repaint_signal.request_repaint();
+        });
+    }
+
+    fn build_hdri(&self, repaint_signal: Arc<dyn epi::RepaintSignal>) {
+        use sensor_analysis::Histogram;
+
+        let images = Arc::clone(&self.images);
+        let hdri = Arc::clone(&self.hdri);
+        let ui_data = Arc::clone(&self.ui_data);
+
+        self.job_queue.add_job(move |status| {
+            let img_len = images.lock().unwrap().len();
+            let width = images.lock().unwrap()[0].image.width() as usize;
+            let height = images.lock().unwrap()[0].image.height() as usize;
+
+            status
+                .lock()
+                .unwrap()
+                .set_progress(format!("Estimating linearization curve"), 0.0);
+            repaint_signal.request_repaint();
+
+            // Calculate histograms.
+            let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
+            for img_i in 0..img_len {
+                for chan in 0..3 {
+                    if status.lock().unwrap().is_canceled() {
+                        return;
+                    }
+                    let src_img = &images.lock().unwrap()[img_i];
+                    histograms[chan].push((
+                        Histogram::from_iter(
+                            src_img
+                                .image
+                                .enumerate_pixels()
+                                .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+                            256,
+                        ),
+                        src_img.exposure,
+                    ));
+                }
+            }
+
+            // Estimate linearizating curve.
+            let inv_mapping: [Vec<f32>; 3] = {
+                let (mapping, _) = sensor_analysis::estimate_luma_map_emor(&[
+                    &histograms[0],
+                    &histograms[1],
+                    &histograms[2],
+                ]);
+                [
+                    invert_luma_map(&mapping[0]),
+                    invert_luma_map(&mapping[1]),
+                    invert_luma_map(&mapping[2]),
+                ]
             };
-        } else if let AppJob::LoadImages {
-            ref mut image_list,
-            ref mut total,
-        } = self.job
-        {
-            // Add to the existing job.
-            image_list.extend(images.drain(..));
-            *total += len;
-        } else {
-            // We're in the middle of another job, so ignore.
-        }
+
+            // Merge images.
+            let mut hdri_merger = HDRIMerger::new(width, height);
+            for img_i in 0..img_len {
+                if status.lock().unwrap().is_canceled() {
+                    return;
+                }
+                status.lock().unwrap().set_progress(
+                    format!("Merging image {}", img_i + 1),
+                    (img_i + 1) as f32 / (img_len + 2) as f32,
+                );
+                repaint_signal.request_repaint();
+
+                let src_img = &images.lock().unwrap()[img_i];
+                if let Some(ref mut hdri) = *hdri.lock().unwrap() {
+                    hdri.add_image(
+                        &src_img.image,
+                        src_img.exposure,
+                        &inv_mapping,
+                        img_i == 0,
+                        img_i == img_len - 1,
+                    );
+                }
+            }
+
+            // Finalize.
+            if status.lock().unwrap().is_canceled() {
+                return;
+            }
+            status.lock().unwrap().set_progress(
+                format!("Finalizing"),
+                (img_len + 1) as f32 / (img_len + 2) as f32,
+            );
+            repaint_signal.request_repaint();
+            hdri_merger.finish();
+
+            *hdri.lock().unwrap() = Some(hdri_merger);
+            ui_data.lock().unwrap().have_hdri = true;
+            repaint_signal.request_repaint();
+        });
     }
-}
 
-/// Estimates a linearizing luma map for the given set of source images..
-///
-/// Returns the luminance map and the average fitting error.
-fn estimate_luma_map(images: &[SourceImage]) -> (Vec<Vec<f32>>, f32) {
-    use sensor_analysis::{estimate_luma_map_emor, Histogram};
+    fn save_hdri(&self, repaint_signal: Arc<dyn epi::RepaintSignal>, path: PathBuf) {
+        let hdri = Arc::clone(&self.hdri);
 
-    assert!(images.len() > 1);
-
-    let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
-    for i in 0..images.len() {
-        for chan in 0..3 {
-            histograms[chan].push((
-                Histogram::from_iter(
-                    images[i]
-                        .image
-                        .enumerate_pixels()
-                        .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
-                    256,
-                ),
-                images[i].exposure,
-            ));
-        }
+        self.job_queue.add_job(move |status| {
+            status
+                .lock()
+                .unwrap()
+                .set_progress(format!("Saving: {}", path.to_string_lossy()), 0.0);
+            repaint_signal.request_repaint();
+            if let Some(ref hdri) = *hdri.lock().unwrap() {
+                hdr::write_hdr(
+                    &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
+                    &hdri.pixels,
+                    hdri.width,
+                    hdri.height,
+                )
+                .unwrap();
+            }
+            repaint_signal.request_repaint();
+        });
     }
-
-    estimate_luma_map_emor(&[&histograms[0], &histograms[1], &histograms[2]])
 }
 
 #[derive(Debug)]
 struct SourceImage {
     image: image::RgbImage,
     exposure: f32,
-
-    thumbnail_tex_id: egui::TextureId,
 
     meta_exposure_time: Option<(u32, u32)>, // Ratio.
     meta_fstop: Option<(u32, u32)>,         // Ratio.

@@ -964,7 +964,6 @@ dependencies = [
  "lut",
  "rawloader",
  "rfd",
- "scheduled-thread-pool",
  "sensor_analysis",
 ]
 

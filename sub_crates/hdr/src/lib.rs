@@ -16,6 +16,7 @@ pub fn write_hdr<W: Write>(
     for pixel in image.iter() {
         out.write_all(&trifloat::encode(*pixel))?;
     }
+    out.flush();
 
     Ok(())
 }
