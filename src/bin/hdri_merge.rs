@@ -90,6 +90,24 @@ impl epi::App for HDRIMergeApp {
         let jobs_are_canceling = self.job_queue.is_canceling();
         let job_count = self.job_queue.job_count();
 
+        // File dialogs used in the UI.
+        let add_images_dialog = rfd::FileDialog::new()
+            .set_title("Add Images")
+            .add_filter(
+                "All Images",
+                &[
+                    "jpg", "JPG", "jpeg", "JPEG", "tiff", "TIFF", "tif", "TIF", "webp", "WEBP",
+                    "png", "PNG",
+                ],
+            )
+            .add_filter("jpeg", &["jpg", "JPG", "jpeg", "JPEG"])
+            .add_filter("tiff", &["tiff", "TIFF", "tif", "TIF"])
+            .add_filter("webp", &["webp", "WEBP"])
+            .add_filter("png", &["png", "PNG"]);
+        let save_hdri_dialog = rfd::FileDialog::new()
+            .set_title("Save HDRI")
+            .add_filter(".hdr", &["hdr", "HDR"]);
+
         //----------------
         // GUI.
 
@@ -101,7 +119,7 @@ impl epi::App for HDRIMergeApp {
                         .add_enabled(job_count == 0, egui::widgets::Button::new("Add Images..."))
                         .clicked()
                     {
-                        if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                        if let Some(paths) = add_images_dialog.clone().pick_files() {
                             self.add_image_files(
                                 Arc::clone(&frame.repaint_signal()),
                                 paths.iter().map(|pathbuf| pathbuf.as_path()),
@@ -116,7 +134,7 @@ impl epi::App for HDRIMergeApp {
                         )
                         .clicked()
                     {
-                        if let Some(path) = rfd::FileDialog::new().save_file() {
+                        if let Some(path) = save_hdri_dialog.clone().save_file() {
                             self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
                         }
                     }
@@ -230,7 +248,7 @@ impl epi::App for HDRIMergeApp {
                     .add_enabled(job_count == 0, egui::widgets::Button::new("Add Images..."))
                     .clicked()
                 {
-                    if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                    if let Some(paths) = add_images_dialog.clone().pick_files() {
                         self.add_image_files(
                             Arc::clone(&frame.repaint_signal()),
                             paths.iter().map(|pathbuf| pathbuf.as_path()),
@@ -261,7 +279,7 @@ impl epi::App for HDRIMergeApp {
                     )
                     .clicked()
                 {
-                    if let Some(path) = rfd::FileDialog::new().save_file() {
+                    if let Some(path) = save_hdri_dialog.clone().save_file() {
                         self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
                     }
                 }
@@ -438,7 +456,7 @@ impl HDRIMergeApp {
             status
                 .lock()
                 .unwrap()
-                .set_progress(format!("Estimating linearization curve"), 0.0);
+                .set_progress(format!("Estimating transfer function"), 0.0);
             repaint_signal.request_repaint();
 
             // Calculate histograms.
