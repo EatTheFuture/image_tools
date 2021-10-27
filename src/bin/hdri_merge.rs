@@ -338,15 +338,13 @@ impl HDRIMergeApp {
                 repaint_signal.request_repaint();
 
                 let src_img = &images.lock().unwrap()[img_i];
-                if let Some(ref mut hdri) = *hdri.lock().unwrap() {
-                    hdri.add_image(
-                        &src_img.image,
-                        src_img.exposure,
-                        &inv_mapping,
-                        img_i == 0,
-                        img_i == img_len - 1,
-                    );
-                }
+                hdri_merger.add_image(
+                    &src_img.image,
+                    src_img.exposure,
+                    &inv_mapping,
+                    img_i == 0,
+                    img_i == img_len - 1,
+                );
             }
 
             // Finalize.
