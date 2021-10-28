@@ -5,6 +5,7 @@ use std::{
 
 use clap::{App, Arg};
 use eframe::{egui, epi};
+use rayon::prelude::*;
 
 use sensor_analysis::{eval_luma_map, invert_luma_map};
 
@@ -27,7 +28,6 @@ fn main() {
     eframe::run_native(
         Box::new(HDRIMergeApp {
             job_queue: job_queue::JobQueue::new(),
-            hdri_preview_job_queue: job_queue::JobQueue::new(),
 
             images: Arc::new(Mutex::new(Vec::new())),
             hdri_merger: Arc::new(Mutex::new(None)),
@@ -51,7 +51,6 @@ type SharedData<T> = Arc<Mutex<T>>;
 
 struct HDRIMergeApp {
     job_queue: job_queue::JobQueue,
-    hdri_preview_job_queue: job_queue::JobQueue,
 
     images: SharedData<Vec<SourceImage>>,
     hdri_merger: SharedData<Option<HDRIMerger>>,
@@ -514,6 +513,7 @@ impl HDRIMergeApp {
             for img_i in 0..img_len {
                 for chan in 0..3 {
                     if status.lock().unwrap().is_canceled() {
+                        repaint_signal.request_repaint();
                         return;
                     }
                     let src_img = &images.lock().unwrap()[img_i];
@@ -548,6 +548,7 @@ impl HDRIMergeApp {
             let mut hdri_merger = HDRIMerger::new(width, height);
             for img_i in 0..img_len {
                 if status.lock().unwrap().is_canceled() {
+                    repaint_signal.request_repaint();
                     return;
                 }
                 status.lock().unwrap().set_progress(
@@ -568,6 +569,7 @@ impl HDRIMergeApp {
 
             // Finalize.
             if status.lock().unwrap().is_canceled() {
+                repaint_signal.request_repaint();
                 return;
             }
             status.lock().unwrap().set_progress(
@@ -624,15 +626,21 @@ impl HDRIMergeApp {
                 repaint_signal.request_repaint();
 
                 let exposure = 2.0f32.powf(ui_data.lock().unwrap().preview_exposure);
+                let srgb_table: Vec<f32> = (0..256)
+                    .map(|n| {
+                        sensor_analysis::known_luma_curves::srgb::from_linear(n as f32 / 255.0)
+                    })
+                    .collect();
                 let preview: Option<(Vec<egui::Color32>, usize, usize)> =
                     hdri.lock().unwrap().as_ref().map(|hdri| {
                         let map_val = |n: f32| {
-                            ((n * exposure).powf(1.0 / 2.2) * 255.0).max(0.0).min(255.0) as u8
+                            (eval_luma_map(&srgb_table, (n * exposure).max(0.0).min(1.0)) * 255.0)
+                                as u8
                         };
 
                         (
                             hdri.pixels
-                                .iter()
+                                .par_iter()
                                 .map(|[r, g, b]| {
                                     let r = map_val(*r);
                                     let g = map_val(*g);
@@ -644,6 +652,11 @@ impl HDRIMergeApp {
                             hdri.height,
                         )
                     });
+
+                if status.lock().unwrap().is_canceled() {
+                    repaint_signal.request_repaint();
+                    return;
+                }
 
                 if preview.is_some() {
                     *hdri_preview.lock().unwrap() = preview;

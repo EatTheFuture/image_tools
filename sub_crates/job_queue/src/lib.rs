@@ -24,17 +24,13 @@ impl JobQueue {
         }
     }
 
-    pub fn add_job<F>(&self, name: &str, job: F) -> bool
+    pub fn add_job<F>(&self, name: &str, job: F)
     where
         F: FnOnce(&Mutex<JobStatus>) + Send + std::panic::UnwindSafe + 'static,
     {
         let job_name1 = name.to_string();
         let job_name2 = name.to_string();
         let mut job_status = self.job_status.lock().unwrap();
-        if job_status.do_cancel {
-            // Don't allow adding jobs when in the middle of canceling.
-            return false;
-        }
 
         // Add the job.
         let local_job_status = Arc::clone(&self.job_status);
@@ -58,8 +54,6 @@ impl JobQueue {
             }),
             job_name2,
         ));
-
-        true
     }
 
     pub fn progress(&self) -> Option<(String, f32)> {
@@ -83,6 +77,16 @@ impl JobQueue {
         }
     }
 
+    /// Cancel all jobs that aren't currently running.
+    pub fn cancel_pending_jobs(&self) {
+        let mut job_status = self.job_status.lock().unwrap();
+
+        // Cancel all not-currently-running jobs.
+        while job_status.jobs.len() > 1 {
+            job_status.jobs.pop_back().unwrap().0.cancel();
+        }
+    }
+
     pub fn cancel_jobs_with_name(&self, name: &str) {
         let mut job_status = self.job_status.lock().unwrap();
         if !job_status.jobs.is_empty() {
@@ -101,7 +105,7 @@ impl JobQueue {
         }
     }
 
-    // Cancels any jobs not currently running that match the name.
+    /// Cancel all jobs that aren't currently running that match the given name.
     pub fn cancel_pending_jobs_with_name(&self, name: &str) {
         let mut job_status = self.job_status.lock().unwrap();
         if job_status.jobs.len() > 1 {

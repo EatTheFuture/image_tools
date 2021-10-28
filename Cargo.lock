@@ -963,6 +963,7 @@ dependencies = [
  "kamadak-exif",
  "lut",
  "rawloader",
+ "rayon",
  "rfd",
  "sensor_analysis",
 ]
