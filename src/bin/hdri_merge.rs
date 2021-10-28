@@ -29,12 +29,13 @@ fn main() {
             job_queue: job_queue::JobQueue::new(),
 
             images: Arc::new(Mutex::new(Vec::new())),
-            hdri: Arc::new(Mutex::new(None)),
+            hdri_merger: Arc::new(Mutex::new(None)),
             ui_data: Arc::new(Mutex::new(UIData {
+                preview_exposure: 0.0,
                 thumbnails: Vec::new(),
+                hdri_preview: None,
+                log_read: 0,
             })),
-
-            log_read: 0,
         }),
         eframe::NativeOptions {
             drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
@@ -49,15 +50,20 @@ struct HDRIMergeApp {
     job_queue: job_queue::JobQueue,
 
     images: SharedData<Vec<SourceImage>>,
-    hdri: SharedData<Option<HDRIMerger>>,
-    ui_data: SharedData<UIData>,
+    hdri_merger: SharedData<Option<HDRIMerger>>,
 
-    log_read: usize,
+    ui_data: SharedData<UIData>,
 }
 
 /// The data that the UI needs realtime access to for responsiveness.
 struct UIData {
+    // Widgets.
+    preview_exposure: f32,
+
+    // Others.
     thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, f32)>,
+    hdri_preview: Option<(egui::TextureId, usize, usize)>,
+    log_read: usize,
 }
 
 impl epi::App for HDRIMergeApp {
@@ -82,11 +88,11 @@ impl epi::App for HDRIMergeApp {
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
         // Some simple queries we use in drawing the UI.
         let have_enough_images = self.ui_data.lock().unwrap().thumbnails.len() >= 2;
-        let have_hdri = match Arc::clone(&self.hdri).try_lock() {
+        let have_hdri = match Arc::clone(&self.hdri_merger).try_lock() {
             Ok(hdri) => hdri.is_some(),
             _ => false,
         };
-        let unread_log_count = self.job_queue.log_count() - self.log_read;
+        let unread_log_count = self.job_queue.log_count() - self.ui_data.lock().unwrap().log_read;
         let jobs_are_canceling = self.job_queue.is_canceling();
         let job_count = self.job_queue.job_count();
 
@@ -198,7 +204,7 @@ impl epi::App for HDRIMergeApp {
                 });
             } else if unread_log_count > 0 {
                 if ui.add(egui::widgets::Button::new("Clear Log")).clicked() {
-                    self.log_read = self.job_queue.log_count();
+                    self.ui_data.lock().unwrap().log_read = self.job_queue.log_count();
                 }
             }
         });
@@ -217,22 +223,7 @@ impl epi::App for HDRIMergeApp {
 
                         // Build thumbnail texture if it doesn't already exist.
                         if tex_id.is_none() {
-                            assert_eq!(
-                                thumbnail.width() as usize * thumbnail.height() as usize * 3,
-                                thumbnail.as_raw().len()
-                            );
-                            let pixels: Vec<_> = thumbnail
-                                .as_raw()
-                                .chunks_exact(3)
-                                .map(|p| {
-                                    egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], 255)
-                                })
-                                .collect();
-
-                            *tex_id = Some(frame.tex_allocator().alloc_srgba_premultiplied(
-                                (thumbnail.width() as usize, thumbnail.height() as usize),
-                                &pixels,
-                            ));
+                            *tex_id = Some(make_texture(&thumbnail, frame.tex_allocator()));
                         }
 
                         ui.image(tex_id.unwrap(), egui::Vec2::new(width, height));
@@ -284,6 +275,49 @@ impl epi::App for HDRIMergeApp {
                     }
                 }
             });
+
+            if have_hdri {
+                let mut ui_data = self.ui_data.lock().unwrap();
+                if ui_data.hdri_preview.is_none()
+                    || ui
+                        .add(
+                            egui::widgets::DragValue::new(&mut ui_data.preview_exposure)
+                                .speed(0.1)
+                                .prefix("Exposure: "),
+                        )
+                        .changed()
+                {
+                    if let Ok(hdri) = self.hdri_merger.try_lock() {
+                        let hdri = hdri.as_ref().unwrap();
+                        let exposure = 2.0f32.powf(ui_data.preview_exposure);
+                        let map_val = |n: f32| {
+                            ((n * exposure).powf(1.0 / 2.2) * 255.0).max(0.0).min(255.0) as u8
+                        };
+                        let pixels: Vec<egui::Color32> = hdri
+                            .pixels
+                            .iter()
+                            .map(|[r, g, b]| {
+                                let r = map_val(*r);
+                                let g = map_val(*g);
+                                let b = map_val(*b);
+                                egui::Color32::from_rgba_unmultiplied(r, g, b, 255)
+                            })
+                            .collect();
+                        let tex_id = frame
+                            .tex_allocator()
+                            .alloc_srgba_premultiplied((hdri.width, hdri.height), &pixels);
+                        if let Some((old_tex_id, _, _)) = ui_data.hdri_preview {
+                            frame.tex_allocator().free(old_tex_id);
+                        }
+                        ui_data.hdri_preview = Some((tex_id, hdri.width, hdri.height));
+                    }
+                }
+                if let Some((tex_id, width, height)) = ui_data.hdri_preview {
+                    egui::containers::ScrollArea::both().show(ui, |ui| {
+                        ui.image(tex_id, egui::Vec2::new(width as f32, height as f32));
+                    });
+                }
+            }
         });
 
         //----------------
@@ -445,7 +479,7 @@ impl HDRIMergeApp {
         use sensor_analysis::Histogram;
 
         let images = Arc::clone(&self.images);
-        let hdri = Arc::clone(&self.hdri);
+        let hdri = Arc::clone(&self.hdri_merger);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
         self.job_queue.add_job("Build HDRI", move |status| {
@@ -533,7 +567,7 @@ impl HDRIMergeApp {
     }
 
     fn save_hdri(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>, path: PathBuf) {
-        let hdri = Arc::clone(&self.hdri);
+        let hdri = Arc::clone(&self.hdri_merger);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
         self.job_queue.add_job("Save HDRI", move |status| {
@@ -636,4 +670,21 @@ impl HDRIMerger {
             }
         }
     }
+}
+
+fn make_texture(
+    img: &image::RgbImage,
+    tex_allocator: &mut dyn epi::TextureAllocator,
+) -> egui::TextureId {
+    assert_eq!(
+        img.width() as usize * img.height() as usize * 3,
+        img.as_raw().len()
+    );
+    let pixels: Vec<_> = img
+        .as_raw()
+        .chunks_exact(3)
+        .map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], 255))
+        .collect();
+
+    tex_allocator.alloc_srgba_premultiplied((img.width() as usize, img.height() as usize), &pixels)
 }
