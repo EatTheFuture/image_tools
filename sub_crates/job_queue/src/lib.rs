@@ -28,7 +28,8 @@ impl JobQueue {
     where
         F: FnOnce(&Mutex<JobStatus>) + Send + std::panic::UnwindSafe + 'static,
     {
-        let job_name = name.to_string();
+        let job_name1 = name.to_string();
+        let job_name2 = name.to_string();
         let mut job_status = self.job_status.lock().unwrap();
         if job_status.do_cancel {
             // Don't allow adding jobs when in the middle of canceling.
@@ -37,28 +38,26 @@ impl JobQueue {
 
         // Add the job.
         let local_job_status = Arc::clone(&self.job_status);
-        job_status.jobs.push_back(self.runner.execute(move || {
-            let job_status = local_job_status;
+        job_status.jobs.push_back((
+            self.runner.execute(move || {
+                let job_status = local_job_status;
 
-            // Actually run the job.
-            if let Err(_) = std::panic::catch_unwind(|| job(&job_status)) {
-                job_status
-                    .lock()
-                    .unwrap()
-                    .log_error(format!("ERROR: job \"{}\" panicked!", job_name));
-            }
-
-            // Cleanup.
-            let mut job_status = job_status.lock().unwrap();
-            job_status.jobs.pop_front(); // This job.
-            if job_status.do_cancel {
-                for job in job_status.jobs.drain(..) {
-                    job.cancel();
+                // Actually run the job.
+                if let Err(_) = std::panic::catch_unwind(|| job(&job_status)) {
+                    job_status
+                        .lock()
+                        .unwrap()
+                        .log_error(format!("ERROR: job \"{}\" panicked!", job_name1));
                 }
+
+                // Cleanup.
+                let mut job_status = job_status.lock().unwrap();
+                job_status.jobs.pop_front(); // This job.
                 job_status.do_cancel = false;
-            }
-            job_status.clear_progress();
-        }));
+                job_status.clear_progress();
+            }),
+            job_name2,
+        ));
 
         true
     }
@@ -74,7 +73,45 @@ impl JobQueue {
     pub fn cancel_all_jobs(&self) {
         let mut job_status = self.job_status.lock().unwrap();
         if !job_status.jobs.is_empty() {
+            // Cancel all not-currently-running jobs.
+            while job_status.jobs.len() > 1 {
+                job_status.jobs.pop_back().unwrap().0.cancel()
+            }
+
+            // Mark currently running job for cancelation.
             job_status.do_cancel = true;
+        }
+    }
+
+    pub fn cancel_jobs_with_name(&self, name: &str) {
+        let mut job_status = self.job_status.lock().unwrap();
+        if !job_status.jobs.is_empty() {
+            // Cancel all not-currently-running jobs with name.
+            for i in 0..(job_status.jobs.len() - 1) {
+                let job_i = job_status.jobs.len() - 1 - i;
+                if job_status.jobs[job_i].1 == name {
+                    job_status.jobs.remove(job_i).unwrap().0.cancel();
+                }
+            }
+
+            // Mark currently running job for cancelation if its name matches.
+            if job_status.jobs[0].1 == name {
+                job_status.do_cancel = true;
+            }
+        }
+    }
+
+    // Cancels any jobs not currently running that match the name.
+    pub fn cancel_pending_jobs_with_name(&self, name: &str) {
+        let mut job_status = self.job_status.lock().unwrap();
+        if job_status.jobs.len() > 1 {
+            // Cancel all not-currently-running jobs with name.
+            for i in 0..(job_status.jobs.len() - 1) {
+                let job_i = job_status.jobs.len() - 1 - i;
+                if job_status.jobs[job_i].1 == name {
+                    job_status.jobs.remove(job_i).unwrap().0.cancel();
+                }
+            }
         }
     }
 
@@ -104,7 +141,7 @@ pub enum LogLevel {
 }
 
 pub struct JobStatus {
-    jobs: VecDeque<JobHandle>,
+    jobs: VecDeque<(JobHandle, String)>, // (handle, name)
     job_progress: Option<(String, f32)>,
     log: VecDeque<(String, LogLevel)>,
     do_cancel: bool,
