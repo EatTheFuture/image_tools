@@ -35,6 +35,7 @@ fn main() {
             ui_data: Arc::new(Mutex::new(UIData {
                 preview_exposure: 0.0,
                 selected_image_index: 0,
+                image_zoom: 1.0,
                 thumbnails: Vec::new(),
                 hdri_preview_tex: None,
                 hdri_preview_tex_needs_update: false,
@@ -65,6 +66,7 @@ struct UIData {
     // Widgets.
     preview_exposure: f32,
     selected_image_index: usize,
+    image_zoom: f32,
 
     // Others.
     thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, ImageInfo)>,
@@ -274,8 +276,8 @@ impl epi::App for HDRIMergeApp {
                         });
 
                         ui.add_space(spacing);
-                        ui.add(Label::new("EV:").strong());
-                        ui.indent("", |ui| ui.label(format!("{}", info.exposure)));
+                        ui.add(Label::new("Log Exposure:").strong());
+                        ui.indent("", |ui| ui.label(format!("{:.1}", info.exposure.log2())));
 
                         ui.add_space(spacing * 1.5);
                         ui.collapsing("more", |ui| {
@@ -421,24 +423,47 @@ impl epi::App for HDRIMergeApp {
                 }
             });
 
+            ui.add(egui::widgets::Separator::default().spacing(12.0));
+
             if have_hdri_preview_tex {
-                if ui
-                    .add(
-                        egui::widgets::DragValue::new(
-                            &mut self.ui_data.lock().unwrap().preview_exposure,
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::widgets::Slider::new(
+                            &mut self.ui_data.lock().unwrap().image_zoom,
+                            0.1..=1.0,
                         )
-                        .speed(0.1)
-                        .prefix("Exposure: "),
-                    )
-                    .changed()
-                {
-                    self.compute_hdri_preview(Arc::clone(&frame.repaint_signal()));
-                }
+                        .prefix("Zoom: ")
+                        .suffix("x"),
+                    );
+                    ui.add_space(32.0);
+                    if ui
+                        .add(
+                            egui::widgets::DragValue::new(
+                                &mut self.ui_data.lock().unwrap().preview_exposure,
+                            )
+                            .speed(0.1)
+                            .prefix("Log Exposure: "),
+                        )
+                        .changed()
+                    {
+                        self.compute_hdri_preview(Arc::clone(&frame.repaint_signal()));
+                    }
+                });
+
+                let image_zoom = self.ui_data.lock().unwrap().image_zoom;
                 if let Some((tex_id, width, height)) = self.ui_data.lock().unwrap().hdri_preview_tex
                 {
-                    egui::containers::ScrollArea::both().show(ui, |ui| {
-                        ui.image(tex_id, egui::Vec2::new(width as f32, height as f32));
-                    });
+                    egui::containers::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.image(
+                                tex_id,
+                                egui::Vec2::new(
+                                    width as f32 * image_zoom,
+                                    height as f32 * image_zoom,
+                                ),
+                            );
+                        });
                 }
             }
         });
