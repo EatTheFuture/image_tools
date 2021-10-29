@@ -34,6 +34,7 @@ fn main() {
             hdri_preview: Arc::new(Mutex::new(None)),
             ui_data: Arc::new(Mutex::new(UIData {
                 preview_exposure: 0.0,
+                selected_image_index: 0,
                 thumbnails: Vec::new(),
                 hdri_preview_tex: None,
                 hdri_preview_tex_needs_update: false,
@@ -63,6 +64,7 @@ struct HDRIMergeApp {
 struct UIData {
     // Widgets.
     preview_exposure: f32,
+    selected_image_index: usize,
 
     // Others.
     thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, f32)>,
@@ -249,10 +251,15 @@ impl epi::App for HDRIMergeApp {
         egui::containers::panel::SidePanel::left("image_list")
             .resizable(false)
             .show(ctx, |ui| {
+                let mut remove_i = None; // Temp to store index of an image to remove.
+
                 // Image thumbnails.
                 egui::containers::ScrollArea::vertical().show(ui, |ui| {
-                    for (thumbnail, ref mut tex_id, _) in
-                        self.ui_data.lock().unwrap().thumbnails.iter_mut()
+                    let ui_data = &mut *self.ui_data.lock().unwrap();
+                    let thumbnails = &mut ui_data.thumbnails;
+                    let selected_image_index = &mut ui_data.selected_image_index;
+
+                    for (img_i, (thumbnail, ref mut tex_id, _)) in thumbnails.iter_mut().enumerate()
                     {
                         let height = 64.0;
                         let width = height / thumbnail.height() as f32 * thumbnail.width() as f32;
@@ -262,9 +269,31 @@ impl epi::App for HDRIMergeApp {
                             *tex_id = Some(make_texture(&thumbnail, frame.tex_allocator()));
                         }
 
-                        ui.image(tex_id.unwrap(), egui::Vec2::new(width, height));
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(
+                                    egui::widgets::ImageButton::new(
+                                        tex_id.unwrap(),
+                                        egui::Vec2::new(width, height),
+                                    )
+                                    .selected(img_i == *selected_image_index),
+                                )
+                                .clicked()
+                            {
+                                *selected_image_index = img_i;
+                            }
+                            if ui
+                                .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
+                                .clicked()
+                            {
+                                remove_i = Some(img_i);
+                            }
+                        });
                     }
                 });
+                if let Some(img_i) = remove_i {
+                    self.remove_image(Arc::clone(&frame.repaint_signal()), img_i);
+                }
             });
 
         // Main area.
@@ -485,6 +514,29 @@ impl HDRIMergeApp {
                     .thumbnails
                     .sort_unstable_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
             }
+            repaint_signal.request_repaint();
+        });
+    }
+
+    fn remove_image(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>, image_index: usize) {
+        let images = Arc::clone(&self.images);
+        let ui_data = Arc::clone(&self.ui_data);
+        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
+
+        self.job_queue.add_job("Remove Image", move |status| {
+            status
+                .lock()
+                .unwrap()
+                .set_progress(format!("Removing image..."), 0.0);
+            repaint_signal.request_repaint();
+
+            images.lock().unwrap().remove(image_index);
+            let mut ui_data = ui_data.lock().unwrap();
+            ui_data.thumbnails.remove(image_index);
+            if ui_data.selected_image_index > image_index {
+                ui_data.selected_image_index -= 1;
+            }
+
             repaint_signal.request_repaint();
         });
     }
