@@ -67,7 +67,7 @@ struct UIData {
     selected_image_index: usize,
 
     // Others.
-    thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, f32)>,
+    thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, ImageInfo)>,
     hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
     hdri_preview_tex_needs_update: bool,
     log_read: usize,
@@ -249,48 +249,128 @@ impl epi::App for HDRIMergeApp {
 
         // Image list (left-side panel).
         egui::containers::panel::SidePanel::left("image_list")
+            .min_width(200.0)
             .resizable(false)
             .show(ctx, |ui| {
                 let mut remove_i = None; // Temp to store index of an image to remove.
 
-                // Image thumbnails.
-                egui::containers::ScrollArea::vertical().show(ui, |ui| {
-                    let ui_data = &mut *self.ui_data.lock().unwrap();
-                    let thumbnails = &mut ui_data.thumbnails;
-                    let selected_image_index = &mut ui_data.selected_image_index;
+                // Selected image info.
+                // (Extra scope to contain ui_data's mutex guard.)
+                {
+                    use egui::widgets::Label;
+                    let ui_data = self.ui_data.lock().unwrap();
+                    let spacing = 4.0;
 
-                    for (img_i, (thumbnail, ref mut tex_id, _)) in thumbnails.iter_mut().enumerate()
-                    {
-                        let height = 64.0;
-                        let width = height / thumbnail.height() as f32 * thumbnail.width() as f32;
+                    ui.add_space(spacing + 4.0);
+                    if ui_data.selected_image_index < ui_data.thumbnails.len() {
+                        let info = &ui_data.thumbnails[ui_data.selected_image_index].2;
+                        ui.add(Label::new("Filename:").strong());
+                        ui.indent("", |ui| ui.label(format!("{}", info.filename)));
 
-                        // Build thumbnail texture if it doesn't already exist.
-                        if tex_id.is_none() {
-                            *tex_id = Some(make_texture(&thumbnail, frame.tex_allocator()));
-                        }
-
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add(
-                                    egui::widgets::ImageButton::new(
-                                        tex_id.unwrap(),
-                                        egui::Vec2::new(width, height),
-                                    )
-                                    .selected(img_i == *selected_image_index),
-                                )
-                                .clicked()
-                            {
-                                *selected_image_index = img_i;
-                            }
-                            if ui
-                                .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
-                                .clicked()
-                            {
-                                remove_i = Some(img_i);
-                            }
+                        ui.add_space(spacing);
+                        ui.add(Label::new("Resolution:").strong());
+                        ui.indent("", |ui| {
+                            ui.label(format!("{} x {}", info.width, info.height))
                         });
+
+                        ui.add_space(spacing);
+                        ui.add(Label::new("EV:").strong());
+                        ui.indent("", |ui| ui.label(format!("{}", info.exposure)));
+
+                        ui.add_space(spacing * 1.5);
+                        ui.collapsing("more", |ui| {
+                            ui.add(Label::new("Filepath:"));
+                            ui.indent("", |ui| ui.label(format!("{}", info.full_filepath)));
+
+                            ui.add_space(spacing);
+                            ui.add(Label::new("Exif:"));
+                            ui.indent("", |ui| {
+                                ui.label(format!(
+                                    "Shutter speed: {}",
+                                    if let Some(e) = info.exposure_time {
+                                        if e.0 < e.1 {
+                                            format!("{}/{}", e.0, e.1)
+                                        } else {
+                                            format!("{}", e.0 as f64 / e.1 as f64)
+                                        }
+                                    } else {
+                                        "none".into()
+                                    }
+                                ))
+                            });
+
+                            ui.indent("", |ui| {
+                                ui.label(format!(
+                                    "F-stop: {}",
+                                    if let Some(f) = info.fstop {
+                                        format!("f/{:.1}", f.0 as f64 / f.1 as f64)
+                                    } else {
+                                        "none".into()
+                                    }
+                                ))
+                            });
+
+                            ui.indent("", |ui| {
+                                ui.label(format!(
+                                    "ISO: {}",
+                                    if let Some(iso) = info.iso {
+                                        format!("{}", iso)
+                                    } else {
+                                        "none".into()
+                                    }
+                                ))
+                            });
+                        });
+                    } else {
+                        ui.label("No images loaded.");
                     }
-                });
+                }
+
+                ui.add(egui::widgets::Separator::default().spacing(16.0));
+
+                // Image thumbnails.
+                egui::containers::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let ui_data = &mut *self.ui_data.lock().unwrap();
+                        let thumbnails = &mut ui_data.thumbnails;
+                        let selected_image_index = &mut ui_data.selected_image_index;
+
+                        for (img_i, (thumbnail, ref mut tex_id, _)) in
+                            thumbnails.iter_mut().enumerate()
+                        {
+                            let height = 64.0;
+                            let width =
+                                height / thumbnail.height() as f32 * thumbnail.width() as f32;
+
+                            // Build thumbnail texture if it doesn't already exist.
+                            if tex_id.is_none() {
+                                *tex_id = Some(make_texture(&thumbnail, frame.tex_allocator()));
+                            }
+
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add(
+                                        egui::widgets::ImageButton::new(
+                                            tex_id.unwrap(),
+                                            egui::Vec2::new(width, height),
+                                        )
+                                        .selected(img_i == *selected_image_index),
+                                    )
+                                    .clicked()
+                                {
+                                    *selected_image_index = img_i;
+                                }
+                                if ui
+                                    .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
+                                    .clicked()
+                                {
+                                    remove_i = Some(img_i);
+                                }
+                            });
+                        }
+                    });
+
                 if let Some(img_i) = remove_i {
                     self.remove_image(Arc::clone(&frame.repaint_signal()), img_i);
                 }
@@ -477,6 +557,20 @@ impl HDRIMergeApp {
                     1.0
                 };
 
+                // Fill in image info.
+                let image_info = ImageInfo {
+                    filename: path.file_name().map(|p| p.to_string_lossy().into()).unwrap_or_else(|| "".into()),
+                    full_filepath: path.to_string_lossy().into(),
+
+                    width: img.width() as usize,
+                    height: img.height() as usize,
+                    exposure: total_exposure as f32,
+
+                    exposure_time: exposure_time.map(|n| (n.num, n.denom)),
+                    fstop: fstop.map(|n| (n.num, n.denom)),
+                    iso: sensitivity,
+                };
+
                 // Make a thumbnail texture.
                 let thumbnail = {
                     let height = 128;
@@ -493,26 +587,22 @@ impl HDRIMergeApp {
                 // Add image to our list of source images.
                 images.lock().unwrap().push(SourceImage {
                     image: img,
-                    exposure: total_exposure as f32,
-
-                    meta_exposure_time: exposure_time.map(|n| (n.num, n.denom)),
-                    meta_fstop: fstop.map(|n| (n.num, n.denom)),
-                    meta_iso: sensitivity,
+                    info: image_info.clone(),
                 });
                 ui_data
                     .lock()
                     .unwrap()
                     .thumbnails
-                    .push((thumbnail, None, total_exposure as f32));
+                    .push((thumbnail, None, image_info.clone()));
                 images
                     .lock()
                     .unwrap()
-                    .sort_unstable_by(|a, b| a.exposure.partial_cmp(&b.exposure).unwrap());
+                    .sort_unstable_by(|a, b| a.info.exposure.partial_cmp(&b.info.exposure).unwrap());
                 ui_data
                     .lock()
                     .unwrap()
                     .thumbnails
-                    .sort_unstable_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+                    .sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
             }
             repaint_signal.request_repaint();
         });
@@ -577,7 +667,7 @@ impl HDRIMergeApp {
                                 .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
                             256,
                         ),
-                        src_img.exposure,
+                        src_img.info.exposure,
                     ));
                 }
             }
@@ -612,7 +702,7 @@ impl HDRIMergeApp {
                 let src_img = &images.lock().unwrap()[img_i];
                 hdri_merger.add_image(
                     &src_img.image,
-                    src_img.exposure,
+                    src_img.info.exposure,
                     &inv_mapping,
                     img_i == 0,
                     img_i == img_len - 1,
@@ -723,11 +813,22 @@ impl HDRIMergeApp {
 #[derive(Debug)]
 struct SourceImage {
     image: image::RgbImage,
+
+    info: ImageInfo,
+}
+
+#[derive(Debug, Clone)]
+struct ImageInfo {
+    filename: String,
+    full_filepath: String,
+
+    width: usize,
+    height: usize,
     exposure: f32,
 
-    meta_exposure_time: Option<(u32, u32)>, // Ratio.
-    meta_fstop: Option<(u32, u32)>,         // Ratio.
-    meta_iso: Option<u32>,
+    exposure_time: Option<(u32, u32)>, // Ratio.
+    fstop: Option<(u32, u32)>,         // Ratio.
+    iso: Option<u32>,
 }
 
 #[derive(Debug)]
