@@ -479,21 +479,37 @@ impl epi::App for HDRIMergeApp {
                 let spacing = 32.0;
 
                 ui.vertical(|ui| {
-                    ui.radio_value(
-                        &mut self.ui_data.lock().unwrap().show_image,
-                        ShowImage::SelectedImage,
-                        "Show Selected Image",
-                    );
-                    ui.radio_value(
-                        &mut self.ui_data.lock().unwrap().show_image,
-                        ShowImage::HDRI,
-                        "Show HDRI",
-                    );
+                    let show_image = &mut self.ui_data.lock().unwrap().show_image;
+                    if ui
+                        .add_enabled(
+                            image_count > 0,
+                            egui::widgets::RadioButton::new(
+                                *show_image == ShowImage::SelectedImage,
+                                "Show Selected Image",
+                            ),
+                        )
+                        .clicked()
+                    {
+                        *show_image = ShowImage::SelectedImage;
+                    }
+                    if ui
+                        .add_enabled(
+                            have_hdri,
+                            egui::widgets::RadioButton::new(
+                                *show_image == ShowImage::HDRI,
+                                "Show HDRI",
+                            ),
+                        )
+                        .clicked()
+                    {
+                        *show_image = ShowImage::HDRI;
+                    }
                 });
 
                 ui.add_space(spacing);
 
-                ui.add(
+                ui.add_enabled(
+                    image_count > 0 || have_hdri,
                     egui::widgets::Slider::new(
                         &mut self.ui_data.lock().unwrap().image_zoom,
                         0.1..=1.0,
