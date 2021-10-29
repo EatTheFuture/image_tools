@@ -32,11 +32,17 @@ fn main() {
             images: Arc::new(Mutex::new(Vec::new())),
             hdri_merger: Arc::new(Mutex::new(None)),
             hdri_preview: Arc::new(Mutex::new(None)),
+            image_preview: Arc::new(Mutex::new(None)),
+
             ui_data: Arc::new(Mutex::new(UIData {
                 preview_exposure: 0.0,
                 selected_image_index: 0,
                 image_zoom: 1.0,
+                show_image: ShowImage::SelectedImage,
+
                 thumbnails: Vec::new(),
+                image_preview_tex: None,
+                image_preview_tex_needs_update: false,
                 hdri_preview_tex: None,
                 hdri_preview_tex_needs_update: false,
                 log_read: 0,
@@ -57,6 +63,7 @@ struct HDRIMergeApp {
     images: SharedData<Vec<SourceImage>>,
     hdri_merger: SharedData<Option<HDRIMerger>>,
     hdri_preview: SharedData<Option<(Vec<egui::Color32>, usize, usize)>>,
+    image_preview: SharedData<Option<(Vec<egui::Color32>, usize, usize)>>,
 
     ui_data: SharedData<UIData>,
 }
@@ -67,12 +74,21 @@ struct UIData {
     preview_exposure: f32,
     selected_image_index: usize,
     image_zoom: f32,
+    show_image: ShowImage,
 
     // Others.
     thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, ImageInfo)>,
+    image_preview_tex: Option<(egui::TextureId, usize, usize)>,
+    image_preview_tex_needs_update: bool,
     hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
     hdri_preview_tex_needs_update: bool,
     log_read: usize,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ShowImage {
+    SelectedImage,
+    HDRI,
 }
 
 impl epi::App for HDRIMergeApp {
@@ -125,8 +141,38 @@ impl epi::App for HDRIMergeApp {
             }
         }
 
+        // Update the image preview texture if needed.
+        if self.ui_data.lock().unwrap().image_preview_tex_needs_update {
+            let tex_info =
+                self.image_preview
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|(pixels, width, height)| {
+                        (
+                            frame
+                                .tex_allocator()
+                                .alloc_srgba_premultiplied((*width, *height), &pixels),
+                            *width,
+                            *height,
+                        )
+                    });
+
+            if let (Some((tex_id, width, height)), mut ui_data) =
+                (tex_info, self.ui_data.lock().unwrap())
+            {
+                let old = ui_data.image_preview_tex;
+                ui_data.image_preview_tex = Some((tex_id, width, height));
+                if let Some((old_tex_id, _, _)) = old {
+                    frame.tex_allocator().free(old_tex_id);
+                }
+
+                ui_data.image_preview_tex_needs_update = false;
+            }
+        }
+
         // Some simple queries we use in drawing the UI.
-        let have_enough_images = self.ui_data.lock().unwrap().thumbnails.len() >= 2;
+        let image_count = self.ui_data.lock().unwrap().thumbnails.len();
         let have_hdri = match Arc::clone(&self.hdri_merger).try_lock() {
             Ok(hdri) => hdri.is_some(),
             _ => false,
@@ -362,6 +408,10 @@ impl epi::App for HDRIMergeApp {
                                     .clicked()
                                 {
                                     *selected_image_index = img_i;
+                                    self.compute_image_preview(
+                                        Arc::clone(&frame.repaint_signal()),
+                                        img_i,
+                                    );
                                 }
                                 if ui
                                     .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
@@ -399,7 +449,7 @@ impl epi::App for HDRIMergeApp {
                 // Build HDRI button.
                 if ui
                     .add_enabled(
-                        have_enough_images && job_count == 0,
+                        image_count >= 2 && job_count == 0,
                         egui::widgets::Button::new("Build HDRI"),
                     )
                     .clicked()
@@ -425,17 +475,35 @@ impl epi::App for HDRIMergeApp {
 
             ui.add(egui::widgets::Separator::default().spacing(12.0));
 
-            if have_hdri_preview_tex {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::widgets::Slider::new(
-                            &mut self.ui_data.lock().unwrap().image_zoom,
-                            0.1..=1.0,
-                        )
-                        .prefix("Zoom: ")
-                        .suffix("x"),
+            ui.horizontal(|ui| {
+                let spacing = 32.0;
+
+                ui.vertical(|ui| {
+                    ui.radio_value(
+                        &mut self.ui_data.lock().unwrap().show_image,
+                        ShowImage::SelectedImage,
+                        "Show Selected Image",
                     );
-                    ui.add_space(32.0);
+                    ui.radio_value(
+                        &mut self.ui_data.lock().unwrap().show_image,
+                        ShowImage::HDRI,
+                        "Show HDRI",
+                    );
+                });
+
+                ui.add_space(spacing);
+
+                ui.add(
+                    egui::widgets::Slider::new(
+                        &mut self.ui_data.lock().unwrap().image_zoom,
+                        0.1..=1.0,
+                    )
+                    .prefix("Zoom: ")
+                    .suffix("x"),
+                );
+
+                if self.ui_data.lock().unwrap().show_image == ShowImage::HDRI {
+                    ui.add_space(spacing);
                     if ui
                         .add(
                             egui::widgets::DragValue::new(
@@ -448,14 +516,18 @@ impl epi::App for HDRIMergeApp {
                     {
                         self.compute_hdri_preview(Arc::clone(&frame.repaint_signal()));
                     }
-                });
+                }
+            });
 
-                let image_zoom = self.ui_data.lock().unwrap().image_zoom;
-                if let Some((tex_id, width, height)) = self.ui_data.lock().unwrap().hdri_preview_tex
-                {
-                    egui::containers::ScrollArea::both()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
+            let show_image = self.ui_data.lock().unwrap().show_image;
+            let image_zoom = self.ui_data.lock().unwrap().image_zoom;
+            egui::containers::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if show_image == ShowImage::HDRI && have_hdri_preview_tex {
+                        if let Some((tex_id, width, height)) =
+                            self.ui_data.lock().unwrap().hdri_preview_tex
+                        {
                             ui.image(
                                 tex_id,
                                 egui::Vec2::new(
@@ -463,9 +535,21 @@ impl epi::App for HDRIMergeApp {
                                     height as f32 * image_zoom,
                                 ),
                             );
-                        });
-                }
-            }
+                        }
+                    } else if show_image == ShowImage::SelectedImage && image_count > 0 {
+                        if let Some((tex_id, width, height)) =
+                            self.ui_data.lock().unwrap().image_preview_tex
+                        {
+                            ui.image(
+                                tex_id,
+                                egui::Vec2::new(
+                                    width as f32 * image_zoom,
+                                    height as f32 * image_zoom,
+                                ),
+                            );
+                        }
+                    }
+                });
         });
 
         //----------------
@@ -495,6 +579,7 @@ impl HDRIMergeApp {
         let images = Arc::clone(&self.images);
         let ui_data = Arc::clone(&self.ui_data);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
+        let repaint_signal_2 = Arc::clone(&repaint_signal);
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
@@ -629,14 +714,19 @@ impl HDRIMergeApp {
                     .thumbnails
                     .sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
             }
+
             repaint_signal.request_repaint();
         });
+
+        let selected_image_index = self.ui_data.lock().unwrap().selected_image_index;
+        self.compute_image_preview(repaint_signal_2, selected_image_index);
     }
 
-    fn remove_image(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>, image_index: usize) {
+    fn remove_image(&self, repaint_signal: Arc<dyn epi::RepaintSignal>, image_index: usize) {
         let images = Arc::clone(&self.images);
         let ui_data = Arc::clone(&self.ui_data);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
+        let repaint_signal_2 = Arc::clone(&repaint_signal);
 
         self.job_queue.add_job("Remove Image", move |status| {
             status
@@ -645,15 +735,20 @@ impl HDRIMergeApp {
                 .set_progress(format!("Removing image..."), 0.0);
             repaint_signal.request_repaint();
 
-            images.lock().unwrap().remove(image_index);
-            let mut ui_data = ui_data.lock().unwrap();
-            ui_data.thumbnails.remove(image_index);
-            if ui_data.selected_image_index > image_index {
-                ui_data.selected_image_index -= 1;
+            {
+                images.lock().unwrap().remove(image_index);
+                let mut ui_data = ui_data.lock().unwrap();
+                ui_data.thumbnails.remove(image_index);
+                if ui_data.selected_image_index > image_index {
+                    ui_data.selected_image_index -= 1;
+                }
             }
 
             repaint_signal.request_repaint();
         });
+
+        let selected_image_index = self.ui_data.lock().unwrap().selected_image_index;
+        self.compute_image_preview(repaint_signal_2, selected_image_index);
     }
 
     fn build_hdri(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>) {
@@ -828,6 +923,56 @@ impl HDRIMergeApp {
                 if preview.is_some() {
                     *hdri_preview.lock().unwrap() = preview;
                     ui_data.lock().unwrap().hdri_preview_tex_needs_update = true;
+                }
+
+                repaint_signal.request_repaint();
+            });
+    }
+
+    fn compute_image_preview(
+        &self,
+        repaint_signal: Arc<dyn epi::RepaintSignal>,
+        image_index: usize,
+    ) {
+        let images = Arc::clone(&self.images);
+        let image_preview = Arc::clone(&self.image_preview);
+        let ui_data = Arc::clone(&self.ui_data);
+        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
+
+        self.job_queue.cancel_jobs_with_name("Update image preview");
+        self.job_queue
+            .add_job("Update image preview", move |status| {
+                status
+                    .lock()
+                    .unwrap()
+                    .set_progress("Updating image preview".to_string(), 0.0);
+                repaint_signal.request_repaint();
+
+                let preview: Option<(Vec<egui::Color32>, usize, usize)> =
+                    images.lock().unwrap().get(image_index).map(|image| {
+                        (
+                            image
+                                .image
+                                .pixels()
+                                .map(|pix| {
+                                    egui::Color32::from_rgba_unmultiplied(
+                                        pix[0], pix[1], pix[2], 255,
+                                    )
+                                })
+                                .collect(),
+                            image.image.width() as usize,
+                            image.image.height() as usize,
+                        )
+                    });
+
+                if status.lock().unwrap().is_canceled() {
+                    repaint_signal.request_repaint();
+                    return;
+                }
+
+                if preview.is_some() {
+                    *image_preview.lock().unwrap() = preview;
+                    ui_data.lock().unwrap().image_preview_tex_needs_update = true;
                 }
 
                 repaint_signal.request_repaint();
