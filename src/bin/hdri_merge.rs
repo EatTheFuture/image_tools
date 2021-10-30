@@ -241,61 +241,8 @@ impl epi::App for HDRIMergeApp {
             });
         });
 
-        // Status bar (footer).
-        egui::containers::panel::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            // Draw unread log messages, if any.
-            if unread_log_count > 0 {
-                egui::containers::ScrollArea::vertical()
-                    .auto_shrink([false, true])
-                    .max_height(100.0)
-                    .stick_to_bottom()
-                    .show(ui, |ui| {
-                        for i in 0..unread_log_count {
-                            let log_i = (unread_log_count - 1) - i;
-                            let (message, level) = self.job_queue.get_log(log_i);
-                            ui.add(match level {
-                                job_queue::LogLevel::Error => {
-                                    egui::widgets::Label::new(format!("ERROR: {}", message))
-                                        .strong()
-                                        .background_color(egui::Rgba::from_rgb(0.5, 0.05, 0.05))
-                                }
-                                job_queue::LogLevel::Warning => {
-                                    egui::widgets::Label::new(format!("Warning: {}", message))
-                                        .strong()
-                                }
-                                job_queue::LogLevel::Note => {
-                                    egui::widgets::Label::new(format!("{}", message))
-                                }
-                            });
-                        }
-                    });
-            }
-
-            // Draw progress bar for any in-progress jobs.
-            if let Some((text, ratio)) = self.job_queue.progress() {
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!jobs_are_canceling, egui::widgets::Button::new("Cancel"))
-                        .clicked()
-                    {
-                        self.job_queue.cancel_all_jobs();
-                    }
-                    ui.add(
-                        egui::widgets::ProgressBar::new(ratio)
-                            .text(if jobs_are_canceling {
-                                "Canceling..."
-                            } else {
-                                &text
-                            })
-                            .animate(true),
-                    );
-                });
-            } else if unread_log_count > 0 {
-                if ui.add(egui::widgets::Button::new("Clear Log")).clicked() {
-                    self.ui_data.lock().unwrap().log_read = self.job_queue.log_count();
-                }
-            }
-        });
+        // Status bar and log (footer).
+        egui_custom::status_bar(ctx, &self.job_queue);
 
         // Image list (left-side panel).
         egui::containers::panel::SidePanel::left("image_list")

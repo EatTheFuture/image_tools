@@ -128,8 +128,13 @@ impl JobQueue {
     }
 
     /// Index zero is the most recent error.
-    pub fn get_log(&self, index: usize) -> (String, LogLevel) {
-        self.job_status.lock().unwrap().log[index].clone()
+    pub fn get_log(&self, index: usize) -> Option<(String, LogLevel)> {
+        self.job_status
+            .lock()
+            .unwrap()
+            .log
+            .get(index)
+            .map(|l| l.clone())
     }
 
     pub fn clear_log(&self) {
