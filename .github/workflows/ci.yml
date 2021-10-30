@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Install Ubuntu Dependencies
-        run: apt-get install libgtk-3-dev
+        run: sudo apt-get install libgtk-3-dev
       
       # Get a checkout and rust toolchain.
       - uses: actions/checkout@v2
@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Install Ubuntu Dependencies
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: apt-get install libgtk-3-dev
+        run: sudo apt-get install libgtk-3-dev
 
       # Get a checkout and rust toolchain.
       - uses: actions/checkout@v2
