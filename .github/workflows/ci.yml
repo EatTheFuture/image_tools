@@ -1,0 +1,83 @@
+name: ci_cd
+
+on:
+  push:
+    branches: [ master ]
+  #pull_request:
+  #  branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      # Get a checkout and rust toolchain.
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      # Build and test
+      - run: cargo +stable test
+      - run: cargo +stable bench --no-run
+      - run: cargo +stable build --release
+
+  pre-release-ubuntu-macos:
+    name: Pre Release Ubuntu and MacOS
+    runs-on: [ubuntu-latest, macOS-latest]
+
+    steps:
+      # Get a checkout and rust toolchain.
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      # Build
+      - run: cargo +stable build --release
+
+      # Release
+      - uses: marvinpinto/action-automatic-releases@v1.2.1
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "development-release"
+          prerelease: true
+          title: "Development Build"
+          files: |
+            target/release/hdri_merge
+            target/release/images_to_sensor_response
+
+  pre-release-windows:
+    name: Pre Release Windows
+    runs-on: windows-latest
+
+    steps:
+      # Get a checkout and rust toolchain.
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      # Build and test
+      - run: cargo +stable build --release
+
+      # Release
+      - uses: marvinpinto/action-automatic-releases@v1.2.1
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "development-release"
+          prerelease: true
+          title: "Development Build"
+          files: |
+            target/release/hdri_merge.exe
+            target/release/images_to_sensor_response.exe
