@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"] // Don't go through console on Windows.
+
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
