@@ -421,7 +421,7 @@ impl epi::App for HDRIMergeApp {
             ui.add(egui::widgets::Separator::default().spacing(12.0));
 
             ui.horizontal(|ui| {
-                let spacing = 32.0;
+                let spacing = 16.0;
 
                 ui.vertical(|ui| {
                     let show_image = &mut self.ui_data.lock().unwrap().show_image;
@@ -453,16 +453,6 @@ impl epi::App for HDRIMergeApp {
 
                 ui.add_space(spacing);
 
-                ui.add_enabled(
-                    image_count > 0 || have_hdri,
-                    egui::widgets::Slider::new(
-                        &mut self.ui_data.lock().unwrap().image_zoom,
-                        0.1..=1.0,
-                    )
-                    .prefix("Zoom: ")
-                    .suffix("x"),
-                );
-
                 if self.ui_data.lock().unwrap().show_image == ShowImage::HDRI {
                     ui.add_space(spacing);
                     if ui
@@ -478,6 +468,25 @@ impl epi::App for HDRIMergeApp {
                         self.compute_hdri_preview(Arc::clone(&frame.repaint_signal()));
                     }
                 }
+
+                ui.with_layout(egui::Layout::right_to_left(), |ui| {
+                    ui.scope(|ui| {
+                        ui.add_space(6.0);
+                        ui.spacing_mut().slider_width = 200.0;
+                        ui.add_enabled(
+                            image_count > 0 || have_hdri,
+                            egui::widgets::Slider::new(
+                                &mut self.ui_data.lock().unwrap().image_zoom,
+                                0.1..=1.0,
+                            )
+                            .min_decimals(1)
+                            .max_decimals(2)
+                            // .prefix("Zoom: ")
+                            .suffix("x"),
+                        );
+                        ui.label("Zoom:");
+                    });
+                });
             });
 
             let show_image = self.ui_data.lock().unwrap().show_image;
