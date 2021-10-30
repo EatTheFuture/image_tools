@@ -1,11 +1,8 @@
-use eframe::{
-    egui::{
-        self,
-        color::Rgba,
-        containers::ScrollArea,
-        widgets::{Button, Label, ProgressBar},
-    },
-    epi,
+use eframe::egui::{
+    self,
+    color::Rgba,
+    containers::ScrollArea,
+    widgets::{Button, Label, ProgressBar},
 };
 use job_queue::{JobQueue, LogLevel};
 

@@ -47,7 +47,6 @@ fn main() {
                 image_preview_tex_needs_update: false,
                 hdri_preview_tex: None,
                 hdri_preview_tex_needs_update: false,
-                log_read: 0,
             })),
         }),
         eframe::NativeOptions {
@@ -84,7 +83,6 @@ struct UIData {
     image_preview_tex_needs_update: bool,
     hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
     hdri_preview_tex_needs_update: bool,
-    log_read: usize,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -180,8 +178,6 @@ impl epi::App for HDRIMergeApp {
             _ => false,
         };
         let have_hdri_preview_tex = self.ui_data.lock().unwrap().hdri_preview_tex.is_some();
-        let unread_log_count = self.job_queue.log_count() - self.ui_data.lock().unwrap().log_read;
-        let jobs_are_canceling = self.job_queue.is_canceling();
         let job_count = self.job_queue.job_count();
 
         // File dialogs used in the UI.
