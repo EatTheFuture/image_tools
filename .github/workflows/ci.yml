@@ -16,8 +16,8 @@ jobs:
 
     steps:
       - name: Install Ubuntu Dependencies
-        run: sudo apt-get install libgtk-3-dev
-      
+        run: sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
       # Get a checkout and rust toolchain.
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -27,9 +27,9 @@ jobs:
           override: true
 
       # Build and test
+      - run: cargo +stable build
       - run: cargo +stable test
       - run: cargo +stable bench --no-run
-      - run: cargo +stable build --release
 
   pre-release-ubuntu-macos:
     name: Pre Release
@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Install Ubuntu Dependencies
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: sudo apt-get install libgtk-3-dev
+        run: sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       # Get a checkout and rust toolchain.
       - uses: actions/checkout@v2
@@ -54,26 +54,39 @@ jobs:
       # Build
       - run: cargo +stable build --release
 
-      # Release
-      - name: Release Ubuntu/MacOS
-        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macOS-latest' }}
+      # Releases for the various OS's
+      - name: Release Ubuntu
+        if: ${{ matrix.os == 'ubuntu-latest'}}
         uses: marvinpinto/action-automatic-releases@v1.2.1
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "development-release"
+          automatic_release_tag: "dev-build-ubuntu"
           prerelease: true
-          title: "Development Build"
+          title: "Development Build - Ubuntu"
           files: |
             target/release/hdri_merge
             target/release/images_to_sensor_response
+
+      - name: Release MacOS
+        if: ${{ matrix.os == 'macOS-latest' }}
+        uses: marvinpinto/action-automatic-releases@v1.2.1
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "dev-build-macos"
+          prerelease: true
+          title: "Development Build - MacOS"
+          files: |
+            target/release/hdri_merge
+            target/release/images_to_sensor_response
+
       - name: Release Windows
         if: ${{ matrix.os == 'windows-latest' }}
         uses: marvinpinto/action-automatic-releases@v1.2.1
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "development-release"
+          automatic_release_tag: "dev-build-windows"
           prerelease: true
-          title: "Development Build"
+          title: "Development Build - Windows"
           files: |
             target/release/hdri_merge.exe
             target/release/images_to_sensor_response.exe
