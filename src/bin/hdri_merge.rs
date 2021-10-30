@@ -772,6 +772,7 @@ impl HDRIMergeApp {
 
         let images = Arc::clone(&self.images);
         let hdri = Arc::clone(&self.hdri_merger);
+        let ui_data = Arc::clone(&self.ui_data);
         let repaint_signal2 = Arc::clone(&repaint_signal);
         let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
@@ -858,6 +859,7 @@ impl HDRIMergeApp {
             hdri_merger.finish();
 
             *hdri.lock().unwrap() = Some(hdri_merger);
+            ui_data.lock().unwrap().show_image = ShowImage::HDRI;
             repaint_signal.request_repaint();
         });
 
