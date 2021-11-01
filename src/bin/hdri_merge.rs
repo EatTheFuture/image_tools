@@ -8,8 +8,8 @@ use std::{
 use eframe::{egui, epi};
 use rayon::prelude::*;
 
-use shared_data::Shared;
 use sensor_analysis::{eval_luma_map, invert_luma_map};
+use shared_data::Shared;
 
 fn main() {
     clap::App::new("HDRI Merge")
@@ -82,7 +82,7 @@ enum ShowImage {
 
 impl epi::App for AppMain {
     fn name(&self) -> &str {
-        "HDRI Merger"
+        "HDRI Merge"
     }
 
     fn setup(
@@ -105,19 +105,19 @@ impl epi::App for AppMain {
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
         // Update the HDRI preview texture if needed.
         if self.ui_data.lock().hdri_preview_tex_needs_update {
-            let tex_info =
-                self.hdri_preview
-                    .lock()
-                    .as_ref()
-                    .map(|(pixels, width, height)| {
-                        (
-                            frame
-                                .tex_allocator()
-                                .alloc_srgba_premultiplied((*width, *height), &pixels),
-                            *width,
-                            *height,
-                        )
-                    });
+            let tex_info = self
+                .hdri_preview
+                .lock()
+                .as_ref()
+                .map(|(pixels, width, height)| {
+                    (
+                        frame
+                            .tex_allocator()
+                            .alloc_srgba_premultiplied((*width, *height), &pixels),
+                        *width,
+                        *height,
+                    )
+                });
 
             if let (Some((tex_id, width, height)), mut ui_data) =
                 (tex_info, self.ui_data.lock_mut())
@@ -134,19 +134,19 @@ impl epi::App for AppMain {
 
         // Update the image preview texture if needed.
         if self.ui_data.lock().image_preview_tex_needs_update {
-            let tex_info =
-                self.image_preview
-                    .lock()
-                    .as_ref()
-                    .map(|(pixels, width, height)| {
-                        (
-                            frame
-                                .tex_allocator()
-                                .alloc_srgba_premultiplied((*width, *height), &pixels),
-                            *width,
-                            *height,
-                        )
-                    });
+            let tex_info = self
+                .image_preview
+                .lock()
+                .as_ref()
+                .map(|(pixels, width, height)| {
+                    (
+                        frame
+                            .tex_allocator()
+                            .alloc_srgba_premultiplied((*width, *height), &pixels),
+                        *width,
+                        *height,
+                    )
+                });
 
             if let (Some((tex_id, width, height)), mut ui_data) =
                 (tex_info, self.ui_data.lock_mut())
@@ -476,8 +476,7 @@ impl epi::App for AppMain {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if show_image == ShowImage::HDRI && have_hdri_preview_tex {
-                        if let Some((tex_id, width, height)) =
-                            self.ui_data.lock().hdri_preview_tex
+                        if let Some((tex_id, width, height)) = self.ui_data.lock().hdri_preview_tex
                         {
                             ui.image(
                                 tex_id,
@@ -488,8 +487,7 @@ impl epi::App for AppMain {
                             );
                         }
                     } else if show_image == ShowImage::SelectedImage && image_count > 0 {
-                        if let Some((tex_id, width, height)) =
-                            self.ui_data.lock().image_preview_tex
+                        if let Some((tex_id, width, height)) = self.ui_data.lock().image_preview_tex
                         {
                             ui.image(
                                 tex_id,
