@@ -11,6 +11,8 @@ use rayon::prelude::*;
 use sensor_analysis::{eval_luma_map, invert_luma_map};
 use shared_data::Shared;
 
+use lib::{ImageInfo, SourceImage};
+
 fn main() {
     clap::App::new("HDRI Merge")
         .version("1.0")
@@ -67,7 +69,11 @@ struct UIData {
     show_image: ShowImage,
 
     // Others.
-    thumbnails: Vec<(image::RgbImage, Option<egui::TextureId>, ImageInfo)>,
+    thumbnails: Vec<(
+        (Vec<egui::Color32>, usize, usize),
+        Option<egui::TextureId>,
+        ImageInfo,
+    )>,
     image_preview_tex: Option<(egui::TextureId, usize, usize)>,
     image_preview_tex_needs_update: bool,
     hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
@@ -255,7 +261,13 @@ impl epi::App for AppMain {
 
                         ui.add_space(spacing);
                         ui.add(Label::new("Log Exposure:").strong());
-                        ui.indent("", |ui| ui.label(format!("{:.1}", info.exposure.log2())));
+                        ui.indent("", |ui| {
+                            ui.label(if let Some(exposure) = info.exposure {
+                                format!("{:.1}", exposure.log2())
+                            } else {
+                                "none".into()
+                            })
+                        });
 
                         ui.add_space(spacing * 1.5);
                         ui.collapsing("more", |ui| {
@@ -316,16 +328,18 @@ impl epi::App for AppMain {
                         let thumbnails = &mut ui_data.thumbnails;
                         let selected_image_index = &mut ui_data.selected_image_index;
 
-                        for (img_i, (thumbnail, ref mut tex_id, _)) in
+                        for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
                             thumbnails.iter_mut().enumerate()
                         {
-                            let height = 64.0;
-                            let width =
-                                height / thumbnail.height() as f32 * thumbnail.width() as f32;
+                            let display_height = 64.0;
+                            let display_width = display_height / *height as f32 * *width as f32;
 
                             // Build thumbnail texture if it doesn't already exist.
                             if tex_id.is_none() {
-                                *tex_id = Some(make_texture(&thumbnail, frame.tex_allocator()));
+                                *tex_id = Some(make_texture(
+                                    (&pixels, *width, *height),
+                                    frame.tex_allocator(),
+                                ));
                             }
 
                             ui.horizontal(|ui| {
@@ -333,7 +347,7 @@ impl epi::App for AppMain {
                                     .add(
                                         egui::widgets::ImageButton::new(
                                             tex_id.unwrap(),
-                                            egui::Vec2::new(width, height),
+                                            egui::Vec2::new(display_width, display_height),
                                         )
                                         .selected(img_i == *selected_image_index),
                                     )
@@ -536,33 +550,29 @@ impl AppMain {
                 );
 
                 // Load image.
-                let img = if let Ok(f) = image::io::Reader::open(&path) {
-                    if let Some(Some(img)) = f
-                        .with_guessed_format()
-                        .ok()
-                        .map(|f| f.decode().ok().map(|f| f.to_rgb8()))
-                    {
-                        img
-                    } else {
+                let img = match lib::job_helpers::load_image(&path) {
+                    Ok(img) => img,
+                    Err(lib::job_helpers::ImageLoadError::NoAccess) => {
+                        status.lock_mut().log_error(format!(
+                            "Unable to access file \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        return;
+                    },
+                    Err(lib::job_helpers::ImageLoadError::UnknownFormat) => {
                         status.lock_mut().log_error(format!(
                             "Unrecognized image file format: \"{}\".",
                             path.to_string_lossy()
                         ));
                         return;
                     }
-                } else {
-                    status.lock_mut().log_error(format!(
-                        "Unable to access file \"{}\".",
-                        path.to_string_lossy()
-                    ));
-                    return;
                 };
 
                 // Ensure it has the same resolution as the other images.
                 if !images.lock().is_empty() {
                     let needed_width = images.lock()[0].image.width();
                     let needed_height = images.lock()[0].image.height();
-                    if img.width() != needed_width || img.height() != needed_height {
+                    if img.image.width() != needed_width || img.image.height() != needed_height {
                         status.lock_mut().log_error(format!(
                             "Image has a different resolution: \"{}\".  Not loading.  Note: all images must have the same resolution.",
                             path.to_string_lossy()
@@ -571,82 +581,34 @@ impl AppMain {
                     }
                 }
 
-                // Get exposure metadata from EXIF data.
-                let (exposure_time, fstop, sensitivity) = {
-                    let mut exposure_time = None;
-                    let mut fstop = None;
-                    let mut sensitivity = None;
-
-                    let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
-                    if let Ok(img_exif) = exif::Reader::new().read_from_container(&mut file) {
-                        if let Some(&exif::Value::Rational(ref n)) = img_exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY).map(|n| &n.value) {
-                            exposure_time = Some(n[0]);
-                        }
-                        if let Some(&exif::Value::Rational(ref n)) = img_exif.get_field(exif::Tag::FNumber, exif::In::PRIMARY).map(|n| &n.value) {
-                            fstop = Some(n[0]);
-                        }
-                        if let Some(Some(n)) = img_exif.get_field(exif::Tag::PhotographicSensitivity, exif::In::PRIMARY).map(|n| n.value.get_uint(0)) {
-                            sensitivity = Some(n);
-                        }
-                    }
-
-                    (exposure_time, fstop, sensitivity)
-                };
-
-                // Calculate over-all exposure.
-                let total_exposure = if let (Some(exp), Some(fst), Some(sns)) = (exposure_time, fstop, sensitivity) {
-                    sns as f64 * exp.to_f64() / (fst.to_f64() * fst.to_f64())
-                } else {
+                // Check if we got exposure data from it.
+                if img.info.exposure.is_none() {
                     status.lock_mut().log_warning(format!(
-                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  Defaulting to 1.0.",
+                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  HDRI merging will not work correctly.",
                         path.to_string_lossy()
                     ));
-                    1.0
-                };
-
-                // Fill in image info.
-                let image_info = ImageInfo {
-                    filename: path.file_name().map(|p| p.to_string_lossy().into()).unwrap_or_else(|| "".into()),
-                    full_filepath: path.to_string_lossy().into(),
-
-                    width: img.width() as usize,
-                    height: img.height() as usize,
-                    exposure: total_exposure as f32,
-
-                    exposure_time: exposure_time.map(|n| (n.num, n.denom)),
-                    fstop: fstop.map(|n| (n.num, n.denom)),
-                    iso: sensitivity,
-                };
+                }
 
                 // Make a thumbnail texture.
-                let thumbnail = {
-                    let height = 128;
-                    let width = height * img.width() / img.height();
-                    let thumbnail = image::imageops::resize(
-                        &img,
-                        width,
-                        height,
-                        image::imageops::FilterType::Triangle,
-                    );
-                    thumbnail
-                };
+                let thumbnail = lib::job_helpers::make_image_preview(
+                    &img,
+                    Some(128),
+                    None,
+                );
 
-                // Add image to our list of source images.
-                images.lock_mut().push(SourceImage {
-                    image: img,
-                    info: image_info.clone(),
-                });
+                // Add image and thumbnail to our lists.
                 ui_data
                     .lock_mut()
                     .thumbnails
-                    .push((thumbnail, None, image_info.clone()));
-                images
-                    .lock_mut()
-                    .sort_unstable_by(|a, b| a.info.exposure.partial_cmp(&b.info.exposure).unwrap());
+                    .push((thumbnail, None, img.info.clone()));
                 ui_data
                     .lock_mut()
                     .thumbnails
                     .sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
+                images.lock_mut().push(img);
+                images
+                    .lock_mut()
+                    .sort_unstable_by(|a, b| a.info.exposure.partial_cmp(&b.info.exposure).unwrap());
             }
         });
 
@@ -701,16 +663,18 @@ impl AppMain {
                         return;
                     }
                     let src_img = &images.lock()[img_i];
-                    histograms[chan].push((
-                        Histogram::from_iter(
-                            src_img
-                                .image
-                                .enumerate_pixels()
-                                .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
-                            256,
-                        ),
-                        src_img.info.exposure,
-                    ));
+                    if let Some(exposure) = src_img.info.exposure {
+                        histograms[chan].push((
+                            Histogram::from_iter(
+                                src_img
+                                    .image
+                                    .enumerate_pixels()
+                                    .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+                                256,
+                            ),
+                            exposure,
+                        ));
+                    }
                 }
             }
 
@@ -742,7 +706,7 @@ impl AppMain {
                 let src_img = &images.lock()[img_i];
                 hdri_merger.add_image(
                     &src_img.image,
-                    src_img.info.exposure,
+                    src_img.info.exposure.unwrap_or(1.0),
                     &inv_mapping,
                     img_i == 0,
                     img_i == img_len - 1,
@@ -849,22 +813,10 @@ impl AppMain {
                     .lock_mut()
                     .set_progress("Updating image preview".to_string(), 0.0);
 
-                let preview: Option<(Vec<egui::Color32>, usize, usize)> =
-                    images.lock().get(image_index).map(|image| {
-                        (
-                            image
-                                .image
-                                .pixels()
-                                .map(|pix| {
-                                    egui::Color32::from_rgba_unmultiplied(
-                                        pix[0], pix[1], pix[2], 255,
-                                    )
-                                })
-                                .collect(),
-                            image.image.width() as usize,
-                            image.image.height() as usize,
-                        )
-                    });
+                let preview = images
+                    .lock()
+                    .get(image_index)
+                    .map(|image| lib::job_helpers::make_image_preview(image, None, None));
 
                 if status.lock().is_canceled() {
                     return;
@@ -876,27 +828,6 @@ impl AppMain {
                 }
             });
     }
-}
-
-#[derive(Debug)]
-struct SourceImage {
-    image: image::RgbImage,
-
-    info: ImageInfo,
-}
-
-#[derive(Debug, Clone)]
-struct ImageInfo {
-    filename: String,
-    full_filepath: String,
-
-    width: usize,
-    height: usize,
-    exposure: f32,
-
-    exposure_time: Option<(u32, u32)>, // Ratio.
-    fstop: Option<(u32, u32)>,         // Ratio.
-    iso: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -972,18 +903,9 @@ impl HDRIMerger {
 }
 
 fn make_texture(
-    img: &image::RgbImage,
+    img: (&[egui::Color32], usize, usize),
     tex_allocator: &mut dyn epi::TextureAllocator,
 ) -> egui::TextureId {
-    assert_eq!(
-        img.width() as usize * img.height() as usize * 3,
-        img.as_raw().len()
-    );
-    let pixels: Vec<_> = img
-        .as_raw()
-        .chunks_exact(3)
-        .map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], 255))
-        .collect();
-
-    tex_allocator.alloc_srgba_premultiplied((img.width() as usize, img.height() as usize), &pixels)
+    assert_eq!(img.0.len(), img.1 * img.2);
+    tex_allocator.alloc_srgba_premultiplied((img.1, img.2), img.0)
 }

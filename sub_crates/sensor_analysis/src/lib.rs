@@ -21,6 +21,15 @@ use exposure_mapping::ExposureMapping;
 ///
 /// Also returns the average error of the fit.
 pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<Vec<f32>>, f32) {
+    if histograms[0].len() < 2 || histograms[1].len() < 2 || histograms[2].len() < 2 {
+        // We don't have enough histograms to infer anything from, so
+        // just assume linear.
+        return (
+            vec![vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]],
+            std::f32::INFINITY,
+        );
+    }
+
     let bucket_count = histograms[0][0].0.buckets.len();
 
     // Get the floor/ceiling values.

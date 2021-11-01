@@ -1,11 +1,13 @@
 #![windows_subsystem = "windows"] // Don't go through console on Windows.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use eframe::{egui, epi};
 
-// use shared_data::Shared;
+use shared_data::Shared;
 // use sensor_analysis::invert_luma_map;
+
+use lib::{ImageInfo, SourceImage};
 
 fn main() {
     clap::App::new("Color Spacer")
@@ -17,6 +19,8 @@ fn main() {
     eframe::run_native(
         Box::new(AppMain {
             job_queue: job_queue::JobQueue::new(),
+
+            image_sets: Shared::new(Vec::new()),
         }),
         eframe::NativeOptions {
             drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
@@ -27,6 +31,8 @@ fn main() {
 
 struct AppMain {
     job_queue: job_queue::JobQueue,
+
+    image_sets: Shared<Vec<Vec<SourceImage>>>,
 }
 
 impl epi::App for AppMain {
@@ -75,15 +81,19 @@ impl epi::App for AppMain {
 
         // Collect dropped files.
         if !ctx.input().raw.dropped_files.is_empty() {
-            // self.add_image_files(
-            //     ctx.input()
-            //         .raw
-            //         .dropped_files
-            //         .iter()
-            //         .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
-            // );
+            self.add_image_files(
+                ctx.input()
+                    .raw
+                    .dropped_files
+                    .iter()
+                    .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
+            );
         }
     }
 }
 
-impl AppMain {}
+impl AppMain {
+    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
+        todo!()
+    }
+}
