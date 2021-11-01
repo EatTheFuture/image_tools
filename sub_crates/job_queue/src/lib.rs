@@ -1,27 +1,25 @@
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
+use std::collections::VecDeque;
 
 use scheduled_thread_pool::{JobHandle, ScheduledThreadPool};
+use shared_data::Shared;
 
 /// A job queue that uses a single thread to process jobs.
 pub struct JobQueue {
     runner: ScheduledThreadPool,
-    job_status: Arc<Mutex<JobStatus>>,
+    job_status: Shared<JobStatus>,
 }
 
 impl JobQueue {
     pub fn new() -> JobQueue {
         JobQueue {
             runner: ScheduledThreadPool::new(1),
-            job_status: Arc::new(Mutex::new(JobStatus {
+            job_status: Shared::new(JobStatus {
                 jobs: VecDeque::new(),
                 job_progress: None,
                 log: VecDeque::new(),
                 do_cancel: false,
                 update_fn: None,
-            })),
+            }),
         }
     }
 
@@ -34,37 +32,36 @@ impl JobQueue {
     /// - A job finishes.
     /// - Cancelation is requested.
     pub fn set_update_fn<F: Fn() + Send + 'static>(&mut self, cleanup_function: F) {
-        self.job_status.lock().unwrap().update_fn = Some(Box::new(cleanup_function));
+        self.job_status.lock_mut().update_fn = Some(Box::new(cleanup_function));
     }
 
     pub fn add_job<F>(&self, name: &str, job: F)
     where
-        F: FnOnce(&Mutex<JobStatus>) + Send + std::panic::UnwindSafe + 'static,
+        F: FnOnce(&Shared<JobStatus>) + Send + std::panic::UnwindSafe + 'static,
     {
         let job_name1 = name.to_string();
         let job_name2 = name.to_string();
-        let mut job_status = self.job_status.lock().unwrap();
+        let mut job_status = self.job_status.lock_mut();
 
         // Add the job.
-        let local_job_status = Arc::clone(&self.job_status);
+        let local_job_status = self.job_status.clone_ref();
         job_status.jobs.push_back((
             self.runner.execute(move || {
                 let job_status = local_job_status;
 
-                if let Some(update_fn) = &job_status.lock().unwrap().update_fn {
+                if let Some(update_fn) = &job_status.lock().update_fn {
                     update_fn();
                 }
 
                 // Actually run the job.
                 if let Err(_) = std::panic::catch_unwind(|| job(&job_status)) {
                     job_status
-                        .lock()
-                        .unwrap()
+                        .lock_mut()
                         .log_error(format!("ERROR: job \"{}\" panicked!", job_name1));
                 }
 
                 // Cleanup.
-                let mut job_status = job_status.lock().unwrap();
+                let mut job_status = job_status.lock_mut();
                 job_status.jobs.pop_front(); // This job.
                 job_status.do_cancel = false;
                 job_status.clear_progress();
@@ -77,15 +74,15 @@ impl JobQueue {
     }
 
     pub fn progress(&self) -> Option<(String, f32)> {
-        self.job_status.lock().unwrap().job_progress.clone()
+        self.job_status.lock().job_progress.clone()
     }
 
     pub fn job_count(&self) -> usize {
-        self.job_status.lock().unwrap().jobs.len()
+        self.job_status.lock().jobs.len()
     }
 
     pub fn cancel_all_jobs(&self) {
-        let mut job_status = self.job_status.lock().unwrap();
+        let mut job_status = self.job_status.lock_mut();
         if !job_status.jobs.is_empty() {
             // Cancel all not-currently-running jobs.
             while job_status.jobs.len() > 1 {
@@ -102,7 +99,7 @@ impl JobQueue {
 
     /// Cancel all jobs that aren't currently running.
     pub fn cancel_pending_jobs(&self) {
-        let mut job_status = self.job_status.lock().unwrap();
+        let mut job_status = self.job_status.lock_mut();
 
         // Cancel all not-currently-running jobs.
         while job_status.jobs.len() > 1 {
@@ -114,7 +111,7 @@ impl JobQueue {
     }
 
     pub fn cancel_jobs_with_name(&self, name: &str) {
-        let mut job_status = self.job_status.lock().unwrap();
+        let mut job_status = self.job_status.lock_mut();
         if !job_status.jobs.is_empty() {
             // Cancel all not-currently-running jobs with name.
             for i in 0..(job_status.jobs.len() - 1) {
@@ -136,7 +133,7 @@ impl JobQueue {
 
     /// Cancel all jobs that aren't currently running that match the given name.
     pub fn cancel_pending_jobs_with_name(&self, name: &str) {
-        let mut job_status = self.job_status.lock().unwrap();
+        let mut job_status = self.job_status.lock_mut();
         if job_status.jobs.len() > 1 {
             // Cancel all not-currently-running jobs with name.
             for i in 0..(job_status.jobs.len() - 1) {
@@ -152,25 +149,20 @@ impl JobQueue {
     }
 
     pub fn is_canceling(&self) -> bool {
-        self.job_status.lock().unwrap().do_cancel
+        self.job_status.lock().do_cancel
     }
 
     pub fn log_count(&self) -> usize {
-        self.job_status.lock().unwrap().log.len()
+        self.job_status.lock().log.len()
     }
 
     /// Index zero is the most recent error.
     pub fn get_log(&self, index: usize) -> Option<(String, LogLevel)> {
-        self.job_status
-            .lock()
-            .unwrap()
-            .log
-            .get(index)
-            .map(|l| l.clone())
+        self.job_status.lock().log.get(index).map(|l| l.clone())
     }
 
     pub fn clear_log(&self) {
-        self.job_status.lock().unwrap().log.clear()
+        self.job_status.lock_mut().log.clear()
     }
 }
 

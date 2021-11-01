@@ -2,41 +2,32 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
-use clap::{App, Arg};
 use eframe::{egui, epi};
 use rayon::prelude::*;
 
+use shared_data::Shared;
 use sensor_analysis::{eval_luma_map, invert_luma_map};
 
 fn main() {
-    let matches = App::new("HDRI Merge")
+    clap::App::new("HDRI Merge")
         .version("1.0")
         .author("Nathan Vegdahl")
         .about("Merges LDR images into an HDRI")
-        // .arg(
-        //     Arg::with_name("INPUT")
-        //         .help("input image files")
-        //         .required(true)
-        //         .multiple(true)
-        //         .index(1),
-        // )
         .get_matches();
 
-    // let filenames: Vec<_> = matches.values_of("INPUT").unwrap().collect();
-
     eframe::run_native(
-        Box::new(HDRIMergeApp {
+        Box::new(AppMain {
             job_queue: job_queue::JobQueue::new(),
 
-            images: Arc::new(Mutex::new(Vec::new())),
-            hdri_merger: Arc::new(Mutex::new(None)),
-            hdri_preview: Arc::new(Mutex::new(None)),
-            image_preview: Arc::new(Mutex::new(None)),
+            images: Shared::new(Vec::new()),
+            hdri_merger: Shared::new(None),
+            hdri_preview: Shared::new(None),
+            image_preview: Shared::new(None),
 
-            ui_data: Arc::new(Mutex::new(UIData {
+            ui_data: Shared::new(UIData {
                 preview_exposure: 0.0,
                 selected_image_index: 0,
                 image_zoom: 1.0,
@@ -47,7 +38,7 @@ fn main() {
                 image_preview_tex_needs_update: false,
                 hdri_preview_tex: None,
                 hdri_preview_tex_needs_update: false,
-            })),
+            }),
         }),
         eframe::NativeOptions {
             drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
@@ -56,17 +47,15 @@ fn main() {
     );
 }
 
-type SharedData<T> = Arc<Mutex<T>>;
-
-struct HDRIMergeApp {
+struct AppMain {
     job_queue: job_queue::JobQueue,
 
-    images: SharedData<Vec<SourceImage>>,
-    hdri_merger: SharedData<Option<HDRIMerger>>,
-    hdri_preview: SharedData<Option<(Vec<egui::Color32>, usize, usize)>>,
-    image_preview: SharedData<Option<(Vec<egui::Color32>, usize, usize)>>,
+    images: Shared<Vec<SourceImage>>,
+    hdri_merger: Shared<Option<HDRIMerger>>,
+    hdri_preview: Shared<Option<(Vec<egui::Color32>, usize, usize)>>,
+    image_preview: Shared<Option<(Vec<egui::Color32>, usize, usize)>>,
 
-    ui_data: SharedData<UIData>,
+    ui_data: Shared<UIData>,
 }
 
 /// The data that the UI needs realtime access to for responsiveness.
@@ -91,7 +80,7 @@ enum ShowImage {
     HDRI,
 }
 
-impl epi::App for HDRIMergeApp {
+impl epi::App for AppMain {
     fn name(&self) -> &str {
         "HDRI Merger"
     }
@@ -115,11 +104,10 @@ impl epi::App for HDRIMergeApp {
 
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
         // Update the HDRI preview texture if needed.
-        if self.ui_data.lock().unwrap().hdri_preview_tex_needs_update {
+        if self.ui_data.lock().hdri_preview_tex_needs_update {
             let tex_info =
                 self.hdri_preview
                     .lock()
-                    .unwrap()
                     .as_ref()
                     .map(|(pixels, width, height)| {
                         (
@@ -132,7 +120,7 @@ impl epi::App for HDRIMergeApp {
                     });
 
             if let (Some((tex_id, width, height)), mut ui_data) =
-                (tex_info, self.ui_data.lock().unwrap())
+                (tex_info, self.ui_data.lock_mut())
             {
                 let old = ui_data.hdri_preview_tex;
                 ui_data.hdri_preview_tex = Some((tex_id, width, height));
@@ -145,11 +133,10 @@ impl epi::App for HDRIMergeApp {
         }
 
         // Update the image preview texture if needed.
-        if self.ui_data.lock().unwrap().image_preview_tex_needs_update {
+        if self.ui_data.lock().image_preview_tex_needs_update {
             let tex_info =
                 self.image_preview
                     .lock()
-                    .unwrap()
                     .as_ref()
                     .map(|(pixels, width, height)| {
                         (
@@ -162,7 +149,7 @@ impl epi::App for HDRIMergeApp {
                     });
 
             if let (Some((tex_id, width, height)), mut ui_data) =
-                (tex_info, self.ui_data.lock().unwrap())
+                (tex_info, self.ui_data.lock_mut())
             {
                 let old = ui_data.image_preview_tex;
                 ui_data.image_preview_tex = Some((tex_id, width, height));
@@ -175,12 +162,12 @@ impl epi::App for HDRIMergeApp {
         }
 
         // Some simple queries we use in drawing the UI.
-        let image_count = self.ui_data.lock().unwrap().thumbnails.len();
-        let have_hdri = match Arc::clone(&self.hdri_merger).try_lock() {
-            Ok(hdri) => hdri.is_some(),
+        let image_count = self.ui_data.lock().thumbnails.len();
+        let have_hdri = match self.hdri_merger.try_lock() {
+            Some(hdri) => hdri.is_some(),
             _ => false,
         };
-        let have_hdri_preview_tex = self.ui_data.lock().unwrap().hdri_preview_tex.is_some();
+        let have_hdri_preview_tex = self.ui_data.lock().hdri_preview_tex.is_some();
         let job_count = self.job_queue.job_count();
 
         // File dialogs used in the UI.
@@ -251,7 +238,7 @@ impl epi::App for HDRIMergeApp {
                 // (Extra scope to contain ui_data's mutex guard.)
                 {
                     use egui::widgets::Label;
-                    let ui_data = self.ui_data.lock().unwrap();
+                    let ui_data = self.ui_data.lock();
                     let spacing = 4.0;
 
                     ui.add_space(spacing + 4.0);
@@ -325,7 +312,7 @@ impl epi::App for HDRIMergeApp {
                 egui::containers::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        let ui_data = &mut *self.ui_data.lock().unwrap();
+                        let ui_data = &mut *self.ui_data.lock_mut();
                         let thumbnails = &mut ui_data.thumbnails;
                         let selected_image_index = &mut ui_data.selected_image_index;
 
@@ -418,7 +405,7 @@ impl epi::App for HDRIMergeApp {
                 let spacing = 16.0;
 
                 ui.vertical(|ui| {
-                    let show_image = &mut self.ui_data.lock().unwrap().show_image;
+                    let show_image = &mut self.ui_data.lock_mut().show_image;
                     if ui
                         .add_enabled(
                             image_count > 0,
@@ -447,12 +434,12 @@ impl epi::App for HDRIMergeApp {
 
                 ui.add_space(spacing);
 
-                if self.ui_data.lock().unwrap().show_image == ShowImage::HDRI {
+                if self.ui_data.lock().show_image == ShowImage::HDRI {
                     ui.add_space(spacing);
                     if ui
                         .add(
                             egui::widgets::DragValue::new(
-                                &mut self.ui_data.lock().unwrap().preview_exposure,
+                                &mut self.ui_data.lock_mut().preview_exposure,
                             )
                             .speed(0.1)
                             .prefix("Log Exposure: "),
@@ -470,7 +457,7 @@ impl epi::App for HDRIMergeApp {
                         ui.add_enabled(
                             image_count > 0 || have_hdri,
                             egui::widgets::Slider::new(
-                                &mut self.ui_data.lock().unwrap().image_zoom,
+                                &mut self.ui_data.lock_mut().image_zoom,
                                 0.1..=1.0,
                             )
                             .min_decimals(1)
@@ -483,14 +470,14 @@ impl epi::App for HDRIMergeApp {
                 });
             });
 
-            let show_image = self.ui_data.lock().unwrap().show_image;
-            let image_zoom = self.ui_data.lock().unwrap().image_zoom;
+            let show_image = self.ui_data.lock().show_image;
+            let image_zoom = self.ui_data.lock().image_zoom;
             egui::containers::ScrollArea::both()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if show_image == ShowImage::HDRI && have_hdri_preview_tex {
                         if let Some((tex_id, width, height)) =
-                            self.ui_data.lock().unwrap().hdri_preview_tex
+                            self.ui_data.lock().hdri_preview_tex
                         {
                             ui.image(
                                 tex_id,
@@ -502,7 +489,7 @@ impl epi::App for HDRIMergeApp {
                         }
                     } else if show_image == ShowImage::SelectedImage && image_count > 0 {
                         if let Some((tex_id, width, height)) =
-                            self.ui_data.lock().unwrap().image_preview_tex
+                            self.ui_data.lock().image_preview_tex
                         {
                             ui.image(
                                 tex_id,
@@ -532,20 +519,20 @@ impl epi::App for HDRIMergeApp {
     }
 }
 
-impl HDRIMergeApp {
+impl AppMain {
     fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
-        let images = Arc::clone(&self.images);
-        let ui_data = Arc::clone(&self.ui_data);
+        let images = self.images.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
             for (img_i, path) in image_paths.drain(..).enumerate() {
-                if status.lock().unwrap().is_canceled() {
+                if status.lock().is_canceled() {
                     break;
                 }
 
-                status.lock().unwrap().set_progress(
+                status.lock_mut().set_progress(
                     format!("Loading: {}", path.to_string_lossy()),
                     (img_i + 1) as f32 / len,
                 );
@@ -559,14 +546,14 @@ impl HDRIMergeApp {
                     {
                         img
                     } else {
-                        status.lock().unwrap().log_error(format!(
+                        status.lock_mut().log_error(format!(
                             "Unrecognized image file format: \"{}\".",
                             path.to_string_lossy()
                         ));
                         return;
                     }
                 } else {
-                    status.lock().unwrap().log_error(format!(
+                    status.lock_mut().log_error(format!(
                         "Unable to access file \"{}\".",
                         path.to_string_lossy()
                     ));
@@ -574,11 +561,11 @@ impl HDRIMergeApp {
                 };
 
                 // Ensure it has the same resolution as the other images.
-                if !images.lock().unwrap().is_empty() {
-                    let needed_width = images.lock().unwrap()[0].image.width();
-                    let needed_height = images.lock().unwrap()[0].image.height();
+                if !images.lock().is_empty() {
+                    let needed_width = images.lock()[0].image.width();
+                    let needed_height = images.lock()[0].image.height();
                     if img.width() != needed_width || img.height() != needed_height {
-                        status.lock().unwrap().log_error(format!(
+                        status.lock_mut().log_error(format!(
                             "Image has a different resolution: \"{}\".  Not loading.  Note: all images must have the same resolution.",
                             path.to_string_lossy()
                         ));
@@ -612,7 +599,7 @@ impl HDRIMergeApp {
                 let total_exposure = if let (Some(exp), Some(fst), Some(sns)) = (exposure_time, fstop, sensitivity) {
                     sns as f64 * exp.to_f64() / (fst.to_f64() * fst.to_f64())
                 } else {
-                    status.lock().unwrap().log_warning(format!(
+                    status.lock_mut().log_warning(format!(
                         "Image file lacks Exif data needed to compute exposure value: \"{}\".  Defaulting to 1.0.",
                         path.to_string_lossy()
                     ));
@@ -647,44 +634,40 @@ impl HDRIMergeApp {
                 };
 
                 // Add image to our list of source images.
-                images.lock().unwrap().push(SourceImage {
+                images.lock_mut().push(SourceImage {
                     image: img,
                     info: image_info.clone(),
                 });
                 ui_data
-                    .lock()
-                    .unwrap()
+                    .lock_mut()
                     .thumbnails
                     .push((thumbnail, None, image_info.clone()));
                 images
-                    .lock()
-                    .unwrap()
+                    .lock_mut()
                     .sort_unstable_by(|a, b| a.info.exposure.partial_cmp(&b.info.exposure).unwrap());
                 ui_data
-                    .lock()
-                    .unwrap()
+                    .lock_mut()
                     .thumbnails
                     .sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
             }
         });
 
-        let selected_image_index = self.ui_data.lock().unwrap().selected_image_index;
+        let selected_image_index = self.ui_data.lock().selected_image_index;
         self.compute_image_preview(selected_image_index);
     }
 
     fn remove_image(&self, image_index: usize) {
-        let images = Arc::clone(&self.images);
-        let ui_data = Arc::clone(&self.ui_data);
+        let images = self.images.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
 
         self.job_queue.add_job("Remove Image", move |status| {
             status
-                .lock()
-                .unwrap()
+                .lock_mut()
                 .set_progress(format!("Removing image..."), 0.0);
 
             {
-                images.lock().unwrap().remove(image_index);
-                let mut ui_data = ui_data.lock().unwrap();
+                images.lock_mut().remove(image_index);
+                let mut ui_data = ui_data.lock_mut();
                 ui_data.thumbnails.remove(image_index);
                 if ui_data.selected_image_index > image_index {
                     ui_data.selected_image_index -= 1;
@@ -692,35 +675,34 @@ impl HDRIMergeApp {
             }
         });
 
-        let selected_image_index = self.ui_data.lock().unwrap().selected_image_index;
+        let selected_image_index = self.ui_data.lock().selected_image_index;
         self.compute_image_preview(selected_image_index);
     }
 
     fn build_hdri(&mut self) {
         use sensor_analysis::Histogram;
 
-        let images = Arc::clone(&self.images);
-        let hdri = Arc::clone(&self.hdri_merger);
-        let ui_data = Arc::clone(&self.ui_data);
+        let images = self.images.clone_ref();
+        let hdri = self.hdri_merger.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
 
         self.job_queue.add_job("Build HDRI", move |status| {
-            let img_len = images.lock().unwrap().len();
-            let width = images.lock().unwrap()[0].image.width() as usize;
-            let height = images.lock().unwrap()[0].image.height() as usize;
+            let img_len = images.lock().len();
+            let width = images.lock()[0].image.width() as usize;
+            let height = images.lock()[0].image.height() as usize;
 
             status
-                .lock()
-                .unwrap()
+                .lock_mut()
                 .set_progress(format!("Estimating transfer function"), 0.0);
 
             // Calculate histograms.
             let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
             for img_i in 0..img_len {
                 for chan in 0..3 {
-                    if status.lock().unwrap().is_canceled() {
+                    if status.lock().is_canceled() {
                         return;
                     }
-                    let src_img = &images.lock().unwrap()[img_i];
+                    let src_img = &images.lock()[img_i];
                     histograms[chan].push((
                         Histogram::from_iter(
                             src_img
@@ -751,15 +733,15 @@ impl HDRIMergeApp {
             // Merge images.
             let mut hdri_merger = HDRIMerger::new(width, height);
             for img_i in 0..img_len {
-                if status.lock().unwrap().is_canceled() {
+                if status.lock().is_canceled() {
                     return;
                 }
-                status.lock().unwrap().set_progress(
+                status.lock_mut().set_progress(
                     format!("Merging image {}", img_i + 1),
                     (img_i + 1) as f32 / (img_len + 2) as f32,
                 );
 
-                let src_img = &images.lock().unwrap()[img_i];
+                let src_img = &images.lock()[img_i];
                 hdri_merger.add_image(
                     &src_img.image,
                     src_img.info.exposure,
@@ -770,31 +752,30 @@ impl HDRIMergeApp {
             }
 
             // Finalize.
-            if status.lock().unwrap().is_canceled() {
+            if status.lock().is_canceled() {
                 return;
             }
-            status.lock().unwrap().set_progress(
+            status.lock_mut().set_progress(
                 format!("Finalizing"),
                 (img_len + 1) as f32 / (img_len + 2) as f32,
             );
             hdri_merger.finish();
 
-            *hdri.lock().unwrap() = Some(hdri_merger);
-            ui_data.lock().unwrap().show_image = ShowImage::HDRI;
+            *hdri.lock_mut() = Some(hdri_merger);
+            ui_data.lock_mut().show_image = ShowImage::HDRI;
         });
 
         self.compute_hdri_preview();
     }
 
     fn save_hdri(&mut self, path: PathBuf) {
-        let hdri = Arc::clone(&self.hdri_merger);
+        let hdri = self.hdri_merger.clone_ref();
 
         self.job_queue.add_job("Save HDRI", move |status| {
             status
-                .lock()
-                .unwrap()
+                .lock_mut()
                 .set_progress(format!("Saving: {}", path.to_string_lossy()), 0.0);
-            if let Some(ref hdri) = *hdri.lock().unwrap() {
+            if let Some(ref hdri) = *hdri.lock() {
                 hdr::write_hdr(
                     &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
                     &hdri.pixels,
@@ -807,27 +788,26 @@ impl HDRIMergeApp {
     }
 
     fn compute_hdri_preview(&mut self) {
-        let hdri = Arc::clone(&self.hdri_merger);
-        let hdri_preview = Arc::clone(&self.hdri_preview);
-        let ui_data = Arc::clone(&self.ui_data);
+        let hdri = self.hdri_merger.clone_ref();
+        let hdri_preview = self.hdri_preview.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
             .cancel_pending_jobs_with_name("Update HDRI preview");
         self.job_queue
             .add_job("Update HDRI preview", move |status| {
                 status
-                    .lock()
-                    .unwrap()
+                    .lock_mut()
                     .set_progress("Updating HDRI preview".to_string(), 0.0);
 
-                let exposure = 2.0f32.powf(ui_data.lock().unwrap().preview_exposure);
+                let exposure = 2.0f32.powf(ui_data.lock().preview_exposure);
                 let srgb_table: Vec<f32> = (0..256)
                     .map(|n| {
                         sensor_analysis::known_luma_curves::srgb::from_linear(n as f32 / 255.0)
                     })
                     .collect();
                 let preview: Option<(Vec<egui::Color32>, usize, usize)> =
-                    hdri.lock().unwrap().as_ref().map(|hdri| {
+                    hdri.lock().as_ref().map(|hdri| {
                         let map_val = |n: f32| {
                             (eval_luma_map(&srgb_table, (n * exposure).max(0.0).min(1.0)) * 255.0)
                                 .round() as u8
@@ -848,32 +828,31 @@ impl HDRIMergeApp {
                         )
                     });
 
-                if status.lock().unwrap().is_canceled() {
+                if status.lock().is_canceled() {
                     return;
                 }
 
                 if preview.is_some() {
-                    *hdri_preview.lock().unwrap() = preview;
-                    ui_data.lock().unwrap().hdri_preview_tex_needs_update = true;
+                    *hdri_preview.lock_mut() = preview;
+                    ui_data.lock_mut().hdri_preview_tex_needs_update = true;
                 }
             });
     }
 
     fn compute_image_preview(&self, image_index: usize) {
-        let images = Arc::clone(&self.images);
-        let image_preview = Arc::clone(&self.image_preview);
-        let ui_data = Arc::clone(&self.ui_data);
+        let images = self.images.clone_ref();
+        let image_preview = self.image_preview.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
 
         self.job_queue.cancel_jobs_with_name("Update image preview");
         self.job_queue
             .add_job("Update image preview", move |status| {
                 status
-                    .lock()
-                    .unwrap()
+                    .lock_mut()
                     .set_progress("Updating image preview".to_string(), 0.0);
 
                 let preview: Option<(Vec<egui::Color32>, usize, usize)> =
-                    images.lock().unwrap().get(image_index).map(|image| {
+                    images.lock().get(image_index).map(|image| {
                         (
                             image
                                 .image
@@ -889,13 +868,13 @@ impl HDRIMergeApp {
                         )
                     });
 
-                if status.lock().unwrap().is_canceled() {
+                if status.lock().is_canceled() {
                     return;
                 }
 
                 if preview.is_some() {
-                    *image_preview.lock().unwrap() = preview;
-                    ui_data.lock().unwrap().image_preview_tex_needs_update = true;
+                    *image_preview.lock_mut() = preview;
+                    ui_data.lock_mut().image_preview_tex_needs_update = true;
                 }
             });
     }

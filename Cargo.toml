@@ -5,6 +5,7 @@ members = [
     "sub_crates/job_queue",
     "sub_crates/lut",
     "sub_crates/sensor_analysis",
+    "sub_crates/shared_data",
 ]
 
 [package]
@@ -37,3 +38,6 @@ path = "sub_crates/lut"
 
 [dependencies.sensor_analysis]
 path = "sub_crates/sensor_analysis"
+
+[dependencies.shared_data]
+path = "sub_crates/shared_data"
