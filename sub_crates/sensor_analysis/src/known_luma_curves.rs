@@ -17,6 +17,23 @@ pub mod srgb {
             ((n + 0.055) / 1.055).powf(2.4)
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn from_linear_test() {
+            assert_eq!(from_linear(0.0), 0.0);
+            assert!((from_linear(1.0) - 1.0).abs() < 0.0000001);
+        }
+
+        #[test]
+        fn to_linear_test() {
+            assert_eq!(to_linear(0.0), 0.0);
+            assert!((to_linear(1.0) - 1.0).abs() < 0.0000001);
+        }
+    }
 }
 
 /// Sony's S-Log2 curve.

@@ -830,7 +830,7 @@ impl HDRIMergeApp {
                     hdri.lock().unwrap().as_ref().map(|hdri| {
                         let map_val = |n: f32| {
                             (eval_luma_map(&srgb_table, (n * exposure).max(0.0).min(1.0)) * 255.0)
-                                as u8
+                                .round() as u8
                         };
 
                         (
