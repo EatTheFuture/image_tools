@@ -20,8 +20,21 @@ impl JobQueue {
                 job_progress: None,
                 log: VecDeque::new(),
                 do_cancel: false,
+                update_fn: None,
             })),
         }
+    }
+
+    /// Set a function to be run whenever there's an update from a job.
+    ///
+    /// Updates are:
+    /// - A job starts.
+    /// - A job updates its progress.
+    /// - A job logs an error, warning, or note.
+    /// - A job finishes.
+    /// - Cancelation is requested.
+    pub fn set_update_fn<F: Fn() + Send + 'static>(&mut self, cleanup_function: F) {
+        self.job_status.lock().unwrap().update_fn = Some(Box::new(cleanup_function));
     }
 
     pub fn add_job<F>(&self, name: &str, job: F)
@@ -38,6 +51,10 @@ impl JobQueue {
             self.runner.execute(move || {
                 let job_status = local_job_status;
 
+                if let Some(update_fn) = &job_status.lock().unwrap().update_fn {
+                    update_fn();
+                }
+
                 // Actually run the job.
                 if let Err(_) = std::panic::catch_unwind(|| job(&job_status)) {
                     job_status
@@ -51,6 +68,9 @@ impl JobQueue {
                 job_status.jobs.pop_front(); // This job.
                 job_status.do_cancel = false;
                 job_status.clear_progress();
+                if let Some(update_fn) = &job_status.update_fn {
+                    update_fn();
+                }
             }),
             job_name2,
         ));
@@ -75,6 +95,9 @@ impl JobQueue {
             // Mark currently running job for cancelation.
             job_status.do_cancel = true;
         }
+        if let Some(update_fn) = &job_status.update_fn {
+            update_fn();
+        }
     }
 
     /// Cancel all jobs that aren't currently running.
@@ -84,6 +107,9 @@ impl JobQueue {
         // Cancel all not-currently-running jobs.
         while job_status.jobs.len() > 1 {
             job_status.jobs.pop_back().unwrap().0.cancel();
+        }
+        if let Some(update_fn) = &job_status.update_fn {
+            update_fn();
         }
     }
 
@@ -103,6 +129,9 @@ impl JobQueue {
                 job_status.do_cancel = true;
             }
         }
+        if let Some(update_fn) = &job_status.update_fn {
+            update_fn();
+        }
     }
 
     /// Cancel all jobs that aren't currently running that match the given name.
@@ -116,6 +145,9 @@ impl JobQueue {
                     job_status.jobs.remove(job_i).unwrap().0.cancel();
                 }
             }
+        }
+        if let Some(update_fn) = &job_status.update_fn {
+            update_fn();
         }
     }
 
@@ -154,6 +186,7 @@ pub struct JobStatus {
     job_progress: Option<(String, f32)>,
     log: VecDeque<(String, LogLevel)>,
     do_cancel: bool,
+    update_fn: Option<Box<dyn Fn() + Send + 'static>>,
 }
 
 impl JobStatus {
@@ -163,21 +196,36 @@ impl JobStatus {
 
     pub fn set_progress(&mut self, text: String, ratio: f32) {
         self.job_progress = Some((text, ratio));
+        if let Some(update_fn) = &self.update_fn {
+            update_fn();
+        }
     }
 
     pub fn clear_progress(&mut self) {
         self.job_progress = None;
+        if let Some(update_fn) = &self.update_fn {
+            update_fn();
+        }
     }
 
     pub fn log_error(&mut self, message: String) {
         self.log.push_front((message, LogLevel::Error));
+        if let Some(update_fn) = &self.update_fn {
+            update_fn();
+        }
     }
 
     pub fn log_warning(&mut self, message: String) {
         self.log.push_front((message, LogLevel::Warning));
+        if let Some(update_fn) = &self.update_fn {
+            update_fn();
+        }
     }
 
     pub fn log_note(&mut self, message: String) {
         self.log.push_front((message, LogLevel::Note));
+        if let Some(update_fn) = &self.update_fn {
+            update_fn();
+        }
     }
 }

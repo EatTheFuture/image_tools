@@ -99,10 +99,13 @@ impl epi::App for HDRIMergeApp {
     fn setup(
         &mut self,
         _ctx: &egui::CtxRef,
-        _frame: &mut epi::Frame<'_>,
+        frame: &mut epi::Frame<'_>,
         _storage: Option<&dyn epi::Storage>,
     ) {
-        // Don't need to do anything.
+        let repaint_signal = Arc::clone(&frame.repaint_signal());
+        self.job_queue.set_update_fn(move || {
+            repaint_signal.request_repaint();
+        });
     }
 
     // Called before shutdown.
@@ -210,10 +213,7 @@ impl epi::App for HDRIMergeApp {
                         .clicked()
                     {
                         if let Some(paths) = add_images_dialog.clone().pick_files() {
-                            self.add_image_files(
-                                Arc::clone(&frame.repaint_signal()),
-                                paths.iter().map(|pathbuf| pathbuf.as_path()),
-                            );
+                            self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
                         }
                     }
 
@@ -225,7 +225,7 @@ impl epi::App for HDRIMergeApp {
                         .clicked()
                     {
                         if let Some(path) = save_hdri_dialog.clone().save_file() {
-                            self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
+                            self.save_hdri(path);
                         }
                     }
 
@@ -353,10 +353,7 @@ impl epi::App for HDRIMergeApp {
                                     .clicked()
                                 {
                                     *selected_image_index = img_i;
-                                    self.compute_image_preview(
-                                        Arc::clone(&frame.repaint_signal()),
-                                        img_i,
-                                    );
+                                    self.compute_image_preview(img_i);
                                 }
                                 if ui
                                     .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
@@ -369,7 +366,7 @@ impl epi::App for HDRIMergeApp {
                     });
 
                 if let Some(img_i) = remove_i {
-                    self.remove_image(Arc::clone(&frame.repaint_signal()), img_i);
+                    self.remove_image(img_i);
                 }
             });
 
@@ -382,10 +379,7 @@ impl epi::App for HDRIMergeApp {
                     .clicked()
                 {
                     if let Some(paths) = add_images_dialog.clone().pick_files() {
-                        self.add_image_files(
-                            Arc::clone(&frame.repaint_signal()),
-                            paths.iter().map(|pathbuf| pathbuf.as_path()),
-                        );
+                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
                     }
                 }
 
@@ -399,7 +393,7 @@ impl epi::App for HDRIMergeApp {
                     )
                     .clicked()
                 {
-                    self.build_hdri(Arc::clone(&frame.repaint_signal()));
+                    self.build_hdri();
                 }
 
                 ui.label(" ➡ ");
@@ -413,7 +407,7 @@ impl epi::App for HDRIMergeApp {
                     .clicked()
                 {
                     if let Some(path) = save_hdri_dialog.clone().save_file() {
-                        self.save_hdri(Arc::clone(&frame.repaint_signal()), path);
+                        self.save_hdri(path);
                     }
                 }
             });
@@ -465,7 +459,7 @@ impl epi::App for HDRIMergeApp {
                         )
                         .changed()
                     {
-                        self.compute_hdri_preview(Arc::clone(&frame.repaint_signal()));
+                        self.compute_hdri_preview();
                     }
                 }
 
@@ -528,7 +522,6 @@ impl epi::App for HDRIMergeApp {
         // Collect dropped files.
         if !ctx.input().raw.dropped_files.is_empty() {
             self.add_image_files(
-                Arc::clone(&frame.repaint_signal()),
                 ctx.input()
                     .raw
                     .dropped_files
@@ -540,16 +533,10 @@ impl epi::App for HDRIMergeApp {
 }
 
 impl HDRIMergeApp {
-    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(
-        &mut self,
-        repaint_signal: Arc<dyn epi::RepaintSignal>,
-        paths: I,
-    ) {
+    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let images = Arc::clone(&self.images);
         let ui_data = Arc::clone(&self.ui_data);
-        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
-        let repaint_signal_2 = Arc::clone(&repaint_signal);
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
@@ -562,7 +549,6 @@ impl HDRIMergeApp {
                     format!("Loading: {}", path.to_string_lossy()),
                     (img_i + 1) as f32 / len,
                 );
-                repaint_signal.request_repaint();
 
                 // Load image.
                 let img = if let Ok(f) = image::io::Reader::open(&path) {
@@ -577,7 +563,6 @@ impl HDRIMergeApp {
                             "Unrecognized image file format: \"{}\".",
                             path.to_string_lossy()
                         ));
-                        repaint_signal.request_repaint();
                         return;
                     }
                 } else {
@@ -585,7 +570,6 @@ impl HDRIMergeApp {
                         "Unable to access file \"{}\".",
                         path.to_string_lossy()
                     ));
-                    repaint_signal.request_repaint();
                     return;
                 };
 
@@ -598,7 +582,6 @@ impl HDRIMergeApp {
                             "Image has a different resolution: \"{}\".  Not loading.  Note: all images must have the same resolution.",
                             path.to_string_lossy()
                         ));
-                        repaint_signal.request_repaint();
                         continue;
                     }
                 }
@@ -633,7 +616,6 @@ impl HDRIMergeApp {
                         "Image file lacks Exif data needed to compute exposure value: \"{}\".  Defaulting to 1.0.",
                         path.to_string_lossy()
                     ));
-                    repaint_signal.request_repaint();
                     1.0
                 };
 
@@ -684,26 +666,21 @@ impl HDRIMergeApp {
                     .thumbnails
                     .sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
             }
-
-            repaint_signal.request_repaint();
         });
 
         let selected_image_index = self.ui_data.lock().unwrap().selected_image_index;
-        self.compute_image_preview(repaint_signal_2, selected_image_index);
+        self.compute_image_preview(selected_image_index);
     }
 
-    fn remove_image(&self, repaint_signal: Arc<dyn epi::RepaintSignal>, image_index: usize) {
+    fn remove_image(&self, image_index: usize) {
         let images = Arc::clone(&self.images);
         let ui_data = Arc::clone(&self.ui_data);
-        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
-        let repaint_signal_2 = Arc::clone(&repaint_signal);
 
         self.job_queue.add_job("Remove Image", move |status| {
             status
                 .lock()
                 .unwrap()
                 .set_progress(format!("Removing image..."), 0.0);
-            repaint_signal.request_repaint();
 
             {
                 images.lock().unwrap().remove(image_index);
@@ -713,22 +690,18 @@ impl HDRIMergeApp {
                     ui_data.selected_image_index -= 1;
                 }
             }
-
-            repaint_signal.request_repaint();
         });
 
         let selected_image_index = self.ui_data.lock().unwrap().selected_image_index;
-        self.compute_image_preview(repaint_signal_2, selected_image_index);
+        self.compute_image_preview(selected_image_index);
     }
 
-    fn build_hdri(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>) {
+    fn build_hdri(&mut self) {
         use sensor_analysis::Histogram;
 
         let images = Arc::clone(&self.images);
         let hdri = Arc::clone(&self.hdri_merger);
         let ui_data = Arc::clone(&self.ui_data);
-        let repaint_signal2 = Arc::clone(&repaint_signal);
-        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
         self.job_queue.add_job("Build HDRI", move |status| {
             let img_len = images.lock().unwrap().len();
@@ -739,14 +712,12 @@ impl HDRIMergeApp {
                 .lock()
                 .unwrap()
                 .set_progress(format!("Estimating transfer function"), 0.0);
-            repaint_signal.request_repaint();
 
             // Calculate histograms.
             let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
             for img_i in 0..img_len {
                 for chan in 0..3 {
                     if status.lock().unwrap().is_canceled() {
-                        repaint_signal.request_repaint();
                         return;
                     }
                     let src_img = &images.lock().unwrap()[img_i];
@@ -781,14 +752,12 @@ impl HDRIMergeApp {
             let mut hdri_merger = HDRIMerger::new(width, height);
             for img_i in 0..img_len {
                 if status.lock().unwrap().is_canceled() {
-                    repaint_signal.request_repaint();
                     return;
                 }
                 status.lock().unwrap().set_progress(
                     format!("Merging image {}", img_i + 1),
                     (img_i + 1) as f32 / (img_len + 2) as f32,
                 );
-                repaint_signal.request_repaint();
 
                 let src_img = &images.lock().unwrap()[img_i];
                 hdri_merger.add_image(
@@ -802,34 +771,29 @@ impl HDRIMergeApp {
 
             // Finalize.
             if status.lock().unwrap().is_canceled() {
-                repaint_signal.request_repaint();
                 return;
             }
             status.lock().unwrap().set_progress(
                 format!("Finalizing"),
                 (img_len + 1) as f32 / (img_len + 2) as f32,
             );
-            repaint_signal.request_repaint();
             hdri_merger.finish();
 
             *hdri.lock().unwrap() = Some(hdri_merger);
             ui_data.lock().unwrap().show_image = ShowImage::HDRI;
-            repaint_signal.request_repaint();
         });
 
-        self.compute_hdri_preview(repaint_signal2);
+        self.compute_hdri_preview();
     }
 
-    fn save_hdri(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>, path: PathBuf) {
+    fn save_hdri(&mut self, path: PathBuf) {
         let hdri = Arc::clone(&self.hdri_merger);
-        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
         self.job_queue.add_job("Save HDRI", move |status| {
             status
                 .lock()
                 .unwrap()
                 .set_progress(format!("Saving: {}", path.to_string_lossy()), 0.0);
-            repaint_signal.request_repaint();
             if let Some(ref hdri) = *hdri.lock().unwrap() {
                 hdr::write_hdr(
                     &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
@@ -839,15 +803,13 @@ impl HDRIMergeApp {
                 )
                 .unwrap();
             }
-            repaint_signal.request_repaint();
         });
     }
 
-    fn compute_hdri_preview(&mut self, repaint_signal: Arc<dyn epi::RepaintSignal>) {
+    fn compute_hdri_preview(&mut self) {
         let hdri = Arc::clone(&self.hdri_merger);
         let hdri_preview = Arc::clone(&self.hdri_preview);
         let ui_data = Arc::clone(&self.ui_data);
-        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
         self.job_queue
             .cancel_pending_jobs_with_name("Update HDRI preview");
@@ -857,7 +819,6 @@ impl HDRIMergeApp {
                     .lock()
                     .unwrap()
                     .set_progress("Updating HDRI preview".to_string(), 0.0);
-                repaint_signal.request_repaint();
 
                 let exposure = 2.0f32.powf(ui_data.lock().unwrap().preview_exposure);
                 let srgb_table: Vec<f32> = (0..256)
@@ -888,7 +849,6 @@ impl HDRIMergeApp {
                     });
 
                 if status.lock().unwrap().is_canceled() {
-                    repaint_signal.request_repaint();
                     return;
                 }
 
@@ -896,20 +856,13 @@ impl HDRIMergeApp {
                     *hdri_preview.lock().unwrap() = preview;
                     ui_data.lock().unwrap().hdri_preview_tex_needs_update = true;
                 }
-
-                repaint_signal.request_repaint();
             });
     }
 
-    fn compute_image_preview(
-        &self,
-        repaint_signal: Arc<dyn epi::RepaintSignal>,
-        image_index: usize,
-    ) {
+    fn compute_image_preview(&self, image_index: usize) {
         let images = Arc::clone(&self.images);
         let image_preview = Arc::clone(&self.image_preview);
         let ui_data = Arc::clone(&self.ui_data);
-        let repaint_signal = std::panic::AssertUnwindSafe(repaint_signal);
 
         self.job_queue.cancel_jobs_with_name("Update image preview");
         self.job_queue
@@ -918,7 +871,6 @@ impl HDRIMergeApp {
                     .lock()
                     .unwrap()
                     .set_progress("Updating image preview".to_string(), 0.0);
-                repaint_signal.request_repaint();
 
                 let preview: Option<(Vec<egui::Color32>, usize, usize)> =
                     images.lock().unwrap().get(image_index).map(|image| {
@@ -938,7 +890,6 @@ impl HDRIMergeApp {
                     });
 
                 if status.lock().unwrap().is_canceled() {
-                    repaint_signal.request_repaint();
                     return;
                 }
 
@@ -946,8 +897,6 @@ impl HDRIMergeApp {
                     *image_preview.lock().unwrap() = preview;
                     ui_data.lock().unwrap().image_preview_tex_needs_update = true;
                 }
-
-                repaint_signal.request_repaint();
             });
     }
 }
