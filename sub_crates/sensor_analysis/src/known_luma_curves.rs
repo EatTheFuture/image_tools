@@ -1,6 +1,7 @@
 /// The sRGB gamma curve.
 pub mod srgb {
     /// Linear -> sRGB
+    #[inline]
     pub fn from_linear(n: f32) -> f32 {
         if n < 0.003_130_8 {
             n * 12.92
@@ -10,6 +11,7 @@ pub mod srgb {
     }
 
     /// sRGB -> Linear
+    #[inline]
     pub fn to_linear(n: f32) -> f32 {
         if n < 0.04045 {
             n / 12.92
@@ -36,13 +38,106 @@ pub mod srgb {
     }
 }
 
+/// Perceptual Quantizer from Rec.2100.
+///
+/// Note: the main functions in this module are not
+/// [0.0, 1.0] -> [0.0, 1.0] mappings.  They are mappings between linear
+/// [0.0, `LUMINANCE_MAX`] and non-linear [0.0, 1.0].
+///
+/// If you want a [0.0, 1.0] -> [0.0, 1.0] mapping, use the `*_norm()`
+/// functions instead, which simply scale `LUMINANCE_MAX` to 1.0.
+pub mod pq {
+    /// The maximum allowed luminance of linear values, in cd/m^2.
+    pub const LUMINANCE_MAX: f32 = 10000.0;
+
+    const M1: f32 = 2610.0 / 16384.0;
+    const M2: f32 = 2523.0 / 4096.0 * 128.0;
+    const C1: f32 = 3424.0 / 4096.0;
+    const C2: f32 = 2413.0 / 4096.0 * 32.0;
+    const C3: f32 = 2392.0 / 4096.0 * 32.0;
+
+    /// Linear -> PQ (OETF function).
+    ///
+    /// Input is in the range [0, `LUMINANCE_MAX`], representing display
+    /// luminance in cd/m^2.
+    /// Output is in the range [0.0, 1.0].
+    #[inline(always)]
+    pub fn from_linear(n: f32) -> f32 {
+        assert!(n >= 0.0 && n <= LUMINANCE_MAX);
+        from_linear_norm(n / LUMINANCE_MAX)
+    }
+
+    /// PQ -> Linear (EOTF function).
+    ///
+    /// Input is in the range [0.0, 1.0].
+    /// Output is in the range [0, `LUMINANCE_MAX`], representing display
+    /// luminance in cd/m^2.
+    #[inline(always)]
+    pub fn to_linear(n: f32) -> f32 {
+        assert!(n >= 0.0 && n <= 1.0);
+        to_linear_norm(n) * LUMINANCE_MAX
+    }
+
+    /// Linear -> PQ, except both input and output are [0.0, 1.0].
+    #[inline]
+    pub fn from_linear_norm(n: f32) -> f32 {
+        let n_m1 = n.powf(M1);
+        ((C1 + (C2 * n_m1)) / (1.0 + (C3 * n_m1))).powf(M2)
+    }
+
+    /// PQ -> Linear, except both input and output are [0.0, 1.0].
+    #[inline]
+    pub fn to_linear_norm(n: f32) -> f32 {
+        let n_1_m2 = n.powf(1.0 / M2);
+
+        ((n_1_m2 - C1).max(0.0) / (C2 - (C3 * n_1_m2))).powf(1.0 / M1)
+    }
+}
+
+/// Hybrid Log-Gamma from Rec.2100.
+pub mod hlg {
+    const A: f32 = 0.17883277;
+    const B: f32 = 1.0 - (4.0 * A);
+
+    /// Linear -> HLG (OETF function).
+    ///
+    /// Input and output are both [0.0, 1.0].
+    #[inline]
+    pub fn from_linear(n: f32) -> f32 {
+        let c = 0.5 - (A * (4.0 * A).ln()); // Should be a `const`, but can't because of `ln()`.
+
+        assert!(n >= 0.0 && n <= 1.0);
+        if n <= (1.0 / 12.0) {
+            (3.0 * n).sqrt()
+        } else {
+            A * (12.0 * n - B).ln() + c
+        }
+    }
+
+    /// HLG -> Linear (EOTF function).
+    ///
+    /// Input and output are both [0.0, 1.0].
+    #[inline]
+    pub fn to_linear(n: f32) -> f32 {
+        let c = 0.5 - (A * (4.0 * A).ln()); // Should be a `const`, but can't because of `ln()`.
+
+        assert!(n >= 0.0 && n <= 1.0);
+        if n <= 0.5 {
+            (n * n) / 3.0
+        } else {
+            (((n - c) / A).exp() + B) / 12.0
+        }
+    }
+}
+
 /// Sony's S-Log2 curve.
 ///
 /// Note: the main functions in this module are not
 /// [0.0, 1.0] -> [0.0, 1.0] mappings.  They are mappings between "scene
 /// linear" and "code values".  For example, scene-linear 0.0 maps to
 /// `CV_BLACK` (which is > 0.0) and scene-linear 1.0 maps to `CV_WHITE`
-/// (which is < 1.0).
+/// (which is < 1.0).  (And just to spell it out: this means that
+/// scene-linear values can be both less than 0.0 and greater than 1.0).
 ///
 /// If you want a [0.0, 1.0] -> [0.0, 1.0] mapping with the same
 /// non-linearity as S-Log2, use the `*_norm()` functions instead.
@@ -64,6 +159,7 @@ pub mod sony_slog2 {
     ///
     /// For example, to get 10-bit code values do
     /// `from_linear(scene_linear_in) * 1023.0`
+    #[inline]
     pub fn from_linear(x: f32) -> f32 {
         let x = x / 0.9;
 
@@ -83,6 +179,7 @@ pub mod sony_slog2 {
     ///
     /// For example, if using 10-bit code values do
     /// `to_linear(10_bit_cv_in / 1023.0)`
+    #[inline]
     pub fn to_linear(x: f32) -> f32 {
         // Map "code value" black and white levels to 0.0 and 1.0,
         // respectively.
@@ -102,6 +199,7 @@ pub mod sony_slog2 {
     /// output [0.0, 1.0].
     ///
     /// Essentially, this is the non-linearity curve of S-Log2.
+    #[inline(always)]
     pub fn from_linear_norm(x: f32) -> f32 {
         // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
         // Note: this is not part of the official mapping curve.
@@ -115,6 +213,7 @@ pub mod sony_slog2 {
     }
 
     /// Inverse of `from_linear_norm()`.
+    #[inline(always)]
     pub fn to_linear_norm(x: f32) -> f32 {
         // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
         // Note: this is not part of the official mapping curve.
@@ -175,7 +274,8 @@ pub mod sony_slog2 {
 /// [0.0, 1.0] -> [0.0, 1.0] mappings.  They are mappings between "scene
 /// linear" and "code values".  For example, scene-linear 0.0 maps to
 /// `CV_BLACK` (which is > 0.0) and scene-linear 1.0 maps to `CV_WHITE`
-/// (which is < 1.0).
+/// (which is < 1.0).  (And just to spell it out: this means that
+/// scene-linear values can be both less than 0.0 and greater than 1.0).
 ///
 /// If you want a [0.0, 1.0] -> [0.0, 1.0] mapping with the same
 /// non-linearity as S-Log3, use the `*_norm()` functions instead.
