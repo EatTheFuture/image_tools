@@ -8,7 +8,7 @@ use std::{
 use eframe::{egui, epi};
 use rayon::prelude::*;
 
-use sensor_analysis::{eval_luma_map, invert_luma_map};
+use sensor_analysis::{eval_transfer_function_lut, invert_transfer_function_lut};
 use shared_data::Shared;
 
 use lib::{ImageInfo, SourceImage};
@@ -680,15 +680,15 @@ impl AppMain {
 
             // Estimate linearizating curve.
             let inv_mapping: [Vec<f32>; 3] = {
-                let (mapping, _) = sensor_analysis::estimate_luma_map_emor(&[
+                let (mapping, _) = sensor_analysis::estimate_transfer_function(&[
                     &histograms[0],
                     &histograms[1],
                     &histograms[2],
                 ]);
                 [
-                    invert_luma_map(&mapping[0]),
-                    invert_luma_map(&mapping[1]),
-                    invert_luma_map(&mapping[2]),
+                    invert_transfer_function_lut(&mapping[0]),
+                    invert_transfer_function_lut(&mapping[1]),
+                    invert_transfer_function_lut(&mapping[2]),
                 ]
             };
 
@@ -765,13 +765,18 @@ impl AppMain {
                 let exposure = 2.0f32.powf(ui_data.lock().preview_exposure);
                 let srgb_table: Vec<f32> = (0..256)
                     .map(|n| {
-                        sensor_analysis::known_luma_curves::srgb::from_linear(n as f32 / 255.0)
+                        sensor_analysis::known_transfer_functions::srgb::from_linear(
+                            n as f32 / 255.0,
+                        )
                     })
                     .collect();
                 let preview: Option<(Vec<egui::Color32>, usize, usize)> =
                     hdri.lock().as_ref().map(|hdri| {
                         let map_val = |n: f32| {
-                            (eval_luma_map(&srgb_table, (n * exposure).max(0.0).min(1.0)) * 255.0)
+                            (eval_transfer_function_lut(
+                                &srgb_table,
+                                (n * exposure).max(0.0).min(1.0),
+                            ) * 255.0)
                                 .round() as u8
                         };
 
@@ -878,9 +883,9 @@ impl HDRIMerger {
             let r = pixel[0] as f32 / 255.0;
             let g = pixel[1] as f32 / 255.0;
             let b = pixel[2] as f32 / 255.0;
-            let r_linear = eval_luma_map(&linearizing_curves[0][..], r);
-            let g_linear = eval_luma_map(&linearizing_curves[1][..], g);
-            let b_linear = eval_luma_map(&linearizing_curves[2][..], b);
+            let r_linear = eval_transfer_function_lut(&linearizing_curves[0][..], r);
+            let g_linear = eval_transfer_function_lut(&linearizing_curves[1][..], g);
+            let b_linear = eval_transfer_function_lut(&linearizing_curves[2][..], b);
             let weight =
                 calc_weight(r.max(g).max(b)) + calc_weight(r_linear.max(g_linear).max(b_linear));
 

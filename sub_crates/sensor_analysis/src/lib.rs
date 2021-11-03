@@ -5,22 +5,22 @@ mod exposure_mapping;
 mod histogram;
 mod utils;
 
-pub mod known_luma_curves;
+pub mod known_transfer_functions;
 
 pub use histogram::Histogram;
 
 use exposure_mapping::ExposureMapping;
 
-/// Uses EMoR curve fitting to estimate a luminance mapping curve that
-/// fits the given histogram-exposure pairs.
+/// Estimate a transfer function to fit the given histogram-exposure
+/// pairs.
 ///
-/// The returned curve represents a mapping from the source space in
-/// [0.0, 1.0] to a linear space in [0.0, 1.0].  For example, if the
-/// input exposure mappings are from sRGB images, the returned map would
-/// convert sRGB gamma -> linear.
+/// The returned lookup table represents a mapping from linear luminance
+/// in [0.0, 1.0] to a non-linear encoding also in [0.0, 1.0].  For
+/// example, if the input exposure mappings are from sRGB images, the
+/// returned lookup table would convert linear -> sRGB gamma.
 ///
 /// Also returns the average error of the fit.
-pub fn estimate_luma_map_emor(histograms: &[&[(Histogram, f32)]]) -> (Vec<Vec<f32>>, f32) {
+pub fn estimate_transfer_function(histograms: &[&[(Histogram, f32)]]) -> (Vec<Vec<f32>>, f32) {
     if histograms[0].len() < 2 || histograms[1].len() < 2 || histograms[2].len() < 2 {
         // We don't have enough histograms to infer anything from, so
         // just assume linear.
@@ -119,11 +119,11 @@ pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> Option<
     }
 }
 
-/// Calculates the inverse of a luminance map.
+/// Calculates the inverse of a transfer function lookup table.
 ///
 /// Assumes the slice represents a semi-monotonic function in the range
 /// [0.0, 1.0].
-pub fn invert_luma_map(slice: &[f32]) -> Vec<f32> {
+pub fn invert_transfer_function_lut(slice: &[f32]) -> Vec<f32> {
     let resolution = slice.len();
 
     let mut curve = Vec::new();
@@ -149,13 +149,12 @@ pub fn invert_luma_map(slice: &[f32]) -> Vec<f32> {
     flipped
 }
 
-/// Evaluates the given luma map at `t`.
+/// Evaluates the given transfer function lookup table at `t`.
 ///
-/// `t` should be in the range [0.0, 1.0], and (assuming a valid luma
-/// map) the output will also be in [0.0, 1.0] and will be monotonic
-/// with `t`.
+/// `t` should be in the range [0.0, 1.0], and (assuming a valid table)
+/// the output will also be in [0.0, 1.0] and will be monotonic with `t`.
 #[inline]
-pub fn eval_luma_map(luma_map: &[f32], t: f32) -> f32 {
+pub fn eval_transfer_function_lut(luma_map: &[f32], t: f32) -> f32 {
     debug_assert!(t >= 0.0 && t <= 1.0);
     utils::lerp_slice(luma_map, t)
 }
