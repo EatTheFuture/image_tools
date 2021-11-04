@@ -130,6 +130,144 @@ pub mod hlg {
     }
 }
 
+/// Sony's original S-Log curve.
+///
+/// Note: the main functions in this module are not
+/// [0.0, 1.0] -> [0.0, 1.0] mappings.  They are mappings between "scene
+/// linear" and "code values".  For example, scene-linear 0.0 maps to
+/// `CV_BLACK` (which is > 0.0) and scene-linear 1.0 maps to `CV_WHITE`
+/// (which is < 1.0).  (And just to spell it out: this means that
+/// scene-linear values can be both less than 0.0 and greater than 1.0).
+///
+/// If you want a [0.0, 1.0] -> [0.0, 1.0] mapping with the same
+/// non-linearity, use the `*_norm()` functions instead.
+pub mod sony_slog1 {
+    /// The normalized code value of scene-linear 0.0.
+    pub const CV_BLACK: f32 = 0.088251315;
+
+    /// The normalized code value of scene-linear 1.0.
+    pub const CV_WHITE: f32 = 0.63855165;
+
+    /// The scene-linear value of normalized code value 0.0.
+    pub const LINEAR_MIN: f32 = -0.014279289;
+
+    /// The scene-linear value of normalized code value 1.0.
+    pub const LINEAR_MAX: f32 = 9.737593;
+
+    /// Misc internal constants used on the S-Log formulas.
+    const A: f32 = 0.432699;
+    const B: f32 = 0.037584;
+    const C: f32 = 0.616596;
+    const SLOG_BLACK: f32 = 64.0 / 1023.0;
+    const SLOG_WHITE: f32 = 940.0 / 1023.0;
+
+    /// From scene linear to (normalized) code values.
+    ///
+    /// For example, to get 10-bit code values do
+    /// `from_linear(scene_linear_in) * 1023.0`
+    #[inline]
+    pub fn from_linear(x: f32) -> f32 {
+        let x = x / 0.9;
+
+        let y = (A * (x + B).log10() + C) + 0.03;
+
+        // Map 0.0 and 1.0 to "code value" black and white levels,
+        // respectively.
+        (y * (SLOG_WHITE - SLOG_BLACK)) + SLOG_BLACK
+    }
+
+    /// From (normalized) code values to scene linear.
+    ///
+    /// For example, if using 10-bit code values do
+    /// `to_linear(10_bit_cv_in / 1023.0)`
+    #[inline]
+    pub fn to_linear(x: f32) -> f32 {
+        // Map "code value" black and white levels to 0.0 and 1.0,
+        // respectively.
+        let x = (x - SLOG_BLACK) / (SLOG_WHITE - SLOG_BLACK);
+
+        let y = 10.0f32.powf((x - C - 0.03) / A) - B;
+
+        y * 0.9
+    }
+
+    /// Same as `from_linear()` except remapped so input [0.0, 1.0] ->
+    /// output [0.0, 1.0].
+    ///
+    /// Essentially, this is the non-linearity curve of S-Log2.
+    #[inline(always)]
+    pub fn from_linear_norm(x: f32) -> f32 {
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        let x = x * LINEAR_MAX;
+
+        let y = from_linear(x);
+
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        (y - CV_BLACK) / (1.0 - CV_BLACK)
+    }
+
+    /// Inverse of `from_linear_norm()`.
+    #[inline(always)]
+    pub fn to_linear_norm(x: f32) -> f32 {
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        let x = CV_BLACK + (x * (1.0 - CV_BLACK));
+
+        let y = to_linear(x);
+
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        y / LINEAR_MAX
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn from_linear_test() {
+            // Invariants from page 6 of "S-Log White Paper 1.12.3" from
+            // Sony, October 23rd 2009.
+            assert!((from_linear(0.0) - (90.0 / 1023.0)).abs() < 0.001);
+            assert!((from_linear(0.02) - (167.0 / 1023.0)).abs() < 0.001);
+            assert!((from_linear(0.18) - (394.0 / 1023.0)).abs() < 0.001);
+            assert!((from_linear(0.9) - (636.0 / 1023.0)).abs() < 0.001);
+            assert!((from_linear(7.192) - (974.0 / 1023.0)).abs() < 0.001);
+        }
+
+        #[test]
+        fn to_linear_test() {
+            // Invariants from page 6 of "S-Log White Paper 1.12.3" from
+            // Sony, October 23rd 2009.
+            assert!((to_linear(90.0 / 1023.0) - 0.0).abs() < 0.001);
+            assert!((to_linear(167.0 / 1023.0) - 0.02).abs() < 0.001);
+            assert!((to_linear(394.0 / 1023.0) - 0.18).abs() < 0.001);
+            assert!((to_linear(636.0 / 1023.0) - 0.9).abs() < 0.003);
+            assert!((to_linear(974.0 / 1023.0) - 7.192).abs() < 0.03);
+        }
+
+        #[test]
+        fn from_linear_norm_test() {
+            assert!(from_linear_norm(0.0) >= 0.0);
+            assert!(from_linear_norm(0.0) <= 0.00001);
+
+            assert!((from_linear_norm(1.0) - 1.0) <= 0.0);
+            assert!((from_linear_norm(1.0) - 1.0) >= -0.00001);
+        }
+
+        #[test]
+        fn to_linear_norm_test() {
+            assert!(to_linear_norm(0.0) >= 0.0);
+            assert!(to_linear_norm(0.0) <= 0.00001);
+
+            assert!((to_linear_norm(1.0) - 1.0) <= 0.0);
+            assert!((to_linear_norm(1.0) - 1.0) >= -0.00001);
+        }
+    }
+}
+
 /// Sony's S-Log2 curve.
 ///
 /// Note: the main functions in this module are not
@@ -390,6 +528,127 @@ pub mod sony_slog3 {
     }
 }
 
+/// Canon Log (original).
+///
+/// Note: the main functions in this module are not
+/// [0.0, 1.0] -> [0.0, 1.0] mappings.  They are mappings between "scene
+/// linear" and "code values".  For example, scene-linear 0.0 maps to
+/// `CV_BLACK` (which is > 0.0) and scene-linear 1.0 maps to `CV_WHITE`
+/// (which is < 1.0).  (And just to spell it out: this means that
+/// scene-linear values can be both less than 0.0 and greater than 1.0).
+///
+/// If you want a [0.0, 1.0] -> [0.0, 1.0] mapping with the same
+/// non-linearity, use the `*_norm()` functions instead.
+pub mod canon_log1 {
+    /// The normalized code value of scene-linear 0.0.
+    pub const CV_BLACK: f32 = 0.12512247;
+
+    /// The normalized code value of scene-linear 1.0.
+    pub const CV_WHITE: f32 = 0.59981394;
+
+    /// The scene-linear value of normalized code value 0.0.
+    pub const LINEAR_MIN: f32 = -0.087466866;
+
+    /// The scene-linear value of normalized code value 1.0.
+    pub const LINEAR_MAX: f32 = 8.295911;
+
+    const A: f32 = 0.45310179;
+    const B: f32 = 10.1596;
+    const C: f32 = 0.12512248;
+
+    /// Linear -> Canon Log 2
+    pub fn from_linear(x: f32) -> f32 {
+        if x < 0.0 {
+            -A * (1.0 - (B * x)).log10() + C
+        } else {
+            A * (1.0 + (B * x)).log10() + C
+        }
+    }
+
+    /// Canon Log 2 -> Linear
+    pub fn to_linear(x: f32) -> f32 {
+        if x < C {
+            -(10.0f32.powf((C - x) / A) - 1.0) / B
+        } else {
+            (10.0f32.powf((x - C) / A) - 1.0) / B
+        }
+    }
+
+    /// Same as `from_linear()` except remapped so input [0.0, 1.0] ->
+    /// output [0.0, 1.0].
+    ///
+    /// Essentially, this is the non-linearity curve of Canon Log 2.
+    pub fn from_linear_norm(x: f32) -> f32 {
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        let x = x * LINEAR_MAX;
+
+        let y = from_linear(x);
+
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        (y - CV_BLACK) / (1.0 - CV_BLACK)
+    }
+
+    /// Inverse of `from_linear_norm()`.
+    pub fn to_linear_norm(x: f32) -> f32 {
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        let x = CV_BLACK + (x * (1.0 - CV_BLACK));
+
+        let y = to_linear(x);
+
+        // Adjustment to map 0.0 to 0.0 and 1.0 to 1.0.
+        // Note: this is not part of the official mapping curve.
+        y / LINEAR_MAX
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn from_linear_test() {
+            // Invariants from page 9 of "Canon Log Gamma Curves -
+            // Description of the Canon Log, Canon Log 2 and Canon Log 3
+            // Gamma Curves", from Canon, November 1st 2018.
+            assert!((from_linear(0.0) - 0.125).abs() < 0.001);
+            assert!((from_linear(0.2) - 0.343).abs() < 0.001);
+            assert!((from_linear(1.0) - 0.6).abs() < 0.001);
+            assert!((from_linear(8.0) - 0.993).abs() < 0.001);
+        }
+
+        #[test]
+        fn to_linear_test() {
+            // Invariants from page 9 of "Canon Log Gamma Curves -
+            // Description of the Canon Log, Canon Log 2 and Canon Log 3
+            // Gamma Curves", from Canon, November 1st 2018.
+            assert!((to_linear(0.125) - 0.0).abs() < 0.001);
+            assert!((to_linear(0.343) - 0.2).abs() < 0.001);
+            assert!((to_linear(0.6) - 1.0).abs() < 0.002);
+            assert!((to_linear(0.993) - 8.0).abs() < 0.003);
+        }
+
+        #[test]
+        fn from_linear_norm_test() {
+            assert!(from_linear_norm(0.0) >= 0.0);
+            assert!(from_linear_norm(0.0) <= 0.00001);
+
+            assert!((from_linear_norm(1.0) - 1.0) <= 0.0);
+            assert!((from_linear_norm(1.0) - 1.0) >= -0.00001);
+        }
+
+        #[test]
+        fn to_linear_norm_test() {
+            assert!(to_linear_norm(0.0) >= 0.0);
+            assert!(to_linear_norm(0.0) <= 0.00001);
+
+            assert!((to_linear_norm(1.0) - 1.0) <= 0.0);
+            assert!((to_linear_norm(1.0) - 1.0) >= -0.00001);
+        }
+    }
+}
+
 /// Canon Log 2.
 ///
 /// Note: the main functions in this module are not
@@ -473,7 +732,7 @@ pub mod canon_log2 {
         fn from_linear_test() {
             // Invariants from page 9 of "Canon Log Gamma Curves -
             // Description of the Canon Log, Canon Log 2 and Canon Log 3
-            // Gamma Curves", from Canon, 2018-11-01.
+            // Gamma Curves", from Canon, November 1st 2018.
             assert!((from_linear(0.0) - 0.093).abs() < 0.001);
             assert!((from_linear(0.2) - 0.398).abs() < 0.001);
             assert!((from_linear(1.0) - 0.562).abs() < 0.001);
@@ -486,7 +745,7 @@ pub mod canon_log2 {
         fn to_linear_test() {
             // Invariants from page 9 of "Canon Log Gamma Curves -
             // Description of the Canon Log, Canon Log 2 and Canon Log 3
-            // Gamma Curves", from Canon, 2018-11-01.
+            // Gamma Curves", from Canon, November 1st 2018.
             assert!((to_linear(0.093) - 0.0).abs() < 0.001);
             assert!((to_linear(0.398) - 0.2).abs() < 0.001);
             assert!((to_linear(0.562) - 1.0).abs() < 0.003);
@@ -608,7 +867,7 @@ pub mod canon_log3 {
         fn from_linear_test() {
             // Invariants from page 9 of "Canon Log Gamma Curves -
             // Description of the Canon Log, Canon Log 2 and Canon Log 3
-            // Gamma Curves", from Canon, 2018-11-01.
+            // Gamma Curves", from Canon, November 1st 2018.
             assert!((from_linear(0.0) - 0.125).abs() < 0.001);
             assert!((from_linear(0.2) - 0.343).abs() < 0.001);
             assert!((from_linear(1.0) - 0.564).abs() < 0.001);
@@ -620,7 +879,7 @@ pub mod canon_log3 {
         fn to_linear_test() {
             // Invariants from page 9 of "Canon Log Gamma Curves -
             // Description of the Canon Log, Canon Log 2 and Canon Log 3
-            // Gamma Curves", from Canon, 2018-11-01.
+            // Gamma Curves", from Canon, November 1st 2018.
             assert!((to_linear(0.125) - 0.0).abs() < 0.001);
             assert!((to_linear(0.343) - 0.2).abs() < 0.001);
             assert!((to_linear(0.564) - 1.0).abs() < 0.004);
