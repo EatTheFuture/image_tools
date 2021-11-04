@@ -21,6 +21,7 @@ fn main() {
             job_queue: job_queue::JobQueue::new(),
 
             image_sets: Shared::new(Vec::new()),
+            transfer_function_table: Shared::new(None),
 
             ui_data: Shared::new(UIData {
                 active_image_set: 0,
@@ -29,6 +30,7 @@ fn main() {
                 thumbnail_sets: vec![vec![]],
                 image_preview_tex: None,
                 image_preview_tex_needs_update: false,
+                transfer_function_preview: None,
             }),
         }),
         eframe::NativeOptions {
@@ -42,10 +44,15 @@ struct AppMain {
     job_queue: job_queue::JobQueue,
 
     image_sets: Shared<Vec<Vec<SourceImage>>>,
+    transfer_function_table: Shared<Option<(Vec<f32>, f32, f32)>>, // (table, x_min, x_max)
 
     ui_data: Shared<UIData>,
 }
 
+/// The stuff the UI code needs access to for drawing and update.
+///
+/// Nothing other than the UI should lock this data for non-trivial
+/// amounts of time.
 struct UIData {
     // Widgets.
     active_image_set: usize,
@@ -61,6 +68,7 @@ struct UIData {
     >,
     image_preview_tex: Option<(egui::TextureId, usize, usize)>,
     image_preview_tex_needs_update: bool,
+    transfer_function_preview: Option<Vec<(f32, f32)>>,
 }
 
 impl epi::App for AppMain {
@@ -88,6 +96,21 @@ impl epi::App for AppMain {
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
         let job_count = self.job_queue.job_count();
 
+        // File dialogs used in the UI.
+        let add_images_dialog = rfd::FileDialog::new()
+            .set_title("Add Images")
+            .add_filter(
+                "All Images",
+                &[
+                    "jpg", "JPG", "jpeg", "JPEG", "tiff", "TIFF", "tif", "TIF", "webp", "WEBP",
+                    "png", "PNG",
+                ],
+            )
+            .add_filter("jpeg", &["jpg", "JPG", "jpeg", "JPEG"])
+            .add_filter("tiff", &["tiff", "TIFF", "tif", "TIF"])
+            .add_filter("webp", &["webp", "WEBP"])
+            .add_filter("png", &["png", "PNG"]);
+
         //----------------
         // GUI.
 
@@ -102,6 +125,9 @@ impl epi::App for AppMain {
                 });
             });
         });
+
+        // Status bar and log (footer).
+        egui_custom::status_bar(ctx, &self.job_queue);
 
         // Image list (left-side panel).
         egui::containers::panel::SidePanel::left("image_list")
@@ -249,8 +275,52 @@ impl epi::App for AppMain {
                 // }
             });
 
-        // Status bar and log (footer).
-        egui_custom::status_bar(ctx, &self.job_queue);
+        // Main area.
+        egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                // Image set add button.
+                if ui
+                    .add_enabled(
+                        job_count == 0,
+                        egui::widgets::Button::new("Add Image Set..."),
+                    )
+                    .clicked()
+                {
+                    if let Some(paths) = add_images_dialog.clone().pick_files() {
+                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
+                    }
+                }
+
+                ui.label(" ➡ ");
+
+                // Estimate transfer function button.
+                if ui
+                    .add_enabled(
+                        job_count == 0,
+                        egui::widgets::Button::new("Estimate Transfer Function"),
+                    )
+                    .clicked()
+                {
+                    self.estimate_transfer_function();
+                }
+            });
+
+            ui.add(egui::widgets::Separator::default().spacing(12.0));
+
+            if let Some(transfer_function_curve) = &self.ui_data.lock().transfer_function_preview {
+                use egui::widgets::plot::{Line, Plot, Value, Values};
+                ui.add(
+                    Plot::new("transfer_function")
+                        .line(Line::new(Values::from_values_iter(
+                            transfer_function_curve
+                                .iter()
+                                .copied()
+                                .map(|(x, y)| Value::new(x, y)),
+                        )))
+                        .view_aspect(1.0),
+                );
+            }
+        });
 
         //----------------
         // Processing.
@@ -357,5 +427,9 @@ impl AppMain {
 
         // let selected_image_index = self.ui_data.lock().selected_image_index;
         // self.compute_image_preview(selected_image_index);
+    }
+
+    fn estimate_transfer_function(&self) {
+        todo!()
     }
 }
