@@ -44,7 +44,7 @@ struct AppMain {
     job_queue: job_queue::JobQueue,
 
     image_sets: Shared<Vec<Vec<SourceImage>>>,
-    transfer_function_table: Shared<Option<(Vec<f32>, f32, f32)>>, // (table, x_min, x_max)
+    transfer_function_table: Shared<Option<([Vec<f32>; 3], f32, f32)>>, // (table, x_min, x_max)
 
     ui_data: Shared<UIData>,
 }
@@ -68,7 +68,7 @@ struct UIData {
     >,
     image_preview_tex: Option<(egui::TextureId, usize, usize)>,
     image_preview_tex_needs_update: bool,
-    transfer_function_preview: Option<Vec<(f32, f32)>>,
+    transfer_function_preview: Option<[Vec<(f32, f32)>; 3]>,
 }
 
 impl epi::App for AppMain {
@@ -312,7 +312,19 @@ impl epi::App for AppMain {
                 ui.add(
                     Plot::new("transfer_function")
                         .line(Line::new(Values::from_values_iter(
-                            transfer_function_curve
+                            transfer_function_curve[0]
+                                .iter()
+                                .copied()
+                                .map(|(x, y)| Value::new(x, y)),
+                        )))
+                        .line(Line::new(Values::from_values_iter(
+                            transfer_function_curve[1]
+                                .iter()
+                                .copied()
+                                .map(|(x, y)| Value::new(x, y)),
+                        )))
+                        .line(Line::new(Values::from_values_iter(
+                            transfer_function_curve[2]
                                 .iter()
                                 .copied()
                                 .map(|(x, y)| Value::new(x, y)),
@@ -430,6 +442,141 @@ impl AppMain {
     }
 
     fn estimate_transfer_function(&self) {
-        todo!()
+        use sensor_analysis::{emor, estimate_sensor_floor_ceiling, ExposureMapping, Histogram};
+
+        let image_sets = self.image_sets.clone_ref();
+        let transfer_function_table = self.transfer_function_table.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue
+            .add_job("Estimate Transfer Function", move |status| {
+                // Compute histograms.
+                status
+                    .lock_mut()
+                    .set_progress(format!("Computing image histograms"), 0.0);
+                let mut histogram_sets: Vec<[Vec<(Histogram, f32)>; 3]> = Vec::new();
+                for images in image_sets.lock().iter() {
+                    let img_len = images.len();
+                    let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
+                    for img_i in 0..img_len {
+                        for chan in 0..3 {
+                            if status.lock().is_canceled() {
+                                return;
+                            }
+                            let src_img = &images[img_i];
+                            if let Some(exposure) = src_img.info.exposure {
+                                histograms[chan].push((
+                                    Histogram::from_iter(
+                                        src_img
+                                            .image
+                                            .enumerate_pixels()
+                                            .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+                                        256,
+                                    ),
+                                    exposure,
+                                ));
+                            }
+                        }
+                    }
+
+                    histogram_sets.push(histograms);
+                }
+
+                // Estimate sensor floor/ceiling for each channel.
+                //
+                // The values are normalized to a range of [0.0, 1.0].
+                status
+                    .lock_mut()
+                    .set_progress(format!("Estimating sensor floor and ceiling"), 0.1);
+                let floor_ceil: [(f32, f32); 3] = {
+                    let mut floor: [Option<f32>; 3] = [None; 3];
+                    let mut ceiling: [Option<f32>; 3] = [None; 3];
+                    for histograms in histogram_sets.iter() {
+                        for i in 0..3 {
+                            let norm = 1.0 / (histograms[i][0].0.buckets.len() - 1) as f32;
+                            if let Some((f, c)) = estimate_sensor_floor_ceiling(&histograms[i]) {
+                                if let Some(ref mut floor) = floor[i] {
+                                    *floor = floor.min(f * norm);
+                                } else {
+                                    floor[i] = Some(f * norm);
+                                }
+                                if let Some(ref mut ceiling) = ceiling[i] {
+                                    *ceiling = ceiling.max(c * norm);
+                                } else {
+                                    ceiling[i] = Some(c * norm);
+                                }
+                            }
+                        }
+                    }
+                    [
+                        (floor[0].unwrap_or(0.0), ceiling[0].unwrap_or(1.0)),
+                        (floor[1].unwrap_or(0.0), ceiling[1].unwrap_or(1.0)),
+                        (floor[2].unwrap_or(0.0), ceiling[2].unwrap_or(1.0)),
+                    ]
+                };
+
+                // Compute exposure mappings.
+                status
+                    .lock_mut()
+                    .set_progress(format!("Computing exposure mappings"), 0.2);
+                let mut mappings = Vec::new();
+                for histograms in histogram_sets.iter() {
+                    for chan in 0..histograms.len() {
+                        for i in 0..histograms[chan].len() {
+                            for j in 0..1 {
+                                let j = j + 1;
+                                if (i + j) < histograms[chan].len() {
+                                    mappings.push(ExposureMapping::from_histograms(
+                                        &histograms[chan][i].0,
+                                        &histograms[chan][i + j].0,
+                                        histograms[chan][i].1,
+                                        histograms[chan][i + j].1,
+                                        floor_ceil[chan].0,
+                                        floor_ceil[chan].1,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Estimate transfer function.
+                status
+                    .lock_mut()
+                    .set_progress(format!("Estimating transfer function"), 0.3);
+                let (emor_factors, err) = emor::estimate_emor(&mappings);
+                let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+                for i in 0..3 {
+                    curves[i] = emor::emor_factors_to_curve(
+                        &emor_factors,
+                        floor_ceil[i].0,
+                        floor_ceil[i].1,
+                    );
+                }
+
+                // Store the curve and the preview.
+                let preview_curves: [Vec<(f32, f32)>; 3] = [
+                    curves[0]
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .map(|(i, y)| (i as f32 / (curves[0].len() - 1) as f32, y))
+                        .collect(),
+                    curves[1]
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .map(|(i, y)| (i as f32 / (curves[1].len() - 1) as f32, y))
+                        .collect(),
+                    curves[2]
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .map(|(i, y)| (i as f32 / (curves[2].len() - 1) as f32, y))
+                        .collect(),
+                ];
+                *transfer_function_table.lock_mut() = Some((curves, 0.0, 1.0));
+                ui_data.lock_mut().transfer_function_preview = Some(preview_curves);
+            });
     }
 }

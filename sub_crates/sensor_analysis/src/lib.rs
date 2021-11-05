@@ -1,6 +1,6 @@
 //! A crate for computing various things about camera sensors.
 
-mod emor;
+pub mod emor;
 mod exposure_mapping;
 mod histogram;
 mod utils;
@@ -9,7 +9,7 @@ pub mod known_transfer_functions;
 
 pub use histogram::Histogram;
 
-use exposure_mapping::ExposureMapping;
+pub use exposure_mapping::ExposureMapping;
 
 /// Estimate a transfer function to fit the given histogram-exposure
 /// pairs.
@@ -37,6 +37,7 @@ pub fn estimate_transfer_function(histograms: &[&[(Histogram, f32)]]) -> (Vec<Ve
         .iter()
         .map(|h| estimate_sensor_floor_ceiling(h).unwrap_or((0.0, (bucket_count - 1) as f32)))
         .collect();
+    let floor_ceil_norm = 1.0 / (histograms[0][0].0.buckets.len() - 1) as f32;
 
     // Build the exposure mappings.
     let mut mappings = Vec::new();
@@ -50,8 +51,8 @@ pub fn estimate_transfer_function(histograms: &[&[(Histogram, f32)]]) -> (Vec<Ve
                         &histograms[chan][i + j].0,
                         histograms[chan][i].1,
                         histograms[chan][i + j].1,
-                        floor_ceil_pairs[chan].0,
-                        floor_ceil_pairs[chan].1,
+                        floor_ceil_pairs[chan].0 * floor_ceil_norm,
+                        floor_ceil_pairs[chan].1 * floor_ceil_norm,
                     ));
                 }
             }
@@ -59,7 +60,6 @@ pub fn estimate_transfer_function(histograms: &[&[(Histogram, f32)]]) -> (Vec<Ve
     }
 
     let (emor_factors, err) = emor::estimate_emor(&mappings);
-    let floor_ceil_norm = 1.0 / (histograms[0][0].0.buckets.len() - 1) as f32;
 
     (
         floor_ceil_pairs

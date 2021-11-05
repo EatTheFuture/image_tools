@@ -87,8 +87,8 @@ impl ExposureMapping {
             x_curve: x_curve,
             y_curve: y_curve,
             exposure_ratio: exposure_2 / exposure_1,
-            floor: floor / (h1.buckets.len() - 1) as f32,
-            ceiling: ceiling / (h1.buckets.len() - 1) as f32,
+            floor: floor,
+            ceiling: ceiling,
         }
     }
 
