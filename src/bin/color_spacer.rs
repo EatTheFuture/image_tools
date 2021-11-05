@@ -70,7 +70,7 @@ struct UIData {
     >,
     image_preview_tex: Option<(egui::TextureId, usize, usize)>,
     image_preview_tex_needs_update: bool,
-    transfer_function_preview: Option<[Vec<(f32, f32)>; 3]>,
+    transfer_function_preview: Option<([Vec<(f32, f32)>; 3], f32)>, // (curves, error)
 }
 
 impl epi::App for AppMain {
@@ -315,28 +315,34 @@ impl epi::App for AppMain {
 
             ui.add(egui::widgets::Separator::default().spacing(12.0));
 
-            if let Some(transfer_function_curve) = &self.ui_data.lock().transfer_function_preview {
+            if let Some((transfer_function_curves, err)) =
+                &self.ui_data.lock().transfer_function_preview
+            {
                 use egui::widgets::plot::{Line, Plot, Value, Values};
                 ui.add(
                     Plot::new("transfer_function")
                         .line(Line::new(Values::from_values_iter(
-                            transfer_function_curve[0]
+                            transfer_function_curves[0]
                                 .iter()
                                 .copied()
                                 .map(|(x, y)| Value::new(x, y)),
                         )))
                         .line(Line::new(Values::from_values_iter(
-                            transfer_function_curve[1]
+                            transfer_function_curves[1]
                                 .iter()
                                 .copied()
                                 .map(|(x, y)| Value::new(x, y)),
                         )))
                         .line(Line::new(Values::from_values_iter(
-                            transfer_function_curve[2]
+                            transfer_function_curves[2]
                                 .iter()
                                 .copied()
                                 .map(|(x, y)| Value::new(x, y)),
                         )))
+                        .text(egui::widgets::plot::Text::new(
+                            egui::widgets::plot::Value { x: 0.5, y: -0.05 },
+                            format!("Average error: {}", err),
+                        ))
                         .data_aspect(1.0),
                 );
             }
@@ -558,11 +564,8 @@ impl AppMain {
 
                 // Estimate transfer function.
                 let rounds_per_update = (1000 / mappings.len()).max(1);
-                let mut estimator = emor::EmorEstimator::new(
-                    &mappings,
-                    100,
-                    histogram_sets[0][0][0].0.buckets.len(),
-                );
+                let mut estimator =
+                    emor::EmorEstimator::new(&mappings, histogram_sets[0][0][0].0.buckets.len());
                 for round_i in 0..(total_rounds / rounds_per_update) {
                     status.lock_mut().set_progress(
                         format!(
@@ -577,7 +580,7 @@ impl AppMain {
                     }
 
                     estimator.do_rounds(rounds_per_update);
-                    let (emor_factors, _err) = estimator.current_estimate();
+                    let (emor_factors, err) = estimator.current_estimate();
                     let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
                     for i in 0..3 {
                         curves[i] = emor::emor_factors_to_curve(
@@ -609,7 +612,7 @@ impl AppMain {
                             .collect(),
                     ];
                     *transfer_function_table.lock_mut() = Some((curves, 0.0, 1.0));
-                    ui_data.lock_mut().transfer_function_preview = Some(preview_curves);
+                    ui_data.lock_mut().transfer_function_preview = Some((preview_curves, err));
                 }
             });
     }

@@ -16,15 +16,12 @@ pub struct EmorEstimator<'a> {
     best_factors: [f32; EMOR_FACTOR_COUNT],
     best_err: f32,
     current_round: usize,
-    warmup_rounds: usize,
+    rounds_without_change: usize,
+    step_size: f32,
 }
 
 impl<'a> EmorEstimator<'a> {
-    pub fn new(
-        mappings: &'a [ExposureMapping],
-        warmup_rounds: usize,
-        test_points: usize,
-    ) -> EmorEstimator<'a> {
+    pub fn new(mappings: &'a [ExposureMapping], test_points: usize) -> EmorEstimator<'a> {
         let initial_factors = [0.5f32; EMOR_FACTOR_COUNT];
         let initial_err = calc_emor_error(mappings, &initial_factors, test_points);
         EmorEstimator {
@@ -35,13 +32,14 @@ impl<'a> EmorEstimator<'a> {
             best_factors: initial_factors,
             best_err: initial_err,
             current_round: 0,
-            warmup_rounds: warmup_rounds,
+            rounds_without_change: 0,
+            step_size: 4.0,
         }
     }
 
     pub fn do_rounds(&mut self, rounds: usize) {
         // Use gradient descent to find the lowest error.
-        for round in self.current_round..(self.current_round + rounds) {
+        for _ in self.current_round..(self.current_round + rounds) {
             self.current_round += 1;
             let delta = 0.0001;
             let delta_inv = 1.0 / delta;
@@ -58,22 +56,27 @@ impl<'a> EmorEstimator<'a> {
 
             if diff_length > 0.0 {
                 let diff_norm = 1.0 / diff_length;
-                let step = if round < self.warmup_rounds {
-                    0.1
-                } else {
-                    0.1 / (0.1 * (round - self.warmup_rounds) as f32 + 1.0)
-                };
                 for i in 0..EMOR_FACTOR_COUNT {
-                    self.factors[i] -= error_diffs[i] * diff_norm * step;
+                    self.factors[i] -= error_diffs[i] * diff_norm * self.step_size;
                 }
                 self.err = calc_emor_error(self.mappings, &self.factors, self.test_points);
 
                 if self.err < self.best_err {
                     self.best_err = self.err;
                     self.best_factors = self.factors;
+                    self.rounds_without_change = 0;
+                } else {
+                    self.rounds_without_change += 1;
                 }
             } else {
                 break;
+            }
+
+            if self.rounds_without_change > 20 {
+                self.step_size *= 0.9;
+                self.rounds_without_change = 0;
+                self.factors = self.best_factors;
+                self.err = self.best_err;
             }
         }
     }
@@ -110,7 +113,7 @@ pub fn estimate_emor(
     mappings: &[ExposureMapping],
     test_points: usize,
 ) -> ([f32; EMOR_FACTOR_COUNT], f32) {
-    let mut estimator = EmorEstimator::new(mappings, 100, test_points);
+    let mut estimator = EmorEstimator::new(mappings, test_points);
     estimator.do_rounds(2000);
     estimator.current_estimate()
 }
@@ -147,17 +150,17 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
     let mut err_weight_sum = 0.0f32;
 
     // Discourage non-monotonic curves by strongly encouraging a minimum slope.
-    const MIN_SLOPE: f32 = 1.0 / 1024.0;
+    const MIN_SLOPE: f32 = 1.0 / 4096.0;
     const MIN_DELTA: f32 = MIN_SLOPE / EMOR_TABLE[0].len() as f32;
+    let total_error_measurements = mappings.len() * point_count;
     let non_mono_weight =
-        4.0 * mappings.len() as f32 * point_count as f32 * (1.0 / EMOR_TABLE[0].len() as f32);
+        4096.0 * (1.0 / EMOR_TABLE[0].len() as f32) * total_error_measurements as f32;
     let mut last_y = -MIN_DELTA;
     for i in 0..EMOR_TABLE[0].len() {
         let y = emor_at_index(emor_factors, i);
         let non_mono = (last_y - y + MIN_DELTA).max(0.0);
         last_y = y;
         err_sum += non_mono * non_mono_weight;
-        err_weight_sum += non_mono_weight;
     }
 
     // Calculate the actual errors.
