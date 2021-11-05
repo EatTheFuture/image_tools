@@ -26,6 +26,7 @@ fn main() {
             ui_data: Shared::new(UIData {
                 active_image_set: 0,
                 selected_image_index: 0,
+                rounds: 2000,
 
                 thumbnail_sets: vec![vec![]],
                 image_preview_tex: None,
@@ -57,6 +58,7 @@ struct UIData {
     // Widgets.
     active_image_set: usize,
     selected_image_index: usize,
+    rounds: usize,
 
     // Other stuff.
     thumbnail_sets: Vec<
@@ -134,6 +136,18 @@ impl epi::App for AppMain {
             .min_width(200.0)
             .resizable(false)
             .show(ctx, |ui| {
+                // Image set add button.
+                if ui
+                    .add_enabled(
+                        job_count == 0,
+                        egui::widgets::Button::new("Add Image Set..."),
+                    )
+                    .clicked()
+                {
+                    if let Some(paths) = add_images_dialog.clone().pick_files() {
+                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
+                    }
+                }
                 // let mut remove_i = None; // Temp to store index of an image to remove.
 
                 // // Selected image info.
@@ -278,21 +292,6 @@ impl epi::App for AppMain {
         // Main area.
         egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_top(|ui| {
-                // Image set add button.
-                if ui
-                    .add_enabled(
-                        job_count == 0,
-                        egui::widgets::Button::new("Add Image Set..."),
-                    )
-                    .clicked()
-                {
-                    if let Some(paths) = add_images_dialog.clone().pick_files() {
-                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
-                    }
-                }
-
-                ui.label(" ➡ ");
-
                 // Estimate transfer function button.
                 if ui
                     .add_enabled(
@@ -303,6 +302,15 @@ impl epi::App for AppMain {
                 {
                     self.estimate_transfer_function();
                 }
+
+                // Rounds slider.
+                ui.add_enabled(
+                    job_count == 0,
+                    egui::widgets::DragValue::new(&mut self.ui_data.lock_mut().rounds)
+                        .clamp_range(100..=200000)
+                        .max_decimals(0)
+                        .prefix("Estimation rounds: "),
+                );
             });
 
             ui.add(egui::widgets::Separator::default().spacing(12.0));
@@ -450,6 +458,8 @@ impl AppMain {
 
         self.job_queue
             .add_job("Estimate Transfer Function", move |status| {
+                let total_rounds = ui_data.lock().rounds;
+
                 // Compute histograms.
                 status
                     .lock_mut()
@@ -547,7 +557,6 @@ impl AppMain {
                 }
 
                 // Estimate transfer function.
-                let total_rounds = 200000;
                 let rounds_per_update = (1000 / mappings.len()).max(1);
                 let mut estimator = emor::EmorEstimator::new(
                     &mappings,
