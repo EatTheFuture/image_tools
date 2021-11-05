@@ -329,7 +329,7 @@ impl epi::App for AppMain {
                                 .copied()
                                 .map(|(x, y)| Value::new(x, y)),
                         )))
-                        .view_aspect(1.0),
+                        .data_aspect(1.0),
                 );
             }
         });
@@ -492,6 +492,9 @@ impl AppMain {
                     let mut floor: [Option<f32>; 3] = [None; 3];
                     let mut ceiling: [Option<f32>; 3] = [None; 3];
                     for histograms in histogram_sets.iter() {
+                        if status.lock().is_canceled() {
+                            return;
+                        }
                         for i in 0..3 {
                             let norm = 1.0 / (histograms[i][0].0.buckets.len() - 1) as f32;
                             if let Some((f, c)) = estimate_sensor_floor_ceiling(&histograms[i]) {
@@ -523,6 +526,9 @@ impl AppMain {
                 for histograms in histogram_sets.iter() {
                     for chan in 0..histograms.len() {
                         for i in 0..histograms[chan].len() {
+                            if status.lock().is_canceled() {
+                                return;
+                            }
                             for j in 0..1 {
                                 let j = j + 1;
                                 if (i + j) < histograms[chan].len() {
@@ -541,42 +547,57 @@ impl AppMain {
                 }
 
                 // Estimate transfer function.
-                status
-                    .lock_mut()
-                    .set_progress(format!("Estimating transfer function"), 0.3);
-                let (emor_factors, err) = emor::estimate_emor(&mappings);
-                let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-                for i in 0..3 {
-                    curves[i] = emor::emor_factors_to_curve(
-                        &emor_factors,
-                        floor_ceil[i].0,
-                        floor_ceil[i].1,
+                let total_rounds = 200000;
+                let rounds_per_update = 20;
+                let mut estimator = emor::EmorEstimator::new(&mappings, 100);
+                for round_i in 0..(total_rounds / rounds_per_update) {
+                    status.lock_mut().set_progress(
+                        format!(
+                            "Estimating transfer function, round {}/{}",
+                            round_i * rounds_per_update,
+                            total_rounds
+                        ),
+                        0.3,
                     );
-                }
+                    if status.lock().is_canceled() {
+                        return;
+                    }
 
-                // Store the curve and the preview.
-                let preview_curves: [Vec<(f32, f32)>; 3] = [
-                    curves[0]
-                        .iter()
-                        .copied()
-                        .enumerate()
-                        .map(|(i, y)| (i as f32 / (curves[0].len() - 1) as f32, y))
-                        .collect(),
-                    curves[1]
-                        .iter()
-                        .copied()
-                        .enumerate()
-                        .map(|(i, y)| (i as f32 / (curves[1].len() - 1) as f32, y))
-                        .collect(),
-                    curves[2]
-                        .iter()
-                        .copied()
-                        .enumerate()
-                        .map(|(i, y)| (i as f32 / (curves[2].len() - 1) as f32, y))
-                        .collect(),
-                ];
-                *transfer_function_table.lock_mut() = Some((curves, 0.0, 1.0));
-                ui_data.lock_mut().transfer_function_preview = Some(preview_curves);
+                    estimator.do_rounds(rounds_per_update);
+                    let (emor_factors, _err) = estimator.current_estimate();
+                    let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+                    for i in 0..3 {
+                        curves[i] = emor::emor_factors_to_curve(
+                            &emor_factors,
+                            floor_ceil[i].0,
+                            floor_ceil[i].1,
+                        );
+                    }
+
+                    // Store the curve and the preview.
+                    let preview_curves: [Vec<(f32, f32)>; 3] = [
+                        curves[0]
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(i, y)| (i as f32 / (curves[0].len() - 1) as f32, y))
+                            .collect(),
+                        curves[1]
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(i, y)| (i as f32 / (curves[1].len() - 1) as f32, y))
+                            .collect(),
+                        curves[2]
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(i, y)| (i as f32 / (curves[2].len() - 1) as f32, y))
+                            .collect(),
+                    ];
+                    *transfer_function_table.lock_mut() = Some((curves, 0.0, 1.0));
+                    ui_data.lock_mut().transfer_function_preview = Some(preview_curves);
+                }
             });
     }
 }
