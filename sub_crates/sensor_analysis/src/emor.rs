@@ -10,6 +10,7 @@ const EMOR_FACTOR_COUNT: usize = 6;
 
 pub struct EmorEstimator<'a> {
     mappings: &'a [ExposureMapping],
+    test_points: usize,
     factors: [f32; EMOR_FACTOR_COUNT],
     err: f32,
     best_factors: [f32; EMOR_FACTOR_COUNT],
@@ -19,11 +20,16 @@ pub struct EmorEstimator<'a> {
 }
 
 impl<'a> EmorEstimator<'a> {
-    pub fn new(mappings: &'a [ExposureMapping], warmup_rounds: usize) -> EmorEstimator<'a> {
+    pub fn new(
+        mappings: &'a [ExposureMapping],
+        warmup_rounds: usize,
+        test_points: usize,
+    ) -> EmorEstimator<'a> {
         let initial_factors = [0.5f32; EMOR_FACTOR_COUNT];
-        let initial_err = calc_emor_error(mappings, &initial_factors);
+        let initial_err = calc_emor_error(mappings, &initial_factors, test_points);
         EmorEstimator {
             mappings: mappings,
+            test_points: test_points,
             factors: initial_factors,
             err: initial_err,
             best_factors: initial_factors,
@@ -43,8 +49,9 @@ impl<'a> EmorEstimator<'a> {
             for i in 0..EMOR_FACTOR_COUNT {
                 let mut test_factors = self.factors;
                 test_factors[i] += delta;
-                error_diffs[i] =
-                    (calc_emor_error(self.mappings, &test_factors) - self.err) * delta_inv;
+                error_diffs[i] = (calc_emor_error(self.mappings, &test_factors, self.test_points)
+                    - self.err)
+                    * delta_inv;
             }
 
             let diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
@@ -59,7 +66,7 @@ impl<'a> EmorEstimator<'a> {
                 for i in 0..EMOR_FACTOR_COUNT {
                     self.factors[i] -= error_diffs[i] * diff_norm * step;
                 }
-                self.err = calc_emor_error(self.mappings, &self.factors);
+                self.err = calc_emor_error(self.mappings, &self.factors, self.test_points);
 
                 if self.err < self.best_err {
                     self.best_err = self.err;
@@ -99,8 +106,11 @@ pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
 /// Estimates EMoR factors to fit the passed mappings.
 ///
 /// Returns the EMoR factors and the average error of the fit.
-pub fn estimate_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT], f32) {
-    let mut estimator = EmorEstimator::new(mappings, 100);
+pub fn estimate_emor(
+    mappings: &[ExposureMapping],
+    test_points: usize,
+) -> ([f32; EMOR_FACTOR_COUNT], f32) {
+    let mut estimator = EmorEstimator::new(mappings, 100, test_points);
     estimator.do_rounds(2000);
     estimator.current_estimate()
 }
@@ -132,8 +142,7 @@ pub fn emor_factors_to_curve(factors: &[f32], sensor_floor: f32, sensor_ceiling:
     curve
 }
 
-fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
-    const POINTS: usize = 200;
+fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_count: usize) -> f32 {
     let mut err_sum = 0.0f32;
     let mut err_weight_sum = 0.0f32;
 
@@ -141,7 +150,7 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
     const MIN_SLOPE: f32 = 1.0 / 1024.0;
     const MIN_DELTA: f32 = MIN_SLOPE / EMOR_TABLE[0].len() as f32;
     let non_mono_weight =
-        4.0 * mappings.len() as f32 * POINTS as f32 * (1.0 / EMOR_TABLE[0].len() as f32);
+        4.0 * mappings.len() as f32 * point_count as f32 * (1.0 / EMOR_TABLE[0].len() as f32);
     let mut last_y = -MIN_DELTA;
     for i in 0..EMOR_TABLE[0].len() {
         let y = emor_at_index(emor_factors, i);
@@ -178,8 +187,8 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
                 sample_count_weight * extent_weight
             };
             if weight > 0.0 {
-                for i in 0..POINTS {
-                    let y_linear = (i + 1) as f32 / (POINTS + 1) as f32;
+                for i in 0..point_count {
+                    let y_linear = (i + 1) as f32 / (point_count + 1) as f32;
                     let x_linear = y_linear / mapping.exposure_ratio;
                     let x = map_floor_ceil(eval_emor(emor_factors, x_linear));
                     let y = map_floor_ceil(eval_emor(emor_factors, y_linear));
