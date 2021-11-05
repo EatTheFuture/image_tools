@@ -886,8 +886,7 @@ impl HDRIMerger {
             let r_linear = eval_transfer_function_lut(&linearizing_curves[0][..], r);
             let g_linear = eval_transfer_function_lut(&linearizing_curves[1][..], g);
             let b_linear = eval_transfer_function_lut(&linearizing_curves[2][..], b);
-            let weight =
-                calc_weight(r.max(g).max(b)) + calc_weight(r_linear.max(g_linear).max(b_linear));
+            let weight = calc_weight(r.max(g).max(b));
 
             self.pixels[i][0] += r_linear * inv_exposure * weight;
             self.pixels[i][1] += g_linear * inv_exposure * weight;
