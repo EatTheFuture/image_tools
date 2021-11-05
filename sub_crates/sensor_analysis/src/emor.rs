@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 use crate::exposure_mapping::ExposureMapping;
 use crate::utils::lerp_slice;
 
@@ -150,44 +152,55 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
     }
 
     // Calculate the actual errors.
-    for mapping in mappings {
-        let sensor_range = mapping.ceiling - mapping.floor;
-        let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + mapping.floor };
-        let relative_err = |a: f32, b: f32| -> f32 {
-            let x = a.min(b);
-            let y = a.max(b);
-            let err = if y > 0.0 { (y - x) / y } else { 0.0 };
-            err * err
-        };
+    let (err, err_weight) = mappings
+        .par_iter()
+        .map(|mapping| {
+            let mut mapping_err = 0.0;
+            let mut mapping_err_weight = 0.0;
 
-        let weight = {
-            const MIN_EXTENT: f32 = 0.5;
-            let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
-            let extent_weight = {
-                let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);
-                adjusted_extent.abs() // * adjusted_extent
+            let sensor_range = mapping.ceiling - mapping.floor;
+            let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + mapping.floor };
+            let relative_err = |a: f32, b: f32| -> f32 {
+                let x = a.min(b);
+                let y = a.max(b);
+                let err = if y > 0.0 { (y - x) / y } else { 0.0 };
+                err * err
             };
-            let sample_count_weight = mapping.curve.len() as f32 / 256.0;
-            sample_count_weight * extent_weight
-        };
-        if weight > 0.0 {
-            for i in 0..POINTS {
-                let y_linear = (i + 1) as f32 / (POINTS + 1) as f32;
-                let x_linear = y_linear / mapping.exposure_ratio;
-                let x = map_floor_ceil(eval_emor(emor_factors, x_linear));
-                let y = map_floor_ceil(eval_emor(emor_factors, y_linear));
 
-                if let Some(x_err) = mapping.eval_at_y(y).map(|x_map| relative_err(x, x_map)) {
-                    err_sum += x_err * weight;
-                    err_weight_sum += weight;
-                }
-                if let Some(y_err) = mapping.eval_at_x(x).map(|y_map| relative_err(y, y_map)) {
-                    err_sum += y_err * weight;
-                    err_weight_sum += weight;
+            let weight = {
+                const MIN_EXTENT: f32 = 0.5;
+                let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
+                let extent_weight = {
+                    let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);
+                    adjusted_extent.abs() // * adjusted_extent
+                };
+                let sample_count_weight = mapping.curve.len() as f32 / 256.0;
+                sample_count_weight * extent_weight
+            };
+            if weight > 0.0 {
+                for i in 0..POINTS {
+                    let y_linear = (i + 1) as f32 / (POINTS + 1) as f32;
+                    let x_linear = y_linear / mapping.exposure_ratio;
+                    let x = map_floor_ceil(eval_emor(emor_factors, x_linear));
+                    let y = map_floor_ceil(eval_emor(emor_factors, y_linear));
+
+                    if let Some(x_err) = mapping.eval_at_y(y).map(|x_map| relative_err(x, x_map)) {
+                        mapping_err += x_err * weight;
+                        mapping_err_weight += weight;
+                    }
+                    if let Some(y_err) = mapping.eval_at_x(x).map(|y_map| relative_err(y, y_map)) {
+                        mapping_err += y_err * weight;
+                        mapping_err_weight += weight;
+                    }
                 }
             }
-        }
-    }
+
+            (mapping_err, mapping_err_weight)
+        })
+        .reduce(|| (0.0f32, 0.0f32), |a, b| (a.0 + b.0, a.1 + b.1));
+
+    err_sum += err;
+    err_weight_sum += err_weight;
 
     err_sum / err_weight_sum as f32
 }

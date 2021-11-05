@@ -548,7 +548,7 @@ impl AppMain {
 
                 // Estimate transfer function.
                 let total_rounds = 200000;
-                let rounds_per_update = 20;
+                let rounds_per_update = (1000 / mappings.len()).max(1);
                 let mut estimator = emor::EmorEstimator::new(&mappings, 100);
                 for round_i in 0..(total_rounds / rounds_per_update) {
                     status.lock_mut().set_progress(
