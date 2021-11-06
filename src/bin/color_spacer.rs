@@ -4,8 +4,8 @@ use std::{path::Path, sync::Arc};
 
 use eframe::{egui, epi};
 
+use sensor_analysis::invert_transfer_function_lut;
 use shared_data::Shared;
-// use sensor_analysis::invert_luma_map;
 
 use lib::{ImageInfo, SourceImage};
 
@@ -21,7 +21,7 @@ fn main() {
             job_queue: job_queue::JobQueue::new(),
 
             image_sets: Shared::new(Vec::new()),
-            transfer_function_table: Shared::new(None),
+            transfer_function_tables: Shared::new(None),
 
             ui_data: Shared::new(UIData {
                 active_image_set: 0,
@@ -45,7 +45,7 @@ struct AppMain {
     job_queue: job_queue::JobQueue,
 
     image_sets: Shared<Vec<Vec<SourceImage>>>,
-    transfer_function_table: Shared<Option<([Vec<f32>; 3], f32, f32)>>, // (table, x_min, x_max)
+    transfer_function_tables: Shared<Option<([Vec<f32>; 3], f32, f32)>>, // (table, x_min, x_max)
 
     ui_data: Shared<UIData>,
 }
@@ -112,6 +112,9 @@ impl epi::App for AppMain {
             .add_filter("tiff", &["tiff", "TIFF", "tif", "TIF"])
             .add_filter("webp", &["webp", "WEBP"])
             .add_filter("png", &["png", "PNG"]);
+        let save_lut_dialog = rfd::FileDialog::new()
+            .set_title("Save LUT")
+            .add_filter(".cube", &["cube", "CUBE"]);
 
         //----------------
         // GUI.
@@ -311,6 +314,29 @@ impl epi::App for AppMain {
                         .max_decimals(0)
                         .prefix("Estimation rounds: "),
                 );
+
+                if ui
+                    .add_enabled(
+                        self.transfer_function_tables.lock().is_some() && job_count == 0,
+                        egui::widgets::Button::new("Export 'linear -> gamma' LUT..."),
+                    )
+                    .clicked()
+                {
+                    if let Some(path) = save_lut_dialog.clone().save_file() {
+                        self.save_lut(path, false);
+                    }
+                }
+                if ui
+                    .add_enabled(
+                        self.transfer_function_tables.lock().is_some() && job_count == 0,
+                        egui::widgets::Button::new("Export 'gamma -> linear' LUT..."),
+                    )
+                    .clicked()
+                {
+                    if let Some(path) = save_lut_dialog.clone().save_file() {
+                        self.save_lut(path, true);
+                    }
+                }
             });
 
             ui.add(egui::widgets::Separator::default().spacing(12.0));
@@ -459,7 +485,7 @@ impl AppMain {
         use sensor_analysis::{emor, estimate_sensor_floor_ceiling, ExposureMapping, Histogram};
 
         let image_sets = self.image_sets.clone_ref();
-        let transfer_function_table = self.transfer_function_table.clone_ref();
+        let transfer_function_tables = self.transfer_function_tables.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
@@ -611,9 +637,40 @@ impl AppMain {
                             .map(|(i, y)| (i as f32 / (curves[2].len() - 1) as f32, y))
                             .collect(),
                     ];
-                    *transfer_function_table.lock_mut() = Some((curves, 0.0, 1.0));
+                    *transfer_function_tables.lock_mut() = Some((curves, 0.0, 1.0));
                     ui_data.lock_mut().transfer_function_preview = Some((preview_curves, err));
                 }
             });
+    }
+
+    fn save_lut(&self, path: std::path::PathBuf, inverse: bool) {
+        let (tables, range_min, range_max) = self.transfer_function_tables.lock().clone().unwrap();
+
+        self.job_queue.add_job("Save LUT", move |status| {
+            status
+                .lock_mut()
+                .set_progress(format!("Saving LUT: {}", path.to_string_lossy(),), 0.0);
+
+            // Invert the tables if needed.
+            // TODO: account for min/max range properly when inverting.
+            let tables = if inverse {
+                [
+                    invert_transfer_function_lut(&tables[0]),
+                    invert_transfer_function_lut(&tables[1]),
+                    invert_transfer_function_lut(&tables[2]),
+                ]
+            } else {
+                tables
+            };
+
+            lut::write_cube_1d(
+                &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
+                (range_min, range_max),
+                &tables[0],
+                &tables[1],
+                &tables[2],
+            )
+            .unwrap();
+        });
     }
 }

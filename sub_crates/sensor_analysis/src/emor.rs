@@ -6,7 +6,7 @@ use crate::utils::lerp_slice;
 // Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
-const EMOR_FACTOR_COUNT: usize = 6;
+const EMOR_FACTOR_COUNT: usize = 7;
 
 pub struct EmorEstimator<'a> {
     mappings: &'a [ExposureMapping],
@@ -33,7 +33,7 @@ impl<'a> EmorEstimator<'a> {
             best_err: initial_err,
             current_round: 0,
             rounds_without_change: 0,
-            step_size: 4.0,
+            step_size: 1.0,
         }
     }
 
@@ -72,8 +72,8 @@ impl<'a> EmorEstimator<'a> {
                 break;
             }
 
-            if self.rounds_without_change > 20 {
-                self.step_size *= 0.9;
+            if self.rounds_without_change >= 32 {
+                self.step_size *= 0.9090909;
                 self.rounds_without_change = 0;
                 self.factors = self.best_factors;
                 self.err = self.best_err;
@@ -176,7 +176,7 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
                 let x = a.min(b);
                 let y = a.max(b);
                 let err = if y > 0.0 { (y - x) / y } else { 0.0 };
-                err * err
+                err
             };
 
             let weight = {
