@@ -10,7 +10,7 @@ use shared_data::Shared;
 use lib::{ImageInfo, SourceImage};
 
 fn main() {
-    clap::App::new("Color Spacer")
+    clap::App::new("Camera Analyzer")
         .version("0.1")
         .author("Nathan Vegdahl")
         .about("Does all things color space")
@@ -75,7 +75,7 @@ struct UIData {
 
 impl epi::App for AppMain {
     fn name(&self) -> &str {
-        "Color Spacer"
+        "Camera Analyzer"
     }
 
     fn setup(
