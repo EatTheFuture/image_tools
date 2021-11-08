@@ -5,64 +5,126 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  executable_names: hdri_merge color_spacer
 
 jobs:
   dev-build:
     name: Development Build
+    runs-on: ${{ matrix.os }}   
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
-    runs-on: ${{ matrix.os }}   
+        build: [x86_64-linux, x86_64-macos, x86_64-windows]
+        include:
+        - build: x86_64-linux
+          os: ubuntu-20.04
+          rust: stable
+          target: x86_64-unknown-linux-gnu
+          cross: false
+        - build: x86_64-macos
+          os: macos-latest
+          rust: stable
+          target: x86_64-apple-darwin
+          cross: false
+        - build: x86_64-windows
+          os: windows-2019
+          rust: stable
+          target: x86_64-pc-windows-msvc
+          cross: false
 
     steps:
-      - name: Install Ubuntu Dependencies
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+      - name: Install Ubuntu dependencies
+        if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
-      # Get a checkout and rust toolchain.
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      
+      - name: Install ${{ matrix.rust }} toolchain
+        uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
           override: true
 
-      # Build
-      - run: cargo +stable build --release
-
-      # Releases for the various OS's
-      - name: Release Ubuntu
-        if: ${{ matrix.os == 'ubuntu-latest'}}
-        uses: marvinpinto/action-automatic-releases@v1.2.1
+      - name: Build release binary
+        uses: actions-rs/cargo@v1
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "dev-build-ubuntu"
-          prerelease: true
-          title: "Development Build - Ubuntu"
-          files: |
-            target/release/hdri_merge
-            target/release/images_to_sensor_response
-
-      - name: Release MacOS
-        if: ${{ matrix.os == 'macOS-latest' }}
-        uses: marvinpinto/action-automatic-releases@v1.2.1
+          use-cross: ${{ matrix.cross }}
+          command: build
+          args: --release --target ${{ matrix.target }}
+      
+      - name: Strip release binary (linux and macos)
+        shell: bash
+        run: |
+          if [[ ! "${{ matrix.os }}" =~ "windows" ]]; then
+            for executable in ${executable_names}; do
+              strip "target/${{ matrix.target }}/release/${executable}"
+            done
+          fi
+          
+      
+      - name: Upload files for packaging
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" =~ "windows" ]]; then
+            exe=".exe"
+          fi
+          mkdir dist
+          for executable in ${executable_names}; do
+            cp "target/${{ matrix.target }}/release/${executable}${exe}" "dist/"
+          done
+          # cp LICENSE.md README.md "dist/"
+      
+      - uses: actions/upload-artifact@v2.2.4
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "dev-build-macos"
-          prerelease: true
-          title: "Development Build - MacOS"
-          files: |
-            target/release/hdri_merge
-            target/release/images_to_sensor_response
+          name: files-${{ matrix.build }}
+          path: dist
+  
+  publish:
+    name: Publish
+    needs: [dev-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v2
+      
+      - run: ls -al files-*
+      
+      - name: Build archive
+        shell: bash
+        run: |
+          set -ex
 
-      - name: Release Windows
-        if: ${{ matrix.os == 'windows-latest' }}
-        uses: marvinpinto/action-automatic-releases@v1.2.1
+          rm -rf tmp
+          mkdir tmp
+          mkdir dist
+
+          for dir in files-* ; do
+              platform=${dir#"files-"}
+              if [[ $platform =~ "windows" ]]; then
+                  exe=".exe"
+              fi
+              pkgname=image_tools-dev_build-$platform
+              mkdir tmp/$pkgname
+              mv ${dir}/* tmp/$pkgname/
+              for executable in ${executable_names}; do
+                chmod +x tmp/$pkgname/${executable}${exe}
+              done
+
+              if [ "$exe" = "" ]; then
+                  tar cJf dist/$pkgname.tar.xz -C tmp $pkgname
+              else
+                  (cd tmp && 7z a -r ../dist/$pkgname.zip $pkgname)
+              fi
+          done
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "dev-build-windows"
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/*
+          file_glob: true
+          tag: dev-build
+          release_name: Development Build
+          overwrite: true
           prerelease: true
-          title: "Development Build - Windows"
-          files: |
-            target/release/hdri_merge.exe
-            target/release/images_to_sensor_response.exe
