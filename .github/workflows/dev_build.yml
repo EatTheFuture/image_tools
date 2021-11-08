@@ -74,7 +74,7 @@ jobs:
           for executable in ${executable_names}; do
             cp "target/${{ matrix.target }}/release/${executable}${exe}" "dist/"
           done
-          # cp LICENSE.md README.md "dist/"
+          cp LICENSE.md README.md "dist/"
       
       - uses: actions/upload-artifact@v2.2.4
         with:
