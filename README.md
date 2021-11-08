@@ -9,14 +9,15 @@ Currently there are only two tools: HDRI Merge and Camera Analyzer.
 
 HDRI Merge is a tool for merging a series of low-dynamic-range images at different exposures into a single high-dynamic-range image.
 
-At the moment HDRI merge only works correctly with image files that contain Exif data about their exposures.  Typically these will be JPEGs, although several standard image formats are supported.  The resulting HDRIs are always saved in .hdr format.
+At the moment HDRI Merge only works correctly with image files that contain Exif data about their exposures.  Typically these will be JPEGs, although several standard image formats are supported.  The resulting HDRIs are always saved in .hdr format.
 
 ### TODO:
 
+- [ ] Let user select which transfer function to use for HDRI preview display (currently always sRGB gamma).
+- [ ] Let user load and use custom transfer function LUTs to linearize input images (currently always automatically estimated, which works well but isn't 100% precise).
+- [ ] Let user manually specify sensor floor/ceiling values (currently always auto-detected).
 - [ ] Support camera raw images as input.
 - [ ] Support saving to EXR files.
-- [ ] Support loading and using custom transfer function LUTs to linearize input images (currently only automatic estimation is done, which works well but isn't 100% precise).
-- [ ] Allow the user to specify sensor floor/ceiling values manually (currently they are always invisibly auto-detected).
 
 
 ## Camera Analyzer
