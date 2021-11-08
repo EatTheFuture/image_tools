@@ -1,15 +1,16 @@
-name: dev_build
-
+name: release
 on:
-  workflow_dispatch
+  push:
+    tags:
+    - 'v[0-9]+\.[0-9]+\.[0-9]+'
 
 env:
   CARGO_TERM_COLOR: always
-  executable_names: hdri_merge color_spacer
+  executable_names: hdri_merge
 
 jobs:
-  dev-build:
-    name: Development Build
+  build:
+    name: Build
     runs-on: ${{ matrix.os }}   
     strategy:
       matrix:
@@ -83,12 +84,22 @@ jobs:
   
   publish:
     name: Publish
-    needs: [dev-build]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v2
       
       - run: ls -al files-*
+      
+      - name: Calculate tag name
+        run: |
+          name=dev
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            name=${GITHUB_REF:10}
+          fi
+          echo ::set-output name=val::$name
+          echo TAG=$name >> $GITHUB_ENV
+        id: tagname
       
       - name: Build archive
         shell: bash
@@ -104,7 +115,7 @@ jobs:
               if [[ $platform =~ "windows" ]]; then
                   exe=".exe"
               fi
-              pkgname=image_tools-dev_build-$platform
+              pkgname=image_tools-$TAG-$platform
               mkdir tmp/$pkgname
               mv ${dir}/* tmp/$pkgname/
               for executable in ${executable_names}; do
@@ -124,7 +135,6 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/*
           file_glob: true
-          tag: dev-build
-          release_name: Development Build
+          tag: ${{ steps.tagname.outputs.val }}
           overwrite: true
-          prerelease: true
+          prerelease: false
