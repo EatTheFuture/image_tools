@@ -180,6 +180,13 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
             };
 
             let weight = {
+                let exposure_weight = if mapping.exposure_ratio < 2.0 {
+                    let x = mapping.exposure_ratio - 1.0;
+                    x * x * (3.0 - 2.0 * x)
+                } else {
+                    let x = mapping.exposure_ratio - 2.0;
+                    1.0 / (0.5 * x * x + 1.0)
+                };
                 const MIN_EXTENT: f32 = 0.5;
                 let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
                 let extent_weight = {
@@ -187,7 +194,7 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
                     adjusted_extent.abs() // * adjusted_extent
                 };
                 let sample_count_weight = mapping.curve.len() as f32 / 256.0;
-                sample_count_weight * extent_weight
+                sample_count_weight * extent_weight * exposure_weight
             };
             if weight > 0.0 {
                 for i in 0..point_count {
