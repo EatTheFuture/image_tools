@@ -13,9 +13,8 @@ At the moment HDRI Merge only works correctly with image files that contain Exif
 
 ### TODO:
 
-- [ ] Let user select which transfer function to use for HDRI preview display (currently always sRGB gamma).
-- [ ] Let user load and use custom transfer function LUTs to linearize input images (currently always automatically estimated, which works well but isn't 100% precise).
-- [ ] Let user manually specify sensor floor/ceiling values (currently always auto-detected).
+- [ ] Let user select a "look" to use for HDRI preview display (currently just applies sRGB gamma).
+- [ ] Let user load and use custom LUTs to linearize and color-transform input images before merging (currently linearization is estimated, and there's no way to transform chroma before merging).
 - [ ] Support camera raw images as input.
 - [ ] Support saving to EXR files.
 
