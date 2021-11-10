@@ -35,7 +35,7 @@ jobs:
     steps:
       - name: Install Ubuntu dependencies
         if: startsWith(matrix.os, 'ubuntu')
-        run: sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev
+        run: sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev wget
 
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -48,32 +48,42 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      - name: Build release binary
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.cross }}
-          command: build
-          args: --release --target ${{ matrix.target }}
-      
-      - name: Strip release binary (linux and macos)
+      - name: Build release binaries
         shell: bash
         run: |
-          if [[ ! "${{ matrix.os }}" =~ "windows" ]]; then
+          if [[ "${{ matrix.os }}" =~ "ubuntu" ]]; then
+            # Build appimages on Ubuntu.
+            wget https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
+            mv appimagetool-x86_64.AppImage appimagetool
+            chmod +x appimagetool
+            sudo mv appimagetool /usr/local/bin/
+            cargo +${{ matrix.rust }} install cargo-appimage --version 1.3.1
+            cargo +${{ matrix.rust }} appimage --target=${{ matrix.target }}
+          else
+            cargo +${{ matrix.rust }} build --release --target=${{ matrix.target }}
+          fi
+      
+      - name: Strip release binary (macos)
+        shell: bash
+        run: |
+          if [[ ! "${{ matrix.os }}" =~ ("windows"|"ubuntu") ]]; then
             for executable in ${executable_names}; do
               strip "target/${{ matrix.target }}/release/${executable}"
             done
           fi
           
-      
       - name: Upload files for packaging
         shell: bash
         run: |
-          if [[ "${{ matrix.os }}" =~ "windows" ]]; then
-            exe=".exe"
-          fi
           mkdir dist
           for executable in ${executable_names}; do
-            cp "target/${{ matrix.target }}/release/${executable}${exe}" "dist/"
+            if [[ "${{ matrix.os }}" =~ "windows" ]]; then
+              cp "target/${{ matrix.target }}/release/${executable}.exe" "dist/"
+            elif [[ "${{ matrix.os }}" =~ "ubuntu" ]]; then
+              cp "${executable}"*.AppImage "dist/${executable}.AppImage"
+            else
+              cp "target/${{ matrix.target }}/release/${executable}" "dist/"
+            fi
           done
           cp LICENSE.md README.md "dist/"
       
@@ -112,20 +122,23 @@ jobs:
 
           for dir in files-* ; do
               platform=${dir#"files-"}
-              if [[ $platform =~ "windows" ]]; then
-                  exe=".exe"
-              fi
               pkgname=image_tools-$TAG-$platform
               mkdir tmp/$pkgname
               mv ${dir}/* tmp/$pkgname/
               for executable in ${executable_names}; do
-                chmod +x tmp/$pkgname/${executable}${exe}
+                if [[ $platform =~ "windows" ]]; then
+                  chmod +x tmp/$pkgname/${executable}.exe
+                elif [[ $platform =~ "linux" ]]; then
+                  chmod +x tmp/$pkgname/${executable}.AppImage
+                else
+                  chmod +x tmp/$pkgname/${executable}
+                fi
               done
 
-              if [ "$exe" = "" ]; then
-                  tar cJf dist/$pkgname.tar.xz -C tmp $pkgname
-              else
+              if [[ $platform =~ "windows" ]]; then
                   (cd tmp && 7z a -r ../dist/$pkgname.zip $pkgname)
+              else
+                  tar cJf dist/$pkgname.tar.xz -C tmp $pkgname
               fi
           done
 
