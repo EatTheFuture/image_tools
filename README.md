@@ -19,11 +19,11 @@ At the moment HDRI Merge only works correctly with image files that contain Exif
 - [ ] Support saving to EXR files.
 
 
-## Camera Analyzer
+## LUT Maker
 
 **WORK IN PROGRESS:** this tool is still very much an R&D project and is not ready for real use yet.  You're more than welcome to tinker with it, but don't expect it to be useful or correct yet.
 
-Camera Analyzer will be a tool for characterizing the luminance and chroma/spectral responses of cameras.  The initial focus of the tool will be luminance response, since that is both more important and far easier to tackle than chroma/spectral.
+LUT Maker will be a tool for creating LUT files for various purposes.  The initial focus will be analyzing and characterizing cameras, the results of which can then be exported as LUTs.  The MVP for a first release will focus on LUTs for linearizing input footage and calibrating black levels, and will likely not include any functionality related to chroma.
 
 ### TODO:
 
