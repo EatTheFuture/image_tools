@@ -971,6 +971,7 @@ dependencies = [
  "job_queue",
  "kamadak-exif",
  "lut",
+ "ocio_gen",
  "rawloader",
  "rayon",
  "rfd",
@@ -1414,6 +1415,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67ac1d3f9a1d3616fd9a60c8d74296f22406a238b6a72f5cc1e6f314df4ffbf9"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ocio_gen"
+version = "0.1.0"
+dependencies = [
+ "lut",
 ]
 
 [[package]]
