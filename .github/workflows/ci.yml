@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Install Ubuntu Dependencies
-        run: sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev
+        run: sudo apt-get update && sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       # Get a checkout and rust toolchain.
       - uses: actions/checkout@v2

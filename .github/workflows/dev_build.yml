@@ -34,7 +34,7 @@ jobs:
     steps:
       - name: Install Ubuntu dependencies
         if: startsWith(matrix.os, 'ubuntu')
-        run: sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev wget
+        run: sudo apt-get update && sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev wget
 
       - name: Checkout sources
         uses: actions/checkout@v2
