@@ -764,7 +764,7 @@ impl AppMain {
 
                 let exposure = 2.0f32.powf(ui_data.lock().preview_exposure);
                 let srgb_table: Vec<f32> = (0..256)
-                    .map(|n| lut::transfer_functions::srgb::from_linear(n as f32 / 255.0))
+                    .map(|n| colorbox::transfer_functions::srgb::from_linear(n as f32 / 255.0))
                     .collect();
                 let preview: Option<(Vec<egui::Color32>, usize, usize)> =
                     hdri.lock().as_ref().map(|hdri| {

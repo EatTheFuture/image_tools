@@ -3,7 +3,6 @@ members = [
     "sub_crates/egui_custom",
     "sub_crates/hdr",
     "sub_crates/job_queue",
-    "sub_crates/lut",
     "sub_crates/ocio_gen",
     "sub_crates/sensor_analysis",
     "sub_crates/shared_data",
@@ -29,6 +28,7 @@ rawloader = "0.37"
 kamadak-exif = "0.5"
 clap = "2"
 rayon = "1"
+colorbox = "0.1"
 
 [dependencies.egui_custom]
 path = "sub_crates/egui_custom"
@@ -38,9 +38,6 @@ path = "sub_crates/hdr"
 
 [dependencies.job_queue]
 path = "sub_crates/job_queue"
-
-[dependencies.lut]
-path = "sub_crates/lut"
 
 [dependencies.ocio_gen]
 path = "sub_crates/ocio_gen"

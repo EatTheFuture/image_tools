@@ -663,7 +663,7 @@ impl AppMain {
                 tables
             };
 
-            lut::write_cube_1d(
+            colorbox::formats::cube::write_1d(
                 &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
                 (range_min, range_max),
                 &tables[0],

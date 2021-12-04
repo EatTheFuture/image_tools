@@ -283,6 +283,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
+name = "colorbox"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c248ff2b0a127ba433a76c0b88e5b3eb76366364f8d8f0e67a0005ebdac084d1"
+
+[[package]]
 name = "copypasta"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -964,13 +970,13 @@ name = "image_tools"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "colorbox",
  "eframe",
  "egui_custom",
  "hdr",
  "image",
  "job_queue",
  "kamadak-exif",
- "lut",
  "ocio_gen",
  "rawloader",
  "rayon",
@@ -1099,10 +1105,6 @@ checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
 dependencies = [
  "cfg-if 1.0.0",
 ]
-
-[[package]]
-name = "lut"
-version = "0.1.0"
 
 [[package]]
 name = "malloc_buf"
@@ -1421,7 +1423,7 @@ dependencies = [
 name = "ocio_gen"
 version = "0.1.0"
 dependencies = [
- "lut",
+ "colorbox",
 ]
 
 [[package]]
