@@ -1,6 +1,11 @@
 //! Reads and writes color transform lookup tables in various formats.
+//!
+//! Also includes some known transfer functions and color transforms.
 
 use std::io::Write;
+
+pub mod color_matrices;
+pub mod transfer_functions;
 
 pub fn write_spi1d<W: Write>(out: &mut W, range: (f32, f32), table: &[f32]) -> std::io::Result<()> {
     out.write_all(b"Version 1\n")?;

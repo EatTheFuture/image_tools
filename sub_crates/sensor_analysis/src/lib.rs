@@ -5,8 +5,6 @@ mod exposure_mapping;
 mod histogram;
 mod utils;
 
-pub mod known_transfer_functions;
-
 pub use histogram::Histogram;
 
 pub use exposure_mapping::ExposureMapping;
