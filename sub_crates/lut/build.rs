@@ -236,22 +236,27 @@ fn rgb_to_xyz(chroma: Chromaticities, y: f64) -> [[f64; 3]; 3] {
 /// Creates a matrix to chromatically adapt CIE 1931 XYZ colors
 /// from one whitepoint to another.
 ///
-/// This uses the Hunt-Pointer-Estevez matrices and the Von Kries transform.
+/// This uses the Bradford matrices and the Von Kries transform.
 ///
 /// - `src_wp`: the xy chromaticity coordinates of the white point to convert from.
 /// - `dst_wp`: the xy chromaticity coordinates of the white point to convert to.
 fn chromatic_adaptation_matrix(src_wp: (f64, f64), dst_wp: (f64, f64)) -> [[f64; 3]; 3] {
-    // The Hunt-Pointer-Estevez transformation matrix and its inverse.
-    const TO_LMS_HUNT: [[f64; 3]; 3] = [
-        [0.38971, 0.68898, -0.07868],
-        [-0.22981, 1.18340, 0.04641],
-        [0.0, 0.0, 1.0],
+    // // The Hunt-Pointer-Estevez transformation matrix.
+    // const TO_LMS_HUNT: [[f64; 3]; 3] = [
+    //     [0.38971, 0.68898, -0.07868],
+    //     [-0.22981, 1.18340, 0.04641],
+    //     [0.0, 0.0, 1.0],
+    // ];
+
+    // The Bradford transformation matrix.
+    const TO_LMS_BRADFORD: [[f64; 3]; 3] = [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
     ];
-    const FROM_LMS_HUNT: [[f64; 3]; 3] = [
-        [1.910196834052035, -1.1121238927878747, 0.20190795676749937],
-        [0.3709500882486886, 0.6290542573926132, -0.0000080551421843],
-        [0.0, 0.0, 1.0],
-    ];
+
+    let to_lms = TO_LMS_BRADFORD;
+    let from_lms = inverse(to_lms);
 
     // Compute the whitepoints' XYZ values.
     let src_wp_xyz = [
@@ -266,35 +271,18 @@ fn chromatic_adaptation_matrix(src_wp: (f64, f64), dst_wp: (f64, f64)) -> [[f64;
     ];
 
     // Compute the whitepoints' LMS values.
-    let src_wp_lms = multiply_vec_mat(src_wp_xyz, TO_LMS_HUNT);
-    let dst_wp_lms = multiply_vec_mat(dst_wp_xyz, TO_LMS_HUNT);
+    let src_wp_lms = multiply_vec_mat(src_wp_xyz, to_lms);
+    let dst_wp_lms = multiply_vec_mat(dst_wp_xyz, to_lms);
 
-    // Incorperate the ratio between the whitepoints into the LMS -> XYZ matrix.
-    let wp_ratio = [
-        dst_wp_lms[0] / src_wp_lms[0],
-        dst_wp_lms[1] / src_wp_lms[1],
-        dst_wp_lms[2] / src_wp_lms[2],
-    ];
-    let adapted_lms_to_xyz = [
-        [
-            FROM_LMS_HUNT[0][0] * wp_ratio[0],
-            FROM_LMS_HUNT[0][1] * wp_ratio[1],
-            FROM_LMS_HUNT[0][2] * wp_ratio[2],
-        ],
-        [
-            FROM_LMS_HUNT[1][0] * wp_ratio[0],
-            FROM_LMS_HUNT[1][1] * wp_ratio[1],
-            FROM_LMS_HUNT[1][2] * wp_ratio[2],
-        ],
-        [
-            FROM_LMS_HUNT[2][0] * wp_ratio[0],
-            FROM_LMS_HUNT[2][1] * wp_ratio[1],
-            FROM_LMS_HUNT[2][2] * wp_ratio[2],
-        ],
+    // Compute the Von Kries  matrix to scale the LMS values appropriately.
+    let wp_scale = [
+        [dst_wp_lms[0] / src_wp_lms[0], 0.0, 0.0],
+        [0.0, dst_wp_lms[1] / src_wp_lms[1], 0.0],
+        [0.0, 0.0, dst_wp_lms[2] / src_wp_lms[2]],
     ];
 
-    // Combine with the xyz -> lms matrix.
-    multiply(TO_LMS_HUNT, adapted_lms_to_xyz)
+    // Combine the matrices.
+    multiply(multiply(to_lms, wp_scale), from_lms)
 }
 
 /// Calculates the inverse of the given 3x3 matrix.
