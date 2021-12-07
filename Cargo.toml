@@ -28,7 +28,7 @@ rawloader = "0.37"
 kamadak-exif = "0.5"
 clap = "2"
 rayon = "1"
-colorbox = "0.1"
+colorbox = { git = "https://github.com/cessen/colorbox", branch = "master" }
 
 [dependencies.egui_custom]
 path = "sub_crates/egui_custom"

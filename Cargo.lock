@@ -289,6 +289,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c248ff2b0a127ba433a76c0b88e5b3eb76366364f8d8f0e67a0005ebdac084d1"
 
 [[package]]
+name = "colorbox"
+version = "0.1.0"
+source = "git+https://github.com/cessen/colorbox?branch=master#bef6a6e5f2de098097d0dbe7288dee8d5cd431e1"
+
+[[package]]
 name = "copypasta"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -970,7 +975,7 @@ name = "image_tools"
 version = "0.1.0"
 dependencies = [
  "clap",
- "colorbox",
+ "colorbox 0.1.0 (git+https://github.com/cessen/colorbox?branch=master)",
  "eframe",
  "egui_custom",
  "hdr",
@@ -1423,7 +1428,7 @@ dependencies = [
 name = "ocio_gen"
 version = "0.1.0"
 dependencies = [
- "colorbox",
+ "colorbox 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

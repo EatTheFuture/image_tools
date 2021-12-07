@@ -78,6 +78,19 @@ impl epi::App for AppMain {
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
         let job_count = self.job_queue.job_count();
 
+        // File dialogs used in the UI.
+        let load_1d_lut_dialog = rfd::FileDialog::new()
+            .set_title("Load 1D LUT")
+            .add_filter("All Supported LUTs", &["spi1d", "cube"])
+            .add_filter("cube", &["cube"])
+            .add_filter("spi1d", &["spi1d"]);
+
+        let load_3d_lut_dialog = rfd::FileDialog::new()
+            .set_title("Load 3D LUT")
+            .add_filter("All Supported LUTs", &["spi3d", "cube"])
+            .add_filter("cube", &["cube"])
+            .add_filter("spi3d", &["spi3d"]);
+
         //----------------
         // GUI.
 
@@ -118,6 +131,7 @@ impl epi::App for AppMain {
                             ui.label("Input Spaces");
                             add_input_space |= ui.button("Add").clicked();
                         });
+                        ui.add_space(4.0);
                         for input_space in ui_data.input_spaces.iter() {
                             ui.horizontal(|ui| {
                                 if ui
@@ -140,11 +154,14 @@ impl epi::App for AppMain {
                             space_i += 1;
                         }
 
+                        ui.add_space(16.0);
+
                         // Output spaces.
                         ui.horizontal(|ui| {
                             ui.label("Output Spaces");
                             add_output_space |= ui.button("Add").clicked();
                         });
+                        ui.add_space(4.0);
                         for output_space in ui_data.output_spaces.iter() {
                             ui.horizontal(|ui| {
                                 if ui
@@ -200,17 +217,17 @@ impl epi::App for AppMain {
             // Main UI area.
             {
                 let ui_data = &mut *self.ui_data.lock_mut();
+                let selected_space_index = ui_data.selected_space_index;
                 let space_data = if ui_data.selected_space_index < ui_data.input_spaces.len() {
-                    let i = ui_data.selected_space_index;
                     Some((
                         true,
                         ui_data.selected_space_index,
-                        &mut ui_data.input_spaces[i],
+                        &mut ui_data.input_spaces[selected_space_index],
                     ))
                 } else if (ui_data.selected_space_index - ui_data.input_spaces.len())
                     < ui_data.output_spaces.len()
                 {
-                    let i = ui_data.selected_space_index - ui_data.input_spaces.len();
+                    let i = selected_space_index - ui_data.input_spaces.len();
                     Some((
                         false,
                         ui_data.selected_space_index,
@@ -230,47 +247,63 @@ impl epi::App for AppMain {
                         );
                     });
 
+                    ui.add_space(16.0);
+
                     // Transfer function.
                     ui.horizontal(|ui| {
                         ui.label(if is_input {
-                            "Transfer LUT (to linear):"
+                            "1D Transfer LUT (to linear):"
                         } else {
-                            "Transfer LUT (from linear):"
+                            "1D Transfer LUT (from linear):"
                         });
 
                         if let Some((ref mut lut, ref mut inverse)) = space.transfer_lut {
                             // TODO.
                         } else {
                             // TODO: load LUT.
-                        }
-                    });
-
-                    // Color LUT.
-                    ui.horizontal(|ui| {
-                        ui.label("3D LUT: ");
-
-                        if let Some(ref lut) = space.color_lut.0 {
-                            // TODO.
-                        } else {
-                            // TODO: load LUT.
-                        }
-                    });
-                    if space.color_lut.0.is_some() {
-                        ui.horizontal(|ui| {
-                            ui.label("Reverse 3D LUT (optional): ");
-
-                            if let Some(ref lut) = space.color_lut.1 {
-                                // TODO.
-                            } else {
-                                // TODO: load LUT.
+                            if ui
+                                .add_enabled(
+                                    job_count == 0,
+                                    egui::widgets::Button::new("Load 1D LUT..."),
+                                )
+                                .clicked()
+                            {
+                                if let Some(path) = load_1d_lut_dialog.clone().pick_file() {
+                                    self.load_transfer_function(&path, selected_space_index);
+                                }
                             }
-                        });
-                    }
+                        }
+                    });
+
+                    ui.add_space(4.0);
+
+                    // // Color LUT.
+                    // ui.horizontal(|ui| {
+                    //     ui.label("3D LUT: ");
+
+                    //     if let Some(ref lut) = space.color_lut.0 {
+                    //         // TODO.
+                    //     } else {
+                    //         // TODO: load LUT.
+                    //     }
+                    // });
+                    // if space.color_lut.0.is_some() {
+                    //     ui.horizontal(|ui| {
+                    //         ui.label("Reverse 3D LUT (optional): ");
+
+                    //         if let Some(ref lut) = space.color_lut.1 {
+                    //             // TODO.
+                    //         } else {
+                    //             // TODO: load LUT.
+                    //         }
+                    //     });
+                    // }
 
                     // Chromaticity space.
                     ui.horizontal(|ui| {
                         ui.label("Gamut: ");
                         egui::ComboBox::from_id_source("Gamut")
+                            .width(256.0)
                             .selected_text(format!("{}", space.chroma_space.ui_text()))
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
@@ -290,6 +323,11 @@ impl epi::App for AppMain {
                                 );
                                 ui.selectable_value(
                                     &mut space.chroma_space,
+                                    ChromaSpace::DciP3,
+                                    ChromaSpace::DciP3.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
                                     ChromaSpace::AcesAP0,
                                     ChromaSpace::AcesAP0.ui_text(),
                                 );
@@ -297,6 +335,41 @@ impl epi::App for AppMain {
                                     &mut space.chroma_space,
                                     ChromaSpace::AcesAP1,
                                     ChromaSpace::AcesAP1.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::AdobeRGB,
+                                    ChromaSpace::AdobeRGB.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::AdobeWideGamutRGB,
+                                    ChromaSpace::AdobeWideGamutRGB.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::ProPhoto,
+                                    ChromaSpace::ProPhoto.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::SGamut,
+                                    ChromaSpace::SGamut.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::SGamut3Cine,
+                                    ChromaSpace::SGamut3Cine.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::AlexaWideGamutRGB,
+                                    ChromaSpace::AlexaWideGamutRGB.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::RedWideGamutRGB,
+                                    ChromaSpace::RedWideGamutRGB.ui_text(),
                                 );
                             });
                     });
@@ -321,7 +394,7 @@ impl epi::App for AppMain {
 }
 
 impl AppMain {
-    fn remove_color_space(&mut self, space_i: usize) {
+    fn remove_color_space(&self, space_i: usize) {
         let ui_data = &mut *self.ui_data.lock_mut();
 
         if space_i < ui_data.input_spaces.len() {
@@ -340,7 +413,7 @@ impl AppMain {
         ui_data.selected_space_index = total.saturating_sub(1).min(ui_data.selected_space_index);
     }
 
-    fn add_input_color_space(&mut self) {
+    fn add_input_color_space(&self) {
         let ui_data = &mut *self.ui_data.lock_mut();
         ui_data.input_spaces.push(SpaceTransform {
             name: format!("New Input Color Space {}", ui_data.input_spaces.len()),
@@ -350,7 +423,7 @@ impl AppMain {
         });
     }
 
-    fn add_output_color_space(&mut self) {
+    fn add_output_color_space(&self) {
         let ui_data = &mut *self.ui_data.lock_mut();
         ui_data.output_spaces.push(SpaceTransform {
             name: format!("New Output Color Space {}", ui_data.output_spaces.len()),
@@ -358,6 +431,116 @@ impl AppMain {
             color_lut: (None, None),
             chroma_space: ChromaSpace::None,
         });
+    }
+
+    fn load_transfer_function(&self, lut_path: &Path, color_space_index: usize) {
+        let path: PathBuf = lut_path.into();
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue.add_job("Load Transfer LUT", move |status| {
+            status
+                .lock_mut()
+                .set_progress(format!("Loading: {}", path.to_string_lossy()), 0.0);
+
+            // Load lut.
+            let lut = match Lut1D::from_file(&path) {
+                Ok(lut) => lut,
+                Err(LUTLoadError::IO(_)) => {
+                    status.lock_mut().log_error(format!(
+                        "Unable to access file \"{}\".",
+                        path.to_string_lossy()
+                    ));
+                    return;
+                }
+                Err(LUTLoadError::WrongFormat) => {
+                    status.lock_mut().log_error(format!(
+                        "Not a 1D LUT file: \"{}\".",
+                        path.to_string_lossy()
+                    ));
+                    return;
+                }
+            };
+
+            // Set this as the lut for the passed color space index.
+            {
+                let mut ui_data = ui_data.lock_mut();
+                let selected_space_index = ui_data.selected_space_index;
+
+                let space = if selected_space_index < ui_data.input_spaces.len() {
+                    Some(&mut ui_data.input_spaces[selected_space_index])
+                } else if (selected_space_index - ui_data.input_spaces.len())
+                    < ui_data.output_spaces.len()
+                {
+                    let i = selected_space_index - ui_data.input_spaces.len();
+                    Some(&mut ui_data.output_spaces[i])
+                } else {
+                    None
+                };
+
+                if let Some(space) = space {
+                    space.transfer_lut = Some((lut, false));
+                }
+            }
+        });
+    }
+
+    fn load_color_lut(&self, lut_path: &Path, color_space_index: usize, is_inverse: bool) {
+        let path: PathBuf = lut_path.into();
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue.add_job("Load Transfer LUT", move |status| {
+            status
+                .lock_mut()
+                .set_progress(format!("Loading: {}", path.to_string_lossy()), 0.0);
+
+            // Load lut.
+            let lut = match Lut3D::from_file(&path) {
+                Ok(lut) => lut,
+                Err(LUTLoadError::IO(_)) => {
+                    status.lock_mut().log_error(format!(
+                        "Unable to access file \"{}\".",
+                        path.to_string_lossy()
+                    ));
+                    return;
+                }
+                Err(LUTLoadError::WrongFormat) => {
+                    status.lock_mut().log_error(format!(
+                        "Not a 3D LUT file: \"{}\".",
+                        path.to_string_lossy()
+                    ));
+                    return;
+                }
+            };
+
+            // Set this as the lut for the passed color space index.
+            {
+                let mut ui_data = ui_data.lock_mut();
+                let selected_space_index = ui_data.selected_space_index;
+
+                let space = if selected_space_index < ui_data.input_spaces.len() {
+                    Some(&mut ui_data.input_spaces[selected_space_index])
+                } else if (selected_space_index - ui_data.input_spaces.len())
+                    < ui_data.output_spaces.len()
+                {
+                    let i = selected_space_index - ui_data.input_spaces.len();
+                    Some(&mut ui_data.output_spaces[i])
+                } else {
+                    None
+                };
+
+                if let Some(space) = space {
+                    if is_inverse {
+                        space.color_lut.1 = Some(lut);
+                    } else {
+                        space.color_lut.0 = Some(lut);
+                    }
+                }
+            }
+        });
+    }
+
+    fn load_inverse_chroma_lut(&self, lut_path: &Path, color_space_index: usize) {
+        todo!()
     }
 
     fn export_config(&self) {
@@ -384,6 +567,12 @@ struct Lut1D {
     b: Vec<f32>,
 }
 
+impl Lut1D {
+    fn from_file(path: &Path) -> Result<Lut1D, LUTLoadError> {
+        todo!()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Lut3D {
     filepath: Option<PathBuf>,
@@ -394,13 +583,33 @@ struct Lut3D {
     table: Vec<[f32; 3]>,
 }
 
+impl Lut3D {
+    fn from_file(path: &Path) -> Result<Lut3D, LUTLoadError> {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+enum LUTLoadError {
+    IO(std::io::Error),
+    WrongFormat,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ChromaSpace {
     None,
     Rec709,
     Rec2020,
+    DciP3,
     AcesAP0,
     AcesAP1,
+    AdobeRGB,
+    AdobeWideGamutRGB,
+    ProPhoto,
+    SGamut,
+    SGamut3Cine,
+    AlexaWideGamutRGB,
+    RedWideGamutRGB,
 }
 
 impl ChromaSpace {
@@ -409,8 +618,16 @@ impl ChromaSpace {
             ChromaSpace::None => None,
             ChromaSpace::Rec709 => Some(colorbox::chroma::REC709),
             ChromaSpace::Rec2020 => Some(colorbox::chroma::REC2020),
+            ChromaSpace::DciP3 => Some(colorbox::chroma::DCI_P3),
             ChromaSpace::AcesAP0 => Some(colorbox::chroma::ACES_AP0),
             ChromaSpace::AcesAP1 => Some(colorbox::chroma::ACES_AP1),
+            ChromaSpace::AdobeRGB => Some(colorbox::chroma::ADOBE_RGB),
+            ChromaSpace::AdobeWideGamutRGB => Some(colorbox::chroma::ADOBE_WIDE_GAMUT_RGB),
+            ChromaSpace::ProPhoto => Some(colorbox::chroma::PROPHOTO),
+            ChromaSpace::SGamut => Some(colorbox::chroma::S_GAMUT),
+            ChromaSpace::SGamut3Cine => Some(colorbox::chroma::S_GAMUT3_CINE),
+            ChromaSpace::AlexaWideGamutRGB => Some(colorbox::chroma::ALEXA_WIDE_GAMUT_RGB),
+            ChromaSpace::RedWideGamutRGB => Some(colorbox::chroma::RED_WIDE_GAMUT_RGB),
         }
     }
 
@@ -419,8 +636,16 @@ impl ChromaSpace {
             ChromaSpace::None => "None",
             ChromaSpace::Rec709 => "Rec.709",
             ChromaSpace::Rec2020 => "Rec.2020",
+            ChromaSpace::DciP3 => "DCI-P3",
             ChromaSpace::AcesAP0 => "ACES APO",
             ChromaSpace::AcesAP1 => "ACES AP1",
+            ChromaSpace::AdobeRGB => "Adobe RGB",
+            ChromaSpace::AdobeWideGamutRGB => "Adobe Wide Gamut RGB",
+            ChromaSpace::ProPhoto => "ProPhoto",
+            ChromaSpace::SGamut => "Sony S-Gamut/S-Gamut3",
+            ChromaSpace::SGamut3Cine => "Sony S-Gamut3.Cine",
+            ChromaSpace::AlexaWideGamutRGB => "Alexa Wide Gamut RGB",
+            ChromaSpace::RedWideGamutRGB => "RED Wide Gamut RGB",
         }
     }
 }

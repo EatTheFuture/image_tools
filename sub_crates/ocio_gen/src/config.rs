@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OCIOConfig {
     // Header fields.
     pub name: Option<String>,
@@ -252,7 +252,7 @@ pub struct Display {
     pub views: Vec<(String, String)>, // (view_name, colorspace_name)
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Look {
     name: String,
     process_space: String,
@@ -260,7 +260,7 @@ pub struct Look {
     inverse_transform: Vec<Transform>, // Optional, can be empty.
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColorSpace {
     name: String,
     encoding: Option<Encoding>,
@@ -278,7 +278,7 @@ pub struct ColorSpace {
 /// where this is used are `Vec`s, and are automatically
 /// treated as a group transform when more than one transform
 /// is in the `Vec`.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Transform {
     FileTransform {
         src: PathBuf,
@@ -289,6 +289,7 @@ pub enum Transform {
         src: String,
         dst: String,
     },
+    MatrixTransform([f32; 16]),
 }
 
 fn write_transform_yaml<W: std::io::Write>(
@@ -318,6 +319,19 @@ fn write_transform_yaml<W: std::io::Write>(
         }
         &Transform::ColorSpaceTransform { ref src, ref dst } => {
             format!("!<ColorSpaceTransform> {{ src: {}, dst: {} }}", src, dst)
+        }
+        &Transform::MatrixTransform(matrix) => {
+            let mut matrix_string = String::new();
+            let mut is_first = true;
+            for n in matrix.iter() {
+                if !is_first {
+                    matrix_string.push_str(", ");
+                } else {
+                    is_first = false;
+                }
+                matrix_string.push_str(&n.to_string());
+            }
+            format!("!<MatrixTransform> {{ matrix: [{}] }}", matrix_string)
         }
     };
 
