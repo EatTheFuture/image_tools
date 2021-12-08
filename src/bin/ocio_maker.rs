@@ -8,11 +8,8 @@ use std::{
 use eframe::{egui, epi};
 
 use colorbox::formats;
-use ocio_gen;
-use sensor_analysis::invert_transfer_function_lut;
+use ocio_gen::{self, lut::Lut1D};
 use shared_data::Shared;
-
-use lib::{ImageInfo, SourceImage};
 
 fn main() {
     clap::App::new("OCIO Maker")
@@ -26,7 +23,7 @@ fn main() {
             job_queue: job_queue::JobQueue::new(),
             last_opened_directory: std::env::current_dir().ok(),
 
-            fast_data: Shared::new(FastData {
+            ui_data: Shared::new(UIData {
                 input_spaces: Vec::new(),
                 output_spaces: Vec::new(),
                 selected_space_index: 0,
@@ -43,14 +40,14 @@ struct AppMain {
     job_queue: job_queue::JobQueue,
     last_opened_directory: Option<PathBuf>,
 
-    fast_data: Shared<FastData>,
+    ui_data: Shared<UIData>,
 }
 
 /// The stuff the UI code needs access to for drawing and update.
 ///
 /// Nothing other than the UI should lock this data for non-trivial
 /// amounts of time.
-struct FastData {
+struct UIData {
     input_spaces: Vec<SpaceTransform>,
     output_spaces: Vec<SpaceTransform>,
     selected_space_index: usize,
@@ -123,10 +120,10 @@ impl epi::App for AppMain {
                 egui::containers::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        let fast_data = &mut *self.fast_data.lock_mut();
+                        let ui_data = &mut *self.ui_data.lock_mut();
 
                         let mut space_i = 0;
-                        let mut selected_i = fast_data.selected_space_index;
+                        let mut selected_i = ui_data.selected_space_index;
 
                         // Input spaces.
                         ui.horizontal(|ui| {
@@ -134,7 +131,7 @@ impl epi::App for AppMain {
                             add_input_space |= ui.button("Add").clicked();
                         });
                         ui.add_space(4.0);
-                        for input_space in fast_data.input_spaces.iter() {
+                        for input_space in ui_data.input_spaces.iter() {
                             ui.horizontal(|ui| {
                                 if ui
                                     .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
@@ -144,7 +141,7 @@ impl epi::App for AppMain {
                                 }
                                 if ui
                                     .add(egui::widgets::SelectableLabel::new(
-                                        space_i == fast_data.selected_space_index,
+                                        space_i == ui_data.selected_space_index,
                                         &input_space.name,
                                     ))
                                     .clicked()
@@ -164,7 +161,7 @@ impl epi::App for AppMain {
                             add_output_space |= ui.button("Add").clicked();
                         });
                         ui.add_space(4.0);
-                        for output_space in fast_data.output_spaces.iter() {
+                        for output_space in ui_data.output_spaces.iter() {
                             ui.horizontal(|ui| {
                                 if ui
                                     .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
@@ -174,7 +171,7 @@ impl epi::App for AppMain {
                                 }
                                 if ui
                                     .add(egui::widgets::SelectableLabel::new(
-                                        space_i == fast_data.selected_space_index,
+                                        space_i == ui_data.selected_space_index,
                                         &output_space.name,
                                     ))
                                     .clicked()
@@ -186,7 +183,7 @@ impl epi::App for AppMain {
                             space_i += 1;
                         }
 
-                        fast_data.selected_space_index = selected_i;
+                        ui_data.selected_space_index = selected_i;
                     });
 
                 if add_input_space {
@@ -218,22 +215,22 @@ impl epi::App for AppMain {
 
             // Main UI area.
             {
-                let fast_data = &mut *self.fast_data.lock_mut();
-                let selected_space_index = fast_data.selected_space_index;
-                let space_data = if fast_data.selected_space_index < fast_data.input_spaces.len() {
+                let ui_data = &mut *self.ui_data.lock_mut();
+                let selected_space_index = ui_data.selected_space_index;
+                let space_data = if ui_data.selected_space_index < ui_data.input_spaces.len() {
                     Some((
                         true,
-                        fast_data.selected_space_index,
-                        &mut fast_data.input_spaces[selected_space_index],
+                        ui_data.selected_space_index,
+                        &mut ui_data.input_spaces[selected_space_index],
                     ))
-                } else if (fast_data.selected_space_index - fast_data.input_spaces.len())
-                    < fast_data.output_spaces.len()
+                } else if (ui_data.selected_space_index - ui_data.input_spaces.len())
+                    < ui_data.output_spaces.len()
                 {
-                    let i = selected_space_index - fast_data.input_spaces.len();
+                    let i = selected_space_index - ui_data.input_spaces.len();
                     Some((
                         false,
-                        fast_data.selected_space_index,
-                        &mut fast_data.output_spaces[i],
+                        ui_data.selected_space_index,
+                        &mut ui_data.output_spaces[i],
                     ))
                 } else {
                     None
@@ -338,18 +335,14 @@ impl epi::App for AppMain {
                     } else {
                         "1D Transfer LUT (from linear):"
                     };
-                    if let Some((ref lut, ref mut inverse)) = space.transfer_lut {
+                    if let Some((_, ref filepath, ref mut inverse)) = space.transfer_lut {
                         ui.horizontal(|ui| {
                             ui.label(transfer_lut_label);
-                            ui.strong(
-                                if let Some(Some(name)) =
-                                    lut.filepath.as_ref().map(|p| p.file_name())
-                                {
-                                    name.to_string_lossy()
-                                } else {
-                                    "Unnamed LUT".into()
-                                },
-                            );
+                            ui.strong(if let Some(name) = filepath.file_name() {
+                                name.to_string_lossy()
+                            } else {
+                                "Unnamed LUT".into()
+                            });
                             if ui
                                 .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
                                 .clicked()
@@ -383,72 +376,41 @@ impl epi::App for AppMain {
                     //---------------------------------
                     // Visualizations.
 
-                    if let Some((ref lut, inverse)) = space.transfer_lut {
+                    if let Some((ref lut, _, inverse)) = space.transfer_lut {
                         use egui::widgets::plot::{Line, Plot, Value, Values};
                         let aspect = {
-                            let min_x = lut
-                                .input_range_r
-                                .0
-                                .min(lut.input_range_g.0.min(lut.input_range_b.0));
-                            let max_x = lut
-                                .input_range_r
-                                .1
-                                .max(lut.input_range_g.1.max(lut.input_range_b.1));
-                            let min_y = lut.table_r[0].min(lut.table_g[0].min(lut.table_b[0]));
-                            let max_y = lut.table_r.last().unwrap().max(
-                                lut.table_g
-                                    .last()
-                                    .unwrap()
-                                    .max(*lut.table_b.last().unwrap()),
-                            );
-                            let extent_x = (max_x - min_x).max(1.0);
-                            let extent_y = (max_y - min_y).max(1.0);
+                            let range_x = lut
+                                .ranges
+                                .iter()
+                                .fold((0.0f32, 1.0f32), |(a, b), (c, d)| (a.min(*c), b.max(*d)));
+                            let range_y =
+                                lut.tables.iter().fold((0.0f32, 1.0f32), |(a, b), table| {
+                                    (a.min(table[0]), b.max(*table.last().unwrap()))
+                                });
+                            let extent_x = range_x.1 - range_x.0;
+                            let extent_y = range_y.1 - range_y.0;
                             if inverse {
                                 extent_y / extent_x
                             } else {
                                 extent_x / extent_y
                             }
                         };
-                        ui.add(
-                            Plot::new("transfer_function")
-                                .line(Line::new(Values::from_values_iter(
-                                    lut.table_r.iter().copied().enumerate().map(|(i, y)| {
-                                        let a = i as f32 / (lut.table_r.len() - 1).max(1) as f32;
-                                        let x = lut.input_range_r.0
-                                            + (a * (lut.input_range_r.1 - lut.input_range_r.0));
-                                        if inverse {
-                                            Value::new(y, x)
-                                        } else {
-                                            Value::new(x, y)
-                                        }
-                                    }),
-                                )))
-                                .line(Line::new(Values::from_values_iter(
-                                    lut.table_g.iter().copied().enumerate().map(|(i, y)| {
-                                        let a = i as f32 / (lut.table_g.len() - 1).max(1) as f32;
-                                        let x = lut.input_range_g.0
-                                            + (a * (lut.input_range_g.1 - lut.input_range_g.0));
-                                        if inverse {
-                                            Value::new(y, x)
-                                        } else {
-                                            Value::new(x, y)
-                                        }
-                                    }),
-                                )))
-                                .line(Line::new(Values::from_values_iter(
-                                    lut.table_b.iter().copied().enumerate().map(|(i, y)| {
-                                        let a = i as f32 / (lut.table_b.len() - 1).max(1) as f32;
-                                        let x = lut.input_range_b.0
-                                            + (a * (lut.input_range_b.1 - lut.input_range_b.0));
-                                        if inverse {
-                                            Value::new(y, x)
-                                        } else {
-                                            Value::new(x, y)
-                                        }
-                                    }),
-                                )))
-                                .data_aspect(aspect),
-                        );
+                        let mut plot = Plot::new("transfer_function").data_aspect(aspect);
+                        for (component, table) in lut.tables.iter().enumerate() {
+                            let range = lut.ranges[component.min(lut.ranges.len() - 1)];
+                            plot = plot.line(Line::new(Values::from_values_iter(
+                                table.iter().copied().enumerate().map(|(i, y)| {
+                                    let a = i as f32 / (table.len() - 1).max(1) as f32;
+                                    let x = range.0 + (a * (range.1 - range.0));
+                                    if inverse {
+                                        Value::new(y, x)
+                                    } else {
+                                        Value::new(x, y)
+                                    }
+                                }),
+                            )));
+                        }
+                        ui.add(plot);
                     }
                 }
             }
@@ -474,51 +436,49 @@ impl epi::App for AppMain {
 
 impl AppMain {
     fn remove_color_space(&self, space_i: usize) {
-        let fast_data = &mut *self.fast_data.lock_mut();
+        let ui_data = &mut *self.ui_data.lock_mut();
 
-        if space_i < fast_data.input_spaces.len() {
-            fast_data.input_spaces.remove(space_i);
-        } else if (space_i - fast_data.input_spaces.len()) < fast_data.output_spaces.len() {
-            fast_data
+        if space_i < ui_data.input_spaces.len() {
+            ui_data.input_spaces.remove(space_i);
+        } else if (space_i - ui_data.input_spaces.len()) < ui_data.output_spaces.len() {
+            ui_data
                 .output_spaces
-                .remove(space_i - fast_data.input_spaces.len());
+                .remove(space_i - ui_data.input_spaces.len());
         }
 
-        if fast_data.selected_space_index > space_i {
-            fast_data.selected_space_index = fast_data.selected_space_index.saturating_sub(1);
+        if ui_data.selected_space_index > space_i {
+            ui_data.selected_space_index = ui_data.selected_space_index.saturating_sub(1);
         }
 
-        let total = fast_data.input_spaces.len() + fast_data.output_spaces.len();
-        fast_data.selected_space_index =
-            total.saturating_sub(1).min(fast_data.selected_space_index);
+        let total = ui_data.input_spaces.len() + ui_data.output_spaces.len();
+        ui_data.selected_space_index = total.saturating_sub(1).min(ui_data.selected_space_index);
     }
 
     fn add_input_color_space(&self) {
-        let fast_data = &mut *self.fast_data.lock_mut();
-        fast_data
+        let ui_data = &mut *self.ui_data.lock_mut();
+        ui_data
             .input_spaces
             .push(SpaceTransform::with_name(&format!(
                 "New Input Transform #{}",
-                fast_data.input_spaces.len() + 1,
+                ui_data.input_spaces.len() + 1,
             )));
-        fast_data.selected_space_index = fast_data.input_spaces.len() - 1;
+        ui_data.selected_space_index = ui_data.input_spaces.len() - 1;
     }
 
     fn add_output_color_space(&self) {
-        let fast_data = &mut *self.fast_data.lock_mut();
-        fast_data
+        let ui_data = &mut *self.ui_data.lock_mut();
+        ui_data
             .output_spaces
             .push(SpaceTransform::with_name(&format!(
                 "New Output Transform #{}",
-                fast_data.output_spaces.len() + 1,
+                ui_data.output_spaces.len() + 1,
             )));
-        fast_data.selected_space_index =
-            fast_data.input_spaces.len() + fast_data.output_spaces.len() - 1;
+        ui_data.selected_space_index = ui_data.input_spaces.len() + ui_data.output_spaces.len() - 1;
     }
 
     fn load_transfer_function(&self, lut_path: &Path, color_space_index: usize) {
         let path: PathBuf = lut_path.into();
-        let fast_data = self.fast_data.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
 
         self.job_queue.add_job("Load Transfer LUT", move |status| {
             status
@@ -526,7 +486,7 @@ impl AppMain {
                 .set_progress(format!("Loading: {}", path.to_string_lossy()), 0.0);
 
             // Load lut.
-            let lut = match Lut1D::from_file(&path) {
+            let lut = match lib::job_helpers::load_1d_lut(&path) {
                 Ok(lut) => lut,
                 Err(formats::ReadError::IoErr(_)) => {
                     status.lock_mut().log_error(format!(
@@ -546,29 +506,28 @@ impl AppMain {
 
             // Set this as the lut for the passed color space index.
             {
-                let mut fast_data = fast_data.lock_mut();
-                let selected_space_index = fast_data.selected_space_index;
+                let mut ui_data = ui_data.lock_mut();
 
-                let space = if selected_space_index < fast_data.input_spaces.len() {
-                    Some(&mut fast_data.input_spaces[selected_space_index])
-                } else if (selected_space_index - fast_data.input_spaces.len())
-                    < fast_data.output_spaces.len()
+                let space = if color_space_index < ui_data.input_spaces.len() {
+                    Some(&mut ui_data.input_spaces[color_space_index])
+                } else if (color_space_index - ui_data.input_spaces.len())
+                    < ui_data.output_spaces.len()
                 {
-                    let i = selected_space_index - fast_data.input_spaces.len();
-                    Some(&mut fast_data.output_spaces[i])
+                    let i = color_space_index - ui_data.input_spaces.len();
+                    Some(&mut ui_data.output_spaces[i])
                 } else {
                     None
                 };
 
                 if let Some(space) = space {
-                    space.transfer_lut = Some((lut, false));
+                    space.transfer_lut = Some((lut, path, false));
                 }
             }
         });
     }
 
     fn remove_transfer_function(&self, color_space_index: usize) {
-        let fast_data = self.fast_data.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
             .add_job("Remove Transfer LUT", move |status| {
@@ -576,16 +535,15 @@ impl AppMain {
 
                 // Set this as the lut for the passed color space index.
                 {
-                    let mut fast_data = fast_data.lock_mut();
-                    let selected_space_index = fast_data.selected_space_index;
+                    let mut ui_data = ui_data.lock_mut();
 
-                    let space = if selected_space_index < fast_data.input_spaces.len() {
-                        Some(&mut fast_data.input_spaces[selected_space_index])
-                    } else if (selected_space_index - fast_data.input_spaces.len())
-                        < fast_data.output_spaces.len()
+                    let space = if color_space_index < ui_data.input_spaces.len() {
+                        Some(&mut ui_data.input_spaces[color_space_index])
+                    } else if (color_space_index - ui_data.input_spaces.len())
+                        < ui_data.output_spaces.len()
                     {
-                        let i = selected_space_index - fast_data.input_spaces.len();
-                        Some(&mut fast_data.output_spaces[i])
+                        let i = color_space_index - ui_data.input_spaces.len();
+                        Some(&mut ui_data.output_spaces[i])
                     } else {
                         None
                     };
@@ -607,8 +565,7 @@ impl AppMain {
 #[derive(Debug, Clone)]
 struct SpaceTransform {
     name: String,
-    transfer_lut: Option<(Lut1D, bool)>, // The bool is whether to do the inverse transform.
-    // color_lut: (Option<Lut3D>, Option<Lut3D>), // Forward and reverse.
+    transfer_lut: Option<(Lut1D, PathBuf, bool)>, // The bool is whether to do the inverse transform.
     chroma_space: ChromaSpace,
 }
 
@@ -621,72 +578,6 @@ impl SpaceTransform {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-struct Lut1D {
-    filepath: Option<PathBuf>,
-    input_range_r: (f32, f32),
-    input_range_g: (f32, f32),
-    input_range_b: (f32, f32),
-    table_r: Vec<f32>,
-    table_g: Vec<f32>,
-    table_b: Vec<f32>,
-}
-
-impl Lut1D {
-    fn from_file(path: &Path) -> Result<Lut1D, formats::ReadError> {
-        let file = std::io::BufReader::new(std::fs::File::open(path)?);
-
-        match path.extension().map(|e| e.to_str()) {
-            Some(Some("cube")) => {
-                let [(min1, max1, table1), (min2, max2, table2), (min3, max3, table3)] =
-                    formats::cube::read_1d(file)?;
-
-                Ok(Lut1D {
-                    filepath: Some(path.into()),
-                    input_range_r: (min1, max1),
-                    input_range_g: (min2, max2),
-                    input_range_b: (min3, max3),
-                    table_r: table1,
-                    table_g: table2,
-                    table_b: table3,
-                })
-            }
-
-            Some(Some("spi1d")) => {
-                let (min, max, _, [table1, table2, table3]) = formats::spi1d::read(file)?;
-
-                Ok(Lut1D {
-                    filepath: Some(path.into()),
-                    input_range_r: (min, max),
-                    input_range_g: (min, max),
-                    input_range_b: (min, max),
-                    table_r: table1,
-                    table_g: table2,
-                    table_b: table3,
-                })
-            }
-
-            _ => Err(formats::ReadError::FormatErr),
-        }
-    }
-}
-
-// #[derive(Debug, Clone)]
-// struct Lut3D {
-//     filepath: Option<PathBuf>,
-//     input_range_r: (f32, f32),
-//     input_range_g: (f32, f32),
-//     input_range_b: (f32, f32),
-//     resolution: (usize, usize, usize),
-//     table: Vec<[f32; 3]>,
-// }
-
-// impl Lut3D {
-//     fn from_file(path: &Path) -> Result<Lut3D, formats::ReadError> {
-//         todo!()
-//     }
-// }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ChromaSpace {
