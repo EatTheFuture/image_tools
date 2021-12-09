@@ -7,8 +7,7 @@ use std::{
 
 use eframe::{egui, epi};
 
-use colorbox::formats;
-use ocio_gen::{self, lut::Lut1D};
+use colorbox::{formats, lut::Lut1D};
 use shared_data::Shared;
 
 fn main() {

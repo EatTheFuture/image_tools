@@ -1,7 +1,12 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq)]
+use colorbox::lut::{Lut1D, Lut3D};
+
+#[derive(Debug, Clone)]
 pub struct OCIOConfig {
+    // Files to include.
+    pub output_files: Vec<OutputFile>,
+
     // Header fields.
     pub name: Option<String>,
     pub description: Option<String>,
@@ -13,6 +18,23 @@ pub struct OCIOConfig {
     pub displays: Vec<Display>,
     pub looks: Vec<Look>,
     pub colorspaces: Vec<ColorSpace>,
+}
+
+impl Default for OCIOConfig {
+    fn default() -> OCIOConfig {
+        OCIOConfig {
+            output_files: Vec::new(),
+
+            name: None,
+            description: None,
+            search_path: Vec::new(),
+
+            roles: Roles::default(),
+            displays: Vec::new(),
+            looks: Vec::new(),
+            colorspaces: Vec::new(),
+        }
+    }
 }
 
 impl OCIOConfig {
@@ -170,21 +192,6 @@ impl OCIOConfig {
         }
 
         Ok(())
-    }
-}
-
-impl Default for OCIOConfig {
-    fn default() -> OCIOConfig {
-        OCIOConfig {
-            name: None,
-            description: None,
-            search_path: Vec::new(),
-
-            roles: Roles::default(),
-            displays: Vec::new(),
-            looks: Vec::new(),
-            colorspaces: Vec::new(),
-        }
     }
 }
 
@@ -420,4 +427,11 @@ impl BitDepth {
             BitDepth::F32 => "32f",
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum OutputFile {
+    Raw { output_path: PathBuf, data: Vec<u8> },
+    Lut1D { output_path: PathBuf, lut: Lut1D },
+    Lut3D { output_path: PathBuf, lut: Lut3D },
 }

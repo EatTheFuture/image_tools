@@ -2,8 +2,7 @@ use std::path::Path;
 
 use eframe::egui;
 
-use colorbox::formats;
-use ocio_gen::lut::Lut1D;
+use colorbox::{formats, lut::Lut1D};
 
 use crate::{ImageInfo, SourceImage};
 
@@ -160,36 +159,8 @@ pub fn load_1d_lut(path: &Path) -> Result<Lut1D, formats::ReadError> {
     let file = std::io::BufReader::new(std::fs::File::open(path)?);
 
     match path.extension().map(|e| e.to_str()) {
-        Some(Some("cube")) => {
-            let [(min1, max1, table1), (min2, max2, table2), (min3, max3, table3)] =
-                formats::cube::read_1d(file)?;
-
-            Ok(Lut1D {
-                ranges: vec![(min1, max1), (min2, max2), (min3, max3)],
-                tables: vec![table1, table2, table3],
-            })
-        }
-
-        Some(Some("spi1d")) => {
-            let (min, max, components, [table1, table2, table3]) = formats::spi1d::read(file)?;
-
-            match components {
-                1 => Ok(Lut1D {
-                    ranges: vec![(min, max)],
-                    tables: vec![table1],
-                }),
-                2 => Ok(Lut1D {
-                    ranges: vec![(min, max)],
-                    tables: vec![table1, table2],
-                }),
-                3 => Ok(Lut1D {
-                    ranges: vec![(min, max)],
-                    tables: vec![table1, table2, table3],
-                }),
-                _ => unreachable!(),
-            }
-        }
-
+        Some(Some("cube")) => Ok(formats::cube::read_1d(file)?),
+        Some(Some("spi1d")) => Ok(formats::spi1d::read(file)?),
         _ => Err(formats::ReadError::FormatErr),
     }
 }
