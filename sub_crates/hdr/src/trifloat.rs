@@ -144,42 +144,49 @@ mod tests {
         assert_eq!([6.0, 256.0, 0.0], round_trip(fs));
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn nans_01() {
         encode([std::f32::NAN, 0.0, 0.0]);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn nans_02() {
         encode([0.0, std::f32::NAN, 0.0]);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn nans_03() {
         encode([0.0, 0.0, std::f32::NAN]);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn negative_01() {
         encode([-1.0, 0.0, 0.0]);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn negative_02() {
         encode([0.0, -1.0, 0.0]);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn negative_03() {
         encode([0.0, 0.0, -1.0]);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn negative_04() {
         encode([-0.0, -0.0, -0.0]);

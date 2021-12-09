@@ -1,8 +1,31 @@
 use crate::config::*;
 
-use colorbox::{chroma, matrix, matrix_compose};
+use colorbox::{chroma, lut::Lut1D, matrix, matrix_compose};
 
 pub const REFERENCE_SPACE: chroma::Chromaticities = chroma::REC709;
+
+// LUTs we don't know how to compute, so we include them compressed
+// in the executable.
+const DCI_XYZ_SPI1D_XZ: &[u8] = include_bytes!("../data/blender/dci_xyz.spi1d.xz");
+const LG10_SPI1D_XZ: &[u8] = include_bytes!("../data/blender/lg10.spi1d.xz");
+const FILMIC_DESAT65CUBE_SPI3D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_desat65cube.spi3d.xz");
+const FILMIC_FALSE_COLOR_SPI3D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_false_color.spi3d.xz");
+const FILMIC_TO_0_35_SPI1D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_to_0-35_1-30.spi1d.xz");
+const FILMIC_TO_0_48_SPI1D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_to_0-48_1-09.spi1d.xz");
+const FILMIC_TO_0_60_SPI1D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_to_0-60_1-04.spi1d.xz");
+const FILMIC_TO_0_70_SPI1D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_to_0-70_1-03.spi1d.xz");
+const FILMIC_TO_0_85_SPI1D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_to_0-85_1-011.spi1d.xz");
+const FILMIC_TO_099_SPI1D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_to_0.99_1-0075.spi1d.xz");
+const FILMIC_TO_120_SPI1D_XZ: &[u8] =
+    include_bytes!("../data/blender/filmic_to_1.20_1-00.spi1d.xz");
 
 /// Builds a config that matches Blender 3.0's default.
 pub fn make_blender_3_0() -> OCIOConfig {
@@ -347,7 +370,90 @@ pub fn make_blender_3_0() -> OCIOConfig {
     //---------------------------------------------------------
     // Output files.
 
-    // TODO
+    config.output_files = vec![
+        OutputFile::Raw {
+            output_path: "luts/dci_xyz.spi1d".into(),
+            data: crate::decompress_xz(DCI_XYZ_SPI1D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "luts/lg10.spi1d".into(),
+            data: crate::decompress_xz(LG10_SPI1D_XZ),
+        },
+        OutputFile::Lut1D {
+            output_path: "luts/rec709.spi1d".into(),
+            lut: Lut1D::from_fn_1(
+                4101,
+                -0.125,
+                1.125,
+                colorbox::transfer_functions::rec709::to_linear,
+            ),
+        },
+        OutputFile::Lut1D {
+            output_path: "luts/srgb.spi1d".into(),
+            lut: Lut1D::from_fn_1(
+                65561,
+                -0.125,
+                4.875,
+                colorbox::transfer_functions::srgb::to_linear,
+            ),
+        },
+        OutputFile::Lut1D {
+            output_path: "luts/srgb_inv.spi1d".into(),
+            lut: Lut1D::from_fn_1(
+                65561,
+                -0.00967492260062,
+                40.4600768322,
+                colorbox::transfer_functions::srgb::from_linear,
+            ),
+        },
+        // Filmic Blender.
+        OutputFile::Raw {
+            output_path: "filmic/filmic_desat65cube.spi3d".into(),
+            data: crate::decompress_xz(FILMIC_DESAT65CUBE_SPI3D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_false_color.spi3d".into(),
+            data: crate::decompress_xz(FILMIC_FALSE_COLOR_SPI3D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_to_0-35_1-30.spi1d".into(),
+            data: crate::decompress_xz(FILMIC_TO_0_35_SPI1D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_to_0-48_1-09.spi1d".into(),
+            data: crate::decompress_xz(FILMIC_TO_0_48_SPI1D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_to_0-60_1-04.spi1d".into(),
+            data: crate::decompress_xz(FILMIC_TO_0_60_SPI1D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_to_0-70_1-03.spi1d".into(),
+            data: crate::decompress_xz(FILMIC_TO_0_70_SPI1D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_to_0-85_1-011.spi1d".into(),
+            data: crate::decompress_xz(FILMIC_TO_0_85_SPI1D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_to_0.99_1-0075.spi1d".into(),
+            data: crate::decompress_xz(FILMIC_TO_099_SPI1D_XZ),
+        },
+        OutputFile::Raw {
+            output_path: "filmic/filmic_to_1.20_1-00.spi1d".into(),
+            data: crate::decompress_xz(FILMIC_TO_120_SPI1D_XZ),
+        },
+    ];
 
     config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn make_blender_3_0_test() {
+        make_blender_3_0();
+    }
 }

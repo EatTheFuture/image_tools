@@ -26,7 +26,5 @@ jobs:
           toolchain: stable
           override: true
 
-      # Build and test
-      - run: cargo +stable build
-      - run: cargo +stable test
-      - run: cargo +stable bench --no-run
+      # Build and test, and make sure benchmarks build.
+      - run: cargo +stable test --release --all && cargo +stable bench --no-run --all
