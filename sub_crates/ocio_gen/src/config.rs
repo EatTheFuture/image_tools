@@ -83,46 +83,13 @@ impl OCIOConfig {
         if let Some(colorspace) = &self.roles.cie_xyz_d65_interchange {
             file.write_all(format!("  cie_xyz_d65_interchange: {}\n", colorspace).as_bytes())?;
         }
-        if let Some(colorspace) = &self.roles.scene_linear {
-            file.write_all(format!("  scene_linear: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.rendering {
-            file.write_all(format!("  rendering: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.compositing_linear {
-            file.write_all(format!("  compositing_linear: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.compositing_log {
-            file.write_all(format!("  compositing_log: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.color_timing {
-            file.write_all(format!("  color_timing: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.texture_paint {
-            file.write_all(format!("  texture_paint: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.matte_paint {
-            file.write_all(format!("  matte_paint: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.color_picking {
-            file.write_all(format!("  color_picking: {}\n", colorspace).as_bytes())?;
+        if let Some(colorspace) = &self.roles.default {
+            file.write_all(format!("  default: {}\n", colorspace).as_bytes())?;
         }
         if let Some(colorspace) = &self.roles.data {
             file.write_all(format!("  data: {}\n", colorspace).as_bytes())?;
         }
-        if let Some(colorspace) = &self.roles.default {
-            file.write_all(format!("  default: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.default_byte {
-            file.write_all(format!("  default_byte: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.default_float {
-            file.write_all(format!("  default_float: {}\n", colorspace).as_bytes())?;
-        }
-        if let Some(colorspace) = &self.roles.default_sequencer {
-            file.write_all(format!("  default_sequencer: {}\n", colorspace).as_bytes())?;
-        }
-        for (role, colorspace) in &self.roles.custom {
+        for (role, colorspace) in &self.roles.other {
             file.write_all(format!("  {}: {}\n", role, colorspace).as_bytes())?;
         }
         file.write_all(b"\n")?;
@@ -197,33 +164,36 @@ impl OCIOConfig {
 
 /// Specifies what color spaces to use for various purposes.
 ///
-/// The `String`s should all be names of colorspaces that are in the config.
+/// The reference, interchange, default, and data spaces have their own
+/// fields in the struct, but the rest are up to the configuration.
+///
+/// For the hard-coded roles, the string is the name of the color space.
+/// For the other roles, the left-side string is the name of the role
+/// and the right-side string is the name of the color space.  (The color
+/// space names should all be the names of color spaces in the config.)
+///
+/// Some common roles that are implemented in most configs:
+///
+/// - scene_linear
+/// - rendering
+/// - compositing_linear
+/// - compositing_log
+/// - color_timing (a.k.a. color grading)
+/// - texture_paint
+/// - matte_paint
+/// - color_picking
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Roles {
-    // Reference OCIO roles.
     pub reference: Option<String>, // Everything else is defined in terms of this.
-    pub aces_interchange: Option<String>, // ACES2065-1.
+
+    pub aces_interchange: Option<String>,        // ACES2065-1.
     pub cie_xyz_d65_interchange: Option<String>, // A D65-adapted CIE 1931 XYZ space.
 
-    // Other common OCIO roles.
-    pub scene_linear: Option<String>,
-    pub rendering: Option<String>,
-    pub compositing_linear: Option<String>,
-    pub compositing_log: Option<String>,
-    pub color_timing: Option<String>, // Color grading.
-    pub texture_paint: Option<String>,
-    pub matte_paint: Option<String>,
-    pub color_picking: Option<String>,
-    pub data: Option<String>,
     pub default: Option<String>,
+    pub data: Option<String>,
 
-    // Blender roles.
-    pub default_byte: Option<String>,
-    pub default_float: Option<String>,
-    pub default_sequencer: Option<String>,
-
-    // Custom roles.
-    pub custom: Vec<(String, String)>, // (role_name, colorspace_name)
+    // Other roles
+    pub other: Vec<(String, String)>, // (role_name, colorspace_name)
 }
 
 impl Default for Roles {
@@ -232,23 +202,9 @@ impl Default for Roles {
             reference: None,
             aces_interchange: None,
             cie_xyz_d65_interchange: None,
-
-            scene_linear: None,
-            rendering: None,
-            compositing_linear: None,
-            compositing_log: None,
-            color_timing: None,
-            texture_paint: None,
-            matte_paint: None,
-            color_picking: None,
-            data: None,
             default: None,
-
-            default_byte: None,
-            default_float: None,
-            default_sequencer: None,
-
-            custom: Vec::new(),
+            data: None,
+            other: Vec::new(),
         }
     }
 }
