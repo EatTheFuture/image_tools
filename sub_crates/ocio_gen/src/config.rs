@@ -14,9 +14,14 @@ pub struct OCIOConfig {
 
     // Config sections.
     pub roles: Roles,
+
     // pub file_rules: TODO.
     pub displays: Vec<Display>,
+    pub active_displays: Vec<String>, // If empty, not written to config.
+    pub active_views: Vec<String>,    // If empty, not written to config.
+
     pub looks: Vec<Look>,
+
     pub colorspaces: Vec<ColorSpace>,
 }
 
@@ -31,6 +36,8 @@ impl Default for OCIOConfig {
 
             roles: Roles::default(),
             displays: Vec::new(),
+            active_displays: Vec::new(),
+            active_views: Vec::new(),
             looks: Vec::new(),
             colorspaces: Vec::new(),
         }
@@ -59,17 +66,15 @@ impl OCIOConfig {
         }
         if !self.search_path.is_empty() {
             file.write_all(b"search_path: \"")?;
-            let mut is_first = true;
-            for path in self.search_path.iter() {
-                if is_first {
-                    is_first = false;
-                } else {
+            for (i, path) in self.search_path.iter().enumerate() {
+                if i != 0 {
                     file.write_all(b":")?;
                 }
                 file.write_all(path.to_string_lossy().as_bytes())?
             }
             file.write_all(b"\"\n")?;
         }
+        file.write_all(b"strictparsing: true\n")?;
         file.write_all(b"\n")?;
 
         // Roles.
@@ -94,7 +99,7 @@ impl OCIOConfig {
         }
         file.write_all(b"\n")?;
 
-        // Displays.
+        // Displays and views.
         file.write_all(b"displays:\n")?;
         for display in self.displays.iter() {
             file.write_all(format!("  {}:\n", display.name).as_bytes())?;
@@ -109,6 +114,26 @@ impl OCIOConfig {
             }
         }
         file.write_all(b"\n")?;
+        if !self.active_displays.is_empty() {
+            file.write_all(b"active_displays: [")?;
+            for (i, d) in self.active_displays.iter().enumerate() {
+                if i != 0 {
+                    file.write_all(b", ")?;
+                }
+                file.write_all(d.as_bytes())?;
+            }
+            file.write_all(b"]\n")?;
+        }
+        if !self.active_displays.is_empty() {
+            file.write_all(b"active_views: [")?;
+            for (i, v) in self.active_views.iter().enumerate() {
+                if i != 0 {
+                    file.write_all(b", ")?;
+                }
+                file.write_all(v.as_bytes())?;
+            }
+            file.write_all(b"]\n")?;
+        }
 
         // Looks.
         if !self.looks.is_empty() {
@@ -135,6 +160,23 @@ impl OCIOConfig {
         for colorspace in self.colorspaces.iter() {
             file.write_all(b"  - !<ColorSpace>\n")?;
             file.write_all(format!("    name: {}\n", colorspace.name).as_bytes())?;
+            if !colorspace.description.is_empty() {
+                file.write_all(
+                    format!(
+                        "description: |\n{}\n",
+                        colorspace.description.trim().replace("\n", "      \n")
+                    )
+                    .as_bytes(),
+                )?;
+            }
+            if !colorspace.family.is_empty() {
+                file.write_all(format!("    family: {}\n", colorspace.family).as_bytes())?;
+            }
+            if !colorspace.equalitygroup.is_empty() {
+                file.write_all(
+                    format!("    equalitygroup: {}\n", colorspace.equalitygroup).as_bytes(),
+                )?;
+            }
             if let Some(encoding) = colorspace.encoding {
                 file.write_all(format!("    encoding: {}\n", encoding.as_str()).as_bytes())?;
             }
@@ -143,6 +185,17 @@ impl OCIOConfig {
             }
             if colorspace.isdata == Some(true) {
                 file.write_all(b"    isdata: true\n")?;
+            }
+            if let Some(allocation) = colorspace.allocation {
+                file.write_all(format!("    allocation: {}\n", allocation.as_str()).as_bytes())?;
+                file.write_all(b"    allocationvars: [")?;
+                for (i, n) in colorspace.allocationvars.iter().enumerate() {
+                    if i != 0 {
+                        file.write_all(b", ")?;
+                    }
+                    file.write_all(n.to_string().as_bytes())?;
+                }
+                file.write_all(b"]\n")?;
             }
 
             if !colorspace.from_reference.is_empty() {
@@ -217,22 +270,47 @@ pub struct Display {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Look {
-    name: String,
-    process_space: String,
-    transform: Vec<Transform>,         // Required.
-    inverse_transform: Vec<Transform>, // Optional, can be empty.
+    pub name: String,
+    pub process_space: String,
+    pub transform: Vec<Transform>,         // Required.
+    pub inverse_transform: Vec<Transform>, // Optional, can be empty.
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColorSpace {
-    name: String,
-    encoding: Option<Encoding>,
-    bitdepth: Option<BitDepth>,
-    isdata: Option<bool>,
+    pub name: String,
+    pub description: String,
+
+    pub family: String,
+    pub equalitygroup: String,
+
+    pub encoding: Option<Encoding>,
+    pub bitdepth: Option<BitDepth>,
+    pub isdata: Option<bool>, // OCIO treats absence as "false".
+    pub allocation: Option<Allocation>,
+    pub allocationvars: Vec<f64>,
 
     // At least one of these needs to be filled in.
-    from_reference: Vec<Transform>,
-    to_reference: Vec<Transform>,
+    pub from_reference: Vec<Transform>,
+    pub to_reference: Vec<Transform>,
+}
+
+impl Default for ColorSpace {
+    fn default() -> ColorSpace {
+        ColorSpace {
+            name: String::new(),
+            description: String::new(),
+            family: String::new(),
+            equalitygroup: String::new(),
+            encoding: None,
+            bitdepth: None,
+            isdata: None,
+            allocation: None,
+            allocationvars: Vec::new(),
+            from_reference: Vec::new(),
+            to_reference: Vec::new(),
+        }
+    }
 }
 
 /// A color transform.
@@ -253,9 +331,14 @@ pub enum Transform {
         dst: String,
     },
     MatrixTransform([f32; 16]),
+    AllocationTransform {
+        allocation: Allocation,
+        vars: Vec<f32>,
+        direction_inverse: bool,
+    },
 }
 
-fn write_transform_yaml<W: std::io::Write>(
+pub fn write_transform_yaml<W: std::io::Write>(
     mut file: W,
     indent: usize,
     header: &str,
@@ -285,16 +368,36 @@ fn write_transform_yaml<W: std::io::Write>(
         }
         &Transform::MatrixTransform(matrix) => {
             let mut matrix_string = String::new();
-            let mut is_first = true;
-            for n in matrix.iter() {
-                if !is_first {
+            for (i, n) in matrix.iter().enumerate() {
+                if i != 0 {
                     matrix_string.push_str(", ");
-                } else {
-                    is_first = false;
                 }
                 matrix_string.push_str(&n.to_string());
             }
             format!("!<MatrixTransform> {{ matrix: [{}] }}", matrix_string)
+        }
+        &Transform::AllocationTransform {
+            allocation,
+            ref vars,
+            direction_inverse,
+        } => {
+            let mut vars_string = String::new();
+            for (i, n) in vars.iter().enumerate() {
+                if i != 0 {
+                    vars_string.push_str(", ");
+                }
+                vars_string.push_str(&n.to_string());
+            }
+            format!(
+                "!<AllocationTransform> {{ allocation: {}, vars: [{}]{} }}",
+                allocation.as_str(),
+                vars_string,
+                if direction_inverse {
+                    ", direction: inverse"
+                } else {
+                    ""
+                },
+            )
         }
     };
 
@@ -381,6 +484,21 @@ impl BitDepth {
             BitDepth::UI32 => "32ui",
             BitDepth::F16 => "16f",
             BitDepth::F32 => "32f",
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Allocation {
+    Uniform,
+    Log2,
+}
+
+impl Allocation {
+    fn as_str(&self) -> &'static str {
+        match *self {
+            Allocation::Uniform => "uniform",
+            Allocation::Log2 => "lg2",
         }
     }
 }

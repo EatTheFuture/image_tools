@@ -7,3 +7,4 @@ edition = "2018"
 
 [dependencies]
 colorbox = { git = "https://github.com/cessen/colorbox", branch = "master" }
+# colorbox = { path = "../../../colorbox" }
