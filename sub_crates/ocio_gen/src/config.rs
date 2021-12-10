@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
+};
 
 use colorbox::lut::{Lut1D, Lut3D};
 
@@ -49,7 +52,80 @@ impl OCIOConfig {
         OCIOConfig::default()
     }
 
-    pub fn write<W: std::io::Write>(&self, mut file: W) -> std::io::Result<()> {
+    pub fn write_to_directory(&self, dir_path: &Path) -> std::io::Result<()> {
+        // First ensure all the directories we need exist.
+        crate::ensure_dir_exists(dir_path)?;
+        for output_file in self.output_files.iter() {
+            if let Some(path) = output_file.path().parent() {
+                crate::ensure_dir_exists(&dir_path.join(path))?;
+            }
+        }
+        for path in self.search_path.iter() {
+            if path.is_relative() {
+                crate::ensure_dir_exists(&path)?;
+            }
+        }
+
+        // Write the output files.
+        for output_file in self.output_files.iter() {
+            let mut f = BufWriter::new(std::fs::File::create(&dir_path.join(output_file.path()))?);
+            match output_file {
+                OutputFile::Raw { data, .. } => f.write_all(&data)?,
+                OutputFile::Lut1D { output_path, lut } => {
+                    match output_path.extension().map(|e| e.to_str()).flatten() {
+                        Some("spi1d") => {
+                            if lut.ranges.len() > 1 {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    ".spi1d files don't support per-channel input ranges",
+                                ));
+                            } else {
+                                let tables: Vec<&[f32]> =
+                                    lut.tables.iter().map(|t| t.as_ref()).collect();
+                                colorbox::formats::spi1d::write(
+                                    &mut f,
+                                    lut.ranges[0].0,
+                                    lut.ranges[0].1,
+                                    &tables,
+                                )?;
+                            }
+                        }
+
+                        Some("cube") => {
+                            let ranges = match lut.ranges.len() {
+                                1 => [lut.ranges[0], lut.ranges[0], lut.ranges[0]],
+                                2 => [lut.ranges[0], lut.ranges[1], lut.ranges[1]],
+                                _ => [lut.ranges[0], lut.ranges[1], lut.ranges[2]],
+                            };
+                            let tables = match lut.tables.len() {
+                                1 => [&lut.tables[0][..], &lut.tables[0][..], &lut.tables[0][..]],
+                                2 => [&lut.tables[0][..], &lut.tables[1][..], &lut.tables[1][..]],
+                                _ => [&lut.tables[0][..], &lut.tables[1][..], &lut.tables[2][..]],
+                            };
+                            colorbox::formats::cube::write_1d(&mut f, ranges, tables)?;
+                        }
+
+                        _ => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                "Unsupported LUT output file format",
+                            ))
+                        }
+                    }
+                }
+                OutputFile::Lut3D { .. } => todo!(),
+            }
+        }
+
+        // Write the config file.
+        self.write_config_file(BufWriter::new(std::fs::File::create(
+            dir_path.join("config.ocio"),
+        )?))?;
+
+        Ok(())
+    }
+
+    fn write_config_file<W: std::io::Write>(&self, mut file: W) -> std::io::Result<()> {
         // Header.
         file.write_all(b"ocio_profile_version:2\n\n")?;
         if let Some(name) = &self.name {
@@ -508,4 +584,20 @@ pub enum OutputFile {
     Raw { output_path: PathBuf, data: Vec<u8> },
     Lut1D { output_path: PathBuf, lut: Lut1D },
     Lut3D { output_path: PathBuf, lut: Lut3D },
+}
+
+impl OutputFile {
+    pub fn path(&self) -> &Path {
+        match self {
+            OutputFile::Raw {
+                ref output_path, ..
+            } => output_path,
+            OutputFile::Lut1D {
+                ref output_path, ..
+            } => output_path,
+            OutputFile::Lut3D {
+                ref output_path, ..
+            } => output_path,
+        }
+    }
 }
