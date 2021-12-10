@@ -7,9 +7,19 @@ use std::{
 };
 
 use eframe::{egui, epi};
+use egui::Color32;
 
 use colorbox::{formats, lut::Lut1D};
 use shared_data::Shared;
+
+const WHITE: Color32 = Color32::from_rgb(255, 255, 255);
+const GRAY: Color32 = Color32::from_rgb(128, 128, 128);
+const RED: Color32 = Color32::from_rgb(220, 20, 20);
+const GREEN: Color32 = Color32::from_rgb(20, 220, 20);
+const BLUE: Color32 = Color32::from_rgb(20, 20, 220);
+const CYAN: Color32 = Color32::from_rgb(10, 180, 180);
+const MAGENTA: Color32 = Color32::from_rgb(220, 20, 220);
+const YELLOW: Color32 = Color32::from_rgb(220, 220, 20);
 
 fn main() {
     clap::App::new("OCIO Maker")
@@ -221,8 +231,8 @@ impl epi::App for AppMain {
 
                     // Chromaticity space.
                     ui.horizontal(|ui| {
-                        ui.label("Gamut: ");
-                        egui::ComboBox::from_id_source("Gamut")
+                        ui.label("Chromaticities / Gamut: ");
+                        egui::ComboBox::from_id_source("Chromaticity Space")
                             .width(256.0)
                             .selected_text(format!("{}", space.chroma_space.ui_text()))
                             .show_ui(ui, |ui| {
@@ -297,7 +307,7 @@ impl epi::App for AppMain {
                     ui.add_space(8.0);
 
                     // Transfer function.
-                    let transfer_lut_label = "Transfer Function LUT (to linear): ";
+                    let transfer_lut_label = "Transfer Function (to linear): ";
                     if let Some((_, ref filepath, ref mut inverse)) = space.transfer_lut {
                         ui.horizontal(|ui| {
                             ui.label(transfer_lut_label);
@@ -314,7 +324,10 @@ impl epi::App for AppMain {
                             }
                         });
                         ui.indent(0, |ui| {
-                            ui.checkbox(inverse, "Reverse LUT (should curve to the lower right)")
+                            ui.checkbox(
+                                inverse,
+                                "Invert Transfer Function (should curve to the lower right)",
+                            )
                         });
                     } else {
                         ui.horizontal(|ui| {
@@ -338,9 +351,87 @@ impl epi::App for AppMain {
 
                     ui.add_space(8.0);
 
-                    //---------------------------------
-                    // Visualizations.
+                    // Visualize chromaticities / gamut.
+                    if let Some(chroma) = space.chroma_space.chromaticities() {
+                        use egui::widgets::plot::{
+                            HLine, Line, LineStyle, Plot, VLine, Value, Values,
+                        };
+                        let mut plot = Plot::new("transfer_function")
+                            .data_aspect(1.0)
+                            .height(250.0)
+                            .allow_drag(false)
+                            .allow_zoom(false)
+                            .show_x(false)
+                            .show_y(false)
+                            .show_axes([false, false]);
+                        let wp_style = LineStyle::Dashed { length: 10.0 };
+                        let r = Value {
+                            x: chroma.r.0,
+                            y: chroma.r.1,
+                        };
+                        let g = Value {
+                            x: chroma.g.0,
+                            y: chroma.g.1,
+                        };
+                        let b = Value {
+                            x: chroma.b.0,
+                            y: chroma.b.1,
+                        };
+                        let w = Value {
+                            x: chroma.w.0,
+                            y: chroma.w.1,
+                        };
 
+                        // Spectral locus and boundary lines.
+                        plot = plot.line(
+                            Line::new(Values::from_values_iter({
+                                use colorbox::tables::cie_1931_xyz::{X, Y, Z};
+                                (0..X.len()).chain(0..1).map(|i| Value {
+                                    x: (X[i] / (X[i] + Y[i] + Z[i])) as f64,
+                                    y: (Y[i] / (X[i] + Y[i] + Z[i])) as f64,
+                                })
+                            }))
+                            .color(GRAY),
+                        );
+                        plot = plot
+                            .hline(HLine::new(0.0).color(Color32::from_rgb(50, 50, 50)))
+                            .vline(VLine::new(0.0).color(Color32::from_rgb(50, 50, 50)));
+
+                        // Color space
+                        plot = plot
+                            .line(
+                                Line::new(Values::from_values_iter([r, g].iter().copied()))
+                                    .color(YELLOW),
+                            )
+                            .line(
+                                Line::new(Values::from_values_iter([g, b].iter().copied()))
+                                    .color(CYAN),
+                            )
+                            .line(
+                                Line::new(Values::from_values_iter([b, r].iter().copied()))
+                                    .color(MAGENTA),
+                            )
+                            .line(
+                                Line::new(Values::from_values_iter([r, w].iter().copied()))
+                                    .color(RED)
+                                    .style(wp_style),
+                            )
+                            .line(
+                                Line::new(Values::from_values_iter([g, w].iter().copied()))
+                                    .color(GREEN)
+                                    .style(wp_style),
+                            )
+                            .line(
+                                Line::new(Values::from_values_iter([b, w].iter().copied()))
+                                    .color(BLUE)
+                                    .style(wp_style),
+                            );
+                        ui.add(plot);
+
+                        ui.add_space(8.0);
+                    }
+
+                    // Visualize transfer function.
                     if let Some((ref lut, _, inverse)) = space.transfer_lut {
                         use egui::widgets::plot::{Line, Plot, Value, Values};
                         let aspect = {
@@ -361,19 +452,29 @@ impl epi::App for AppMain {
                             }
                         };
                         let mut plot = Plot::new("transfer_function").data_aspect(aspect);
+                        let colors: &[_] = if lut.tables.len() == 1 {
+                            &[WHITE]
+                        } else if lut.tables.len() <= 4 {
+                            &[RED, GREEN, BLUE, WHITE]
+                        } else {
+                            unreachable!()
+                        };
                         for (component, table) in lut.tables.iter().enumerate() {
                             let range = lut.ranges[component.min(lut.ranges.len() - 1)];
-                            plot = plot.line(Line::new(Values::from_values_iter(
-                                table.iter().copied().enumerate().map(|(i, y)| {
-                                    let a = i as f32 / (table.len() - 1).max(1) as f32;
-                                    let x = range.0 + (a * (range.1 - range.0));
-                                    if inverse {
-                                        Value::new(y, x)
-                                    } else {
-                                        Value::new(x, y)
-                                    }
-                                }),
-                            )));
+                            plot = plot.line(
+                                Line::new(Values::from_values_iter(
+                                    table.iter().copied().enumerate().map(|(i, y)| {
+                                        let a = i as f32 / (table.len() - 1).max(1) as f32;
+                                        let x = range.0 + (a * (range.1 - range.0));
+                                        if inverse {
+                                            Value::new(y, x)
+                                        } else {
+                                            Value::new(x, y)
+                                        }
+                                    }),
+                                ))
+                                .color(colors[component]),
+                            );
                         }
                         ui.add(plot);
                     }
