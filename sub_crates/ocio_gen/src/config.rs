@@ -52,7 +52,9 @@ impl OCIOConfig {
         OCIOConfig::default()
     }
 
-    pub fn write_to_directory(&self, dir_path: &Path) -> std::io::Result<()> {
+    pub fn write_to_directory<P: AsRef<Path>>(&self, dir_path: P) -> std::io::Result<()> {
+        let dir_path: &Path = dir_path.as_ref();
+
         // First ensure all the directories we need exist.
         crate::ensure_dir_exists(dir_path)?;
         for output_file in self.output_files.iter() {
@@ -127,15 +129,15 @@ impl OCIOConfig {
 
     fn write_config_file<W: std::io::Write>(&self, mut file: W) -> std::io::Result<()> {
         // Header.
-        file.write_all(b"ocio_profile_version:2\n\n")?;
+        file.write_all(b"ocio_profile_version: 2\n\n")?;
         if let Some(name) = &self.name {
             file.write_all(format!("name: {}\n", name).as_bytes())?;
         }
         if let Some(description) = &self.description {
             file.write_all(
                 format!(
-                    "description: |\n{}\n",
-                    description.trim().replace("\n", "    \n")
+                    "description: |\n  {}\n",
+                    description.trim().replace("\n", "  \n")
                 )
                 .as_bytes(),
             )?;
@@ -188,8 +190,8 @@ impl OCIOConfig {
                     .as_bytes(),
                 )?;
             }
+            file.write_all(b"\n")?;
         }
-        file.write_all(b"\n")?;
         if !self.active_displays.is_empty() {
             file.write_all(b"active_displays: [")?;
             for (i, d) in self.active_displays.iter().enumerate() {
@@ -200,7 +202,7 @@ impl OCIOConfig {
             }
             file.write_all(b"]\n")?;
         }
-        if !self.active_displays.is_empty() {
+        if !self.active_views.is_empty() {
             file.write_all(b"active_views: [")?;
             for (i, v) in self.active_views.iter().enumerate() {
                 if i != 0 {
@@ -209,6 +211,9 @@ impl OCIOConfig {
                 file.write_all(v.as_bytes())?;
             }
             file.write_all(b"]\n")?;
+        }
+        if !self.active_displays.is_empty() || !self.active_views.is_empty() {
+            file.write_all(b"\n")?;
         }
 
         // Looks.
@@ -227,9 +232,9 @@ impl OCIOConfig {
                         &look.inverse_transform[..],
                     )?;
                 }
+                file.write_all(b"\n")?;
             }
         }
-        file.write_all(b"\n")?;
 
         // Color spaces.
         file.write_all(b"colorspaces:\n")?;
@@ -239,7 +244,7 @@ impl OCIOConfig {
             if !colorspace.description.is_empty() {
                 file.write_all(
                     format!(
-                        "description: |\n{}\n",
+                        "    description: |\n      {}\n",
                         colorspace.description.trim().replace("\n", "      \n")
                     )
                     .as_bytes(),
@@ -264,14 +269,16 @@ impl OCIOConfig {
             }
             if let Some(allocation) = colorspace.allocation {
                 file.write_all(format!("    allocation: {}\n", allocation.as_str()).as_bytes())?;
-                file.write_all(b"    allocationvars: [")?;
-                for (i, n) in colorspace.allocationvars.iter().enumerate() {
-                    if i != 0 {
-                        file.write_all(b", ")?;
+                if !colorspace.allocationvars.is_empty() {
+                    file.write_all(b"    allocationvars: [")?;
+                    for (i, n) in colorspace.allocationvars.iter().enumerate() {
+                        if i != 0 {
+                            file.write_all(b", ")?;
+                        }
+                        file.write_all(n.to_string().as_bytes())?;
                     }
-                    file.write_all(n.to_string().as_bytes())?;
+                    file.write_all(b"]\n")?;
                 }
-                file.write_all(b"]\n")?;
             }
 
             if !colorspace.from_reference.is_empty() {
@@ -285,6 +292,7 @@ impl OCIOConfig {
             if !colorspace.to_reference.is_empty() {
                 write_transform_yaml(&mut file, 4, "to_reference", &colorspace.to_reference[..])?;
             }
+            file.write_all(b"\n")?;
         }
 
         Ok(())
@@ -409,7 +417,7 @@ pub enum Transform {
     MatrixTransform([f32; 16]),
     AllocationTransform {
         allocation: Allocation,
-        vars: Vec<f32>,
+        vars: Vec<f64>,
         direction_inverse: bool,
     },
 }
@@ -481,7 +489,7 @@ pub fn write_transform_yaml<W: std::io::Write>(
         file.write_all(
             format!("{}{}: {}\n", indent, header, transform_text(&transforms[0])).as_bytes(),
         )?;
-    } else {
+    } else if transforms.len() > 1 {
         file.write_all(format!("{}{}: !<GroupTransform>\n", indent, header).as_bytes())?;
         file.write_all(format!("{}  children:\n", indent).as_bytes())?;
         for transform in transforms.iter() {

@@ -665,8 +665,7 @@ impl AppMain {
 
             colorbox::formats::cube::write_1d(
                 &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
-                [range_min; 3],
-                [range_max; 3],
+                [(range_min, range_max); 3],
                 [&tables[0], &tables[1], &tables[2]],
             )
             .unwrap();

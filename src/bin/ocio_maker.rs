@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"] // Don't go through console on Windows.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -23,6 +24,7 @@ fn main() {
             last_opened_directory: std::env::current_dir().ok(),
 
             ui_data: Shared::new(UIData {
+                export_path: String::new(),
                 input_spaces: Vec::new(),
                 output_spaces: Vec::new(),
                 selected_space_index: 0,
@@ -50,6 +52,7 @@ struct UIData {
     input_spaces: Vec<SpaceTransform>,
     output_spaces: Vec<SpaceTransform>,
     selected_space_index: usize,
+    export_path: String,
 }
 
 impl epi::App for AppMain {
@@ -88,6 +91,14 @@ impl epi::App for AppMain {
             .add_filter("All Supported LUTs", &["spi1d", "cube"])
             .add_filter("cube", &["cube"])
             .add_filter("spi1d", &["spi1d"]);
+        let current_export_dir = if !self.ui_data.lock().export_path.is_empty() {
+            self.ui_data.lock().export_path.clone().into()
+        } else {
+            working_dir.clone()
+        };
+        let select_export_directory_dialog = rfd::FileDialog::new()
+            .set_directory(&current_export_dir)
+            .set_title("Select Export Directory");
 
         //----------------
         // GUI.
@@ -199,11 +210,20 @@ impl epi::App for AppMain {
         // Main area.
         egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_top(|ui| {
+                let mut ui_data = self.ui_data.lock_mut();
+                ui.label("Config Directory: ");
+                ui.add(
+                    egui::widgets::TextEdit::singleline(&mut ui_data.export_path)
+                        .id(egui::Id::new("Export Path")),
+                );
+                if ui.button("Browse...").clicked() {
+                    if let Some(path) = select_export_directory_dialog.pick_folder() {
+                        ui_data.export_path = path.to_string_lossy().into();
+                    }
+                }
+                ui.add_space(16.0);
                 if ui
-                    .add_enabled(
-                        job_count == 0,
-                        egui::widgets::Button::new("Export Config..."),
-                    )
+                    .add_enabled(job_count == 0, egui::widgets::Button::new("Export Config"))
                     .clicked()
                 {
                     self.export_config();
@@ -555,7 +575,170 @@ impl AppMain {
     }
 
     fn export_config(&self) {
-        todo!();
+        use colorbox::matrix;
+        use ocio_gen::config::*;
+
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue.add_job("Export Config", move |status| {
+            status
+                .lock_mut()
+                .set_progress("Generating config".into(), 0.0);
+
+            let export_path = ui_data.lock().export_path.clone();
+            if export_path.is_empty() {
+                status
+                    .lock_mut()
+                    .log_error("Failed to export: no config directory selected yet.".into());
+                return;
+            }
+
+            // Template config.
+            let mut config = ocio_gen::blender_config::make_blender_3_0();
+            let ref_chroma = ocio_gen::blender_config::REFERENCE_SPACE_CHROMA;
+
+            // Prep to add our own stuff.
+            let output_dir: &Path = "ocio_maker".as_ref();
+            let mut output_files: HashMap<PathBuf, OutputFile> = HashMap::new();
+            let input_space_count = ui_data.lock().input_spaces.len();
+            let output_space_count = ui_data.lock().output_spaces.len();
+
+            // Add input transforms.
+            for i in 0..input_space_count {
+                if let Some(space) = ui_data.lock().input_spaces.get(i).map(|s| s.clone()) {
+                    let space_name = space
+                        .name
+                        .replace("\\", "\\\\")
+                        .replace("#", "\\#")
+                        .replace("\"", "\\\"")
+                        .replace("]", "\\]")
+                        .replace("}", "\\}");
+                    let mut transforms = Vec::new();
+                    if let Some((lut, ref path, inverse)) = space.transfer_lut {
+                        let output_file =
+                            output_files
+                                .entry(path.into())
+                                .or_insert(OutputFile::Lut1D {
+                                    output_path: output_dir.join(format!(
+                                        "om_in_{}_{}",
+                                        i,
+                                        path.file_name()
+                                            .map(|f| f.to_str())
+                                            .flatten()
+                                            .unwrap_or("lut.cube")
+                                    )),
+                                    lut: lut.clone(),
+                                });
+                        transforms.push(Transform::FileTransform {
+                            src: output_file.path().file_name().unwrap().into(),
+                            interpolation: Interpolation::Linear,
+                            direction_inverse: inverse,
+                        });
+                    }
+                    if let Some(chroma) = space.chroma_space.chromaticities() {
+                        transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
+                            colorbox::matrix_compose!(
+                                matrix::rgb_to_xyz_matrix(chroma),
+                                matrix::xyz_chromatic_adaptation_matrix(
+                                    chroma.w,
+                                    ref_chroma.w,
+                                    matrix::AdaptationMethod::Bradford,
+                                ),
+                                matrix::xyz_to_rgb_matrix(ref_chroma),
+                            ),
+                        )));
+                    }
+
+                    config.colorspaces.push(ColorSpace {
+                        name: space_name.clone(),
+                        family: "IDT".into(),
+                        bitdepth: Some(BitDepth::F32),
+                        isdata: Some(false),
+                        to_reference: transforms,
+                        ..ColorSpace::default()
+                    });
+                }
+            }
+
+            // Add output transforms.
+            for i in 0..output_space_count {
+                if let Some(space) = ui_data.lock().output_spaces.get(i).map(|s| s.clone()) {
+                    let space_name = space
+                        .name
+                        .replace("\\", "\\\\")
+                        .replace("#", "\\#")
+                        .replace("\"", "\\\"")
+                        .replace("]", "\\]")
+                        .replace("}", "\\}");
+                    let mut transforms = Vec::new();
+                    if let Some((lut, ref path, inverse)) = space.transfer_lut {
+                        let output_file =
+                            output_files
+                                .entry(path.into())
+                                .or_insert(OutputFile::Lut1D {
+                                    output_path: output_dir.join(format!(
+                                        "om_out_{}_{}",
+                                        i,
+                                        path.file_name()
+                                            .map(|f| f.to_str())
+                                            .flatten()
+                                            .unwrap_or("lut.cube")
+                                    )),
+                                    lut: lut.clone(),
+                                });
+                        transforms.push(Transform::FileTransform {
+                            src: output_file.path().file_name().unwrap().into(),
+                            interpolation: Interpolation::Linear,
+                            direction_inverse: inverse,
+                        });
+                    }
+                    if let Some(chroma) = space.chroma_space.chromaticities() {
+                        transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
+                            colorbox::matrix_compose!(
+                                matrix::rgb_to_xyz_matrix(ref_chroma),
+                                matrix::xyz_chromatic_adaptation_matrix(
+                                    ref_chroma.w,
+                                    chroma.w,
+                                    matrix::AdaptationMethod::Bradford,
+                                ),
+                                matrix::xyz_to_rgb_matrix(chroma),
+                            ),
+                        )));
+                    }
+
+                    config.colorspaces.push(ColorSpace {
+                        name: space_name.clone(),
+                        family: "ODT".into(),
+                        bitdepth: Some(BitDepth::F32),
+                        isdata: Some(false),
+                        from_reference: transforms,
+                        ..ColorSpace::default()
+                    });
+
+                    config.displays.push(Display {
+                        name: space_name.clone(),
+                        views: vec![("Standard".into(), space_name.clone())],
+                    });
+                    config.active_displays.push(space_name.clone());
+                }
+            }
+
+            // Add LUT files.
+            config.search_path.push(output_dir.into());
+            for (_, output_file) in output_files.drain() {
+                config.output_files.push(output_file);
+            }
+
+            // Write it out to disk.
+            status
+                .lock_mut()
+                .set_progress("Writing config to disk".into(), 0.0);
+            config
+                .write_to_directory(export_path)
+                .expect("Failed to write OCIO config");
+
+            status.lock_mut().log_note("Export successful!".into());
+        });
     }
 }
 

@@ -2,7 +2,7 @@ use crate::config::*;
 
 use colorbox::{chroma, lut::Lut1D, matrix, matrix_compose};
 
-pub const REFERENCE_SPACE: chroma::Chromaticities = chroma::REC709;
+pub const REFERENCE_SPACE_CHROMA: chroma::Chromaticities = chroma::REC709;
 
 // LUTs we don't know how to compute, so we include them compressed
 // in the executable.
@@ -87,33 +87,33 @@ pub fn make_blender_3_0() -> OCIOConfig {
     // Filmic looks.
     for (name, path_a, path_b) in [
         (
-            "Very High Constrast",
+            "Very High Contrast",
             "filmic_to_1.20_1-00.spi1d",
             "filmic_to_0-70_1-03.spi1d",
         ),
         (
-            "High Constrast",
+            "High Contrast",
             "filmic_to_0.99_1-0075.spi1d",
             "filmic_to_0-70_1-03.spi1d",
         ),
         (
-            "Medium High Constrast",
+            "Medium High Contrast",
             "filmic_to_0-85_1-011.spi1d",
             "filmic_to_0-70_1-03.spi1d",
         ),
-        ("Medium Constrast", "", ""),
+        ("Medium Contrast", "", ""),
         (
-            "Medium Low Constrast",
+            "Medium Low Contrast",
             "filmic_to_0-60_1-04.spi1d",
             "filmic_to_0-70_1-03.spi1d",
         ),
         (
-            "Low Constrast",
+            "Low Contrast",
             "filmic_to_0-48_1-09.spi1d",
             "filmic_to_0-70_1-03.spi1d",
         ),
         (
-            "Very Low Constrast",
+            "Very Low Contrast",
             "filmic_to_0-35_1-30.spi1d",
             "filmic_to_0-70_1-03.spi1d",
         ),
@@ -178,8 +178,8 @@ pub fn make_blender_3_0() -> OCIOConfig {
                 matrix::rgb_to_xyz_matrix(chroma::REC709),
                 matrix::xyz_chromatic_adaptation_matrix(
                     chroma::REC709.w,
-                    chroma::ACES_AP0.w,
-                    matrix::AdaptationMethod::Bradford,
+                    (1.0 / 3.0, 1.0 / 3.0),
+                    matrix::AdaptationMethod::XYZScale,
                 ),
                 matrix::xyz_to_rgb_matrix(chroma::ACES_AP0),
             ),
