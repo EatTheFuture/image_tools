@@ -24,10 +24,9 @@ fn main() {
             last_opened_directory: std::env::current_dir().ok(),
 
             ui_data: Shared::new(UIData {
-                export_path: String::new(),
-                input_spaces: Vec::new(),
-                output_spaces: Vec::new(),
+                color_spaces: Vec::new(),
                 selected_space_index: 0,
+                export_path: String::new(),
             }),
         }),
         eframe::NativeOptions {
@@ -49,8 +48,7 @@ struct AppMain {
 /// Nothing other than the UI should lock this data for non-trivial
 /// amounts of time.
 struct UIData {
-    input_spaces: Vec<SpaceTransform>,
-    output_spaces: Vec<SpaceTransform>,
+    color_spaces: Vec<ColorSpaceSpec>,
     selected_space_index: usize,
     export_path: String,
 }
@@ -120,28 +118,27 @@ impl epi::App for AppMain {
 
         // Color space list (left-side panel).
         egui::containers::panel::SidePanel::left("color_space_list")
-            .min_width(200.0)
             .resizable(false)
             .show(ctx, |ui| {
                 let mut remove_i = None;
                 let mut add_input_space = false;
-                let mut add_output_space = false;
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.strong("Custom Color Spaces");
+                    add_input_space |= ui.button("Add").clicked();
+                });
+                ui.add_space(4.0);
 
                 egui::containers::ScrollArea::vertical()
-                    .auto_shrink([false, false])
+                    .auto_shrink([true, false])
                     .show(ui, |ui| {
                         let ui_data = &mut *self.ui_data.lock_mut();
 
                         let mut space_i = 0;
                         let mut selected_i = ui_data.selected_space_index;
 
-                        // Input spaces.
-                        ui.horizontal(|ui| {
-                            ui.strong("Input Transforms");
-                            add_input_space |= ui.button("Add").clicked();
-                        });
-                        ui.add_space(4.0);
-                        for input_space in ui_data.input_spaces.iter() {
+                        for input_space in ui_data.color_spaces.iter() {
                             ui.horizontal(|ui| {
                                 if ui
                                     .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
@@ -163,44 +160,11 @@ impl epi::App for AppMain {
                             space_i += 1;
                         }
 
-                        ui.add_space(16.0);
-
-                        // Output spaces.
-                        ui.horizontal(|ui| {
-                            ui.strong("Output Transforms");
-                            add_output_space |= ui.button("Add").clicked();
-                        });
-                        ui.add_space(4.0);
-                        for output_space in ui_data.output_spaces.iter() {
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
-                                    .clicked()
-                                {
-                                    remove_i = Some(space_i);
-                                }
-                                if ui
-                                    .add(egui::widgets::SelectableLabel::new(
-                                        space_i == ui_data.selected_space_index,
-                                        &output_space.name,
-                                    ))
-                                    .clicked()
-                                {
-                                    selected_i = space_i;
-                                }
-                            });
-
-                            space_i += 1;
-                        }
-
                         ui_data.selected_space_index = selected_i;
                     });
 
                 if add_input_space {
                     self.add_input_color_space();
-                }
-                if add_output_space {
-                    self.add_output_color_space();
                 }
                 if let Some(space_i) = remove_i {
                     self.remove_color_space(space_i);
@@ -236,44 +200,28 @@ impl epi::App for AppMain {
             {
                 let ui_data = &mut *self.ui_data.lock_mut();
                 let selected_space_index = ui_data.selected_space_index;
-                let space_data = if ui_data.selected_space_index < ui_data.input_spaces.len() {
-                    Some((
-                        true,
-                        ui_data.selected_space_index,
-                        &mut ui_data.input_spaces[selected_space_index],
-                    ))
-                } else if (ui_data.selected_space_index - ui_data.input_spaces.len())
-                    < ui_data.output_spaces.len()
-                {
-                    let i = selected_space_index - ui_data.input_spaces.len();
-                    Some((
-                        false,
-                        ui_data.selected_space_index,
-                        &mut ui_data.output_spaces[i],
-                    ))
-                } else {
-                    None
-                };
 
-                if let Some((is_input, index, space)) = space_data {
-                    // Name.
+                if selected_space_index < ui_data.color_spaces.len() {
+                    let space = &mut ui_data.color_spaces[selected_space_index];
+
+                    // Name and Misc.
                     ui.horizontal(|ui| {
                         ui.label("Name: ");
                         ui.add(
                             egui::widgets::TextEdit::singleline(&mut space.name)
-                                .id(egui::Id::new(format!("csname{}", index))),
+                                .id(egui::Id::new(format!("csname{}", selected_space_index))),
                         );
+
+                        ui.add_space(16.0);
+
+                        ui.checkbox(&mut space.include_as_display, "Include as Display");
                     });
 
                     ui.add_space(8.0);
 
                     // Chromaticity space.
                     ui.horizontal(|ui| {
-                        ui.label(if is_input {
-                            "Input Gamut: "
-                        } else {
-                            "Output Gamut: "
-                        });
+                        ui.label("Gamut: ");
                         egui::ComboBox::from_id_source("Gamut")
                             .width(256.0)
                             .selected_text(format!("{}", space.chroma_space.ui_text()))
@@ -349,11 +297,7 @@ impl epi::App for AppMain {
                     ui.add_space(8.0);
 
                     // Transfer function.
-                    let transfer_lut_label = if is_input {
-                        "1D Transfer LUT (to linear):"
-                    } else {
-                        "1D Transfer LUT (from linear):"
-                    };
+                    let transfer_lut_label = "Transfer Function LUT (to linear): ";
                     if let Some((_, ref filepath, ref mut inverse)) = space.transfer_lut {
                         ui.horizontal(|ui| {
                             ui.label(transfer_lut_label);
@@ -369,7 +313,9 @@ impl epi::App for AppMain {
                                 self.remove_transfer_function(selected_space_index);
                             }
                         });
-                        ui.indent(0, |ui| ui.checkbox(inverse, "Reverse Transfer LUT"));
+                        ui.indent(0, |ui| {
+                            ui.checkbox(inverse, "Reverse LUT (should curve to the lower right)")
+                        });
                     } else {
                         ui.horizontal(|ui| {
                             ui.label(transfer_lut_label);
@@ -457,119 +403,92 @@ impl AppMain {
     fn remove_color_space(&self, space_i: usize) {
         let ui_data = &mut *self.ui_data.lock_mut();
 
-        if space_i < ui_data.input_spaces.len() {
-            ui_data.input_spaces.remove(space_i);
-        } else if (space_i - ui_data.input_spaces.len()) < ui_data.output_spaces.len() {
-            ui_data
-                .output_spaces
-                .remove(space_i - ui_data.input_spaces.len());
+        if space_i < ui_data.color_spaces.len() {
+            ui_data.color_spaces.remove(space_i);
         }
 
         if ui_data.selected_space_index > space_i {
             ui_data.selected_space_index = ui_data.selected_space_index.saturating_sub(1);
         }
 
-        let total = ui_data.input_spaces.len() + ui_data.output_spaces.len();
-        ui_data.selected_space_index = total.saturating_sub(1).min(ui_data.selected_space_index);
+        ui_data.selected_space_index = ui_data
+            .color_spaces
+            .len()
+            .saturating_sub(1)
+            .min(ui_data.selected_space_index);
     }
 
     fn add_input_color_space(&self) {
         let ui_data = &mut *self.ui_data.lock_mut();
-        ui_data
-            .input_spaces
-            .push(SpaceTransform::with_name(&format!(
-                "New Input Transform #{}",
-                ui_data.input_spaces.len() + 1,
-            )));
-        ui_data.selected_space_index = ui_data.input_spaces.len() - 1;
-    }
-
-    fn add_output_color_space(&self) {
-        let ui_data = &mut *self.ui_data.lock_mut();
-        ui_data
-            .output_spaces
-            .push(SpaceTransform::with_name(&format!(
-                "New Output Transform #{}",
-                ui_data.output_spaces.len() + 1,
-            )));
-        ui_data.selected_space_index = ui_data.input_spaces.len() + ui_data.output_spaces.len() - 1;
+        let name = {
+            let mut new_name = "New Color Space".into();
+            for i in 1..200 {
+                let name = format!("{} {}", new_name, i);
+                let mut taken = false;
+                for space in ui_data.color_spaces.iter() {
+                    taken |= space.name == name;
+                }
+                if !taken {
+                    new_name = name;
+                    break;
+                }
+            }
+            new_name
+        };
+        ui_data.color_spaces.push(ColorSpaceSpec::with_name(&name));
+        ui_data.selected_space_index = ui_data.color_spaces.len() - 1;
     }
 
     fn load_transfer_function(&self, lut_path: &Path, color_space_index: usize) {
         let path: PathBuf = lut_path.into();
         let ui_data = self.ui_data.clone_ref();
 
-        self.job_queue.add_job("Load Transfer LUT", move |status| {
-            status
-                .lock_mut()
-                .set_progress(format!("Loading: {}", path.to_string_lossy()), 0.0);
+        self.job_queue
+            .add_job("Load Transfer Function LUT", move |status| {
+                status
+                    .lock_mut()
+                    .set_progress(format!("Loading: {}", path.to_string_lossy()), 0.0);
 
-            // Load lut.
-            let lut = match lib::job_helpers::load_1d_lut(&path) {
-                Ok(lut) => lut,
-                Err(formats::ReadError::IoErr(_)) => {
-                    status.lock_mut().log_error(format!(
-                        "Unable to access file \"{}\".",
-                        path.to_string_lossy()
-                    ));
-                    return;
-                }
-                Err(formats::ReadError::FormatErr) => {
-                    status.lock_mut().log_error(format!(
-                        "Not a 1D LUT file: \"{}\".",
-                        path.to_string_lossy()
-                    ));
-                    return;
-                }
-            };
-
-            // Set this as the lut for the passed color space index.
-            {
-                let mut ui_data = ui_data.lock_mut();
-
-                let space = if color_space_index < ui_data.input_spaces.len() {
-                    Some(&mut ui_data.input_spaces[color_space_index])
-                } else if (color_space_index - ui_data.input_spaces.len())
-                    < ui_data.output_spaces.len()
-                {
-                    let i = color_space_index - ui_data.input_spaces.len();
-                    Some(&mut ui_data.output_spaces[i])
-                } else {
-                    None
+                // Load lut.
+                let lut = match lib::job_helpers::load_1d_lut(&path) {
+                    Ok(lut) => lut,
+                    Err(formats::ReadError::IoErr(_)) => {
+                        status.lock_mut().log_error(format!(
+                            "Unable to access file \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        return;
+                    }
+                    Err(formats::ReadError::FormatErr) => {
+                        status.lock_mut().log_error(format!(
+                            "Not a 1D LUT file: \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        return;
+                    }
                 };
 
-                if let Some(space) = space {
-                    space.transfer_lut = Some((lut, path, false));
+                // Set this as the lut for the passed color space index.
+                {
+                    let mut ui_data = ui_data.lock_mut();
+                    if color_space_index < ui_data.color_spaces.len() {
+                        ui_data.color_spaces[color_space_index].transfer_lut =
+                            Some((lut, path, false));
+                    }
                 }
-            }
-        });
+            });
     }
 
     fn remove_transfer_function(&self, color_space_index: usize) {
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
-            .add_job("Remove Transfer LUT", move |status| {
+            .add_job("Remove Transfer Function LUT", move |status| {
                 status.lock_mut().set_progress("Removing LUT".into(), 0.0);
+                let mut ui_data = ui_data.lock_mut();
 
-                // Set this as the lut for the passed color space index.
-                {
-                    let mut ui_data = ui_data.lock_mut();
-
-                    let space = if color_space_index < ui_data.input_spaces.len() {
-                        Some(&mut ui_data.input_spaces[color_space_index])
-                    } else if (color_space_index - ui_data.input_spaces.len())
-                        < ui_data.output_spaces.len()
-                    {
-                        let i = color_space_index - ui_data.input_spaces.len();
-                        Some(&mut ui_data.output_spaces[i])
-                    } else {
-                        None
-                    };
-
-                    if let Some(space) = space {
-                        space.transfer_lut = None;
-                    }
+                if color_space_index < ui_data.color_spaces.len() {
+                    ui_data.color_spaces[color_space_index].transfer_lut = None;
                 }
             });
     }
@@ -600,12 +519,11 @@ impl AppMain {
             // Prep to add our own stuff.
             let output_dir: &Path = "ocio_maker".as_ref();
             let mut output_files: HashMap<PathBuf, OutputFile> = HashMap::new();
-            let input_space_count = ui_data.lock().input_spaces.len();
-            let output_space_count = ui_data.lock().output_spaces.len();
+            let space_count = ui_data.lock().color_spaces.len();
 
-            // Add input transforms.
-            for i in 0..input_space_count {
-                if let Some(space) = ui_data.lock().input_spaces.get(i).map(|s| s.clone()) {
+            // Add color spaces.
+            for i in 0..space_count {
+                if let Some(space) = ui_data.lock().color_spaces.get(i).map(|s| s.clone()) {
                     let space_name = space
                         .name
                         .replace("\\", "\\\\")
@@ -620,7 +538,7 @@ impl AppMain {
                                 .entry(path.into())
                                 .or_insert(OutputFile::Lut1D {
                                     output_path: output_dir.join(format!(
-                                        "om_in_{}_{}",
+                                        "omkr_{}__{}",
                                         i,
                                         path.file_name()
                                             .map(|f| f.to_str())
@@ -657,69 +575,14 @@ impl AppMain {
                         to_reference: transforms,
                         ..ColorSpace::default()
                     });
-                }
-            }
 
-            // Add output transforms.
-            for i in 0..output_space_count {
-                if let Some(space) = ui_data.lock().output_spaces.get(i).map(|s| s.clone()) {
-                    let space_name = space
-                        .name
-                        .replace("\\", "\\\\")
-                        .replace("#", "\\#")
-                        .replace("\"", "\\\"")
-                        .replace("]", "\\]")
-                        .replace("}", "\\}");
-                    let mut transforms = Vec::new();
-                    if let Some((lut, ref path, inverse)) = space.transfer_lut {
-                        let output_file =
-                            output_files
-                                .entry(path.into())
-                                .or_insert(OutputFile::Lut1D {
-                                    output_path: output_dir.join(format!(
-                                        "om_out_{}_{}",
-                                        i,
-                                        path.file_name()
-                                            .map(|f| f.to_str())
-                                            .flatten()
-                                            .unwrap_or("lut.cube")
-                                    )),
-                                    lut: lut.clone(),
-                                });
-                        transforms.push(Transform::FileTransform {
-                            src: output_file.path().file_name().unwrap().into(),
-                            interpolation: Interpolation::Linear,
-                            direction_inverse: inverse,
+                    if space.include_as_display {
+                        config.displays.push(Display {
+                            name: space_name.clone(),
+                            views: vec![("Standard".into(), space_name.clone())],
                         });
+                        config.active_displays.push(space_name.clone());
                     }
-                    if let Some(chroma) = space.chroma_space.chromaticities() {
-                        transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
-                            colorbox::matrix_compose!(
-                                matrix::rgb_to_xyz_matrix(ref_chroma),
-                                matrix::xyz_chromatic_adaptation_matrix(
-                                    ref_chroma.w,
-                                    chroma.w,
-                                    matrix::AdaptationMethod::Bradford,
-                                ),
-                                matrix::xyz_to_rgb_matrix(chroma),
-                            ),
-                        )));
-                    }
-
-                    config.colorspaces.push(ColorSpace {
-                        name: space_name.clone(),
-                        family: "ODT".into(),
-                        bitdepth: Some(BitDepth::F32),
-                        isdata: Some(false),
-                        from_reference: transforms,
-                        ..ColorSpace::default()
-                    });
-
-                    config.displays.push(Display {
-                        name: space_name.clone(),
-                        views: vec![("Standard".into(), space_name.clone())],
-                    });
-                    config.active_displays.push(space_name.clone());
                 }
             }
 
@@ -745,18 +608,20 @@ impl AppMain {
 //-------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-struct SpaceTransform {
+struct ColorSpaceSpec {
     name: String,
     transfer_lut: Option<(Lut1D, PathBuf, bool)>, // The bool is whether to do the inverse transform.
     chroma_space: ChromaSpace,
+    include_as_display: bool,
 }
 
-impl SpaceTransform {
-    fn with_name(name: &str) -> SpaceTransform {
-        SpaceTransform {
+impl ColorSpaceSpec {
+    fn with_name(name: &str) -> ColorSpaceSpec {
+        ColorSpaceSpec {
             name: name.into(),
             transfer_lut: None,
             chroma_space: ChromaSpace::None,
+            include_as_display: false,
         }
     }
 }
