@@ -12,15 +12,6 @@ use egui::Color32;
 use colorbox::{formats, lut::Lut1D};
 use shared_data::Shared;
 
-const WHITE: Color32 = Color32::from_rgb(255, 255, 255);
-const GRAY: Color32 = Color32::from_rgb(128, 128, 128);
-const RED: Color32 = Color32::from_rgb(220, 20, 20);
-const GREEN: Color32 = Color32::from_rgb(20, 220, 20);
-const BLUE: Color32 = Color32::from_rgb(20, 20, 220);
-const CYAN: Color32 = Color32::from_rgb(10, 180, 180);
-const MAGENTA: Color32 = Color32::from_rgb(220, 20, 220);
-const YELLOW: Color32 = Color32::from_rgb(220, 220, 20);
-
 fn main() {
     clap::App::new("OCIO Maker")
         .version("0.1")
@@ -229,6 +220,16 @@ impl epi::App for AppMain {
 
                     ui.add_space(8.0);
 
+                    // Graphing colors.
+                    const WHITE: Color32 = Color32::from_rgba_premultiplied(220, 220, 220, 0);
+                    const GRAY: Color32 = Color32::from_rgba_premultiplied(128, 128, 128, 0);
+                    const RED: Color32 = Color32::from_rgba_premultiplied(220, 20, 20, 0);
+                    const GREEN: Color32 = Color32::from_rgba_premultiplied(20, 220, 20, 0);
+                    const BLUE: Color32 = Color32::from_rgba_premultiplied(20, 20, 220, 0);
+                    const CYAN: Color32 = Color32::from_rgba_premultiplied(10, 180, 180, 0);
+                    const MAGENTA: Color32 = Color32::from_rgba_premultiplied(220, 20, 220, 0);
+                    const YELLOW: Color32 = Color32::from_rgba_premultiplied(220, 220, 20, 0);
+
                     // Chromaticity space.
                     ui.horizontal(|ui| {
                         ui.label("Chromaticities / Gamut: ");
@@ -356,7 +357,7 @@ impl epi::App for AppMain {
                         use egui::widgets::plot::{
                             HLine, Line, LineStyle, Plot, VLine, Value, Values,
                         };
-                        let mut plot = Plot::new("transfer_function")
+                        let mut plot = Plot::new("chromaticities_plot")
                             .data_aspect(1.0)
                             .height(250.0)
                             .allow_drag(false)
@@ -451,7 +452,7 @@ impl epi::App for AppMain {
                                 extent_x / extent_y
                             }
                         };
-                        let mut plot = Plot::new("transfer_function").data_aspect(aspect);
+                        let mut plot = Plot::new("transfer function plot").data_aspect(aspect);
                         let colors: &[_] = if lut.tables.len() == 1 {
                             &[WHITE]
                         } else if lut.tables.len() <= 4 {
@@ -766,7 +767,7 @@ impl ChromaSpace {
     fn ui_text(&self) -> &'static str {
         match *self {
             ChromaSpace::None => "None",
-            ChromaSpace::Rec709 => "Rec.709",
+            ChromaSpace::Rec709 => "Rec.709 / sRGB",
             ChromaSpace::Rec2020 => "Rec.2020",
             ChromaSpace::DciP3 => "DCI-P3",
             ChromaSpace::AcesAP0 => "ACES APO",
@@ -774,7 +775,7 @@ impl ChromaSpace {
             ChromaSpace::AdobeRGB => "Adobe RGB",
             ChromaSpace::AdobeWideGamutRGB => "Adobe Wide Gamut RGB",
             ChromaSpace::ProPhoto => "ProPhoto",
-            ChromaSpace::SGamut => "Sony S-Gamut/S-Gamut3",
+            ChromaSpace::SGamut => "Sony S-Gamut / S-Gamut3",
             ChromaSpace::SGamut3Cine => "Sony S-Gamut3.Cine",
             ChromaSpace::AlexaWideGamutRGB => "Alexa Wide Gamut RGB",
             ChromaSpace::RedWideGamutRGB => "RED Wide Gamut RGB",
