@@ -5,7 +5,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  executable_names: hdri_merge lut_maker
+  executable_names: hdri_merge lut_maker ocio_maker
 
 jobs:
   dev-build:
