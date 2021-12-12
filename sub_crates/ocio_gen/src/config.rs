@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
@@ -297,6 +298,103 @@ impl OCIOConfig {
 
         Ok(())
     }
+
+    /// Peforms some basic validation checks on the configuration.
+    ///
+    /// This is not 100% thorough by any means.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        // Check for duplicate color space names.
+        let mut colorspaces = HashSet::new();
+        for colorspace in self.colorspaces.iter() {
+            if !colorspaces.insert(colorspace.name.as_str()) {
+                return Err(ValidationError::DuplicateColorSpace(
+                    colorspace.name.clone(),
+                ));
+            }
+        }
+
+        // Check for duplicate role names.
+        let mut roles = HashSet::new();
+        roles.insert("reference");
+        roles.insert("aces_interchange");
+        roles.insert("cie_xyz_d65_interchange");
+        roles.insert("default");
+        roles.insert("data");
+        for (role, _) in self.roles.other.iter() {
+            if !roles.insert(role.as_str()) {
+                return Err(ValidationError::DuplicateRole(role.clone()));
+            }
+        }
+
+        // Check for duplicate display names.
+        // TODO: also check for duplicate view name in the same loop,
+        // since they're defined inside displays.
+        let mut displays = HashSet::new();
+        for display in self.displays.iter() {
+            if !displays.insert(display.name.as_str()) {
+                return Err(ValidationError::DuplicateDisplay(display.name.clone()));
+            }
+        }
+
+        // Check for duplicate look names.
+        let mut looks = HashSet::new();
+        for look in self.looks.iter() {
+            if !looks.insert(look.name.as_str()) {
+                return Err(ValidationError::DuplicateLook(look.name.clone()));
+            }
+        }
+
+        // Check for references to non-existent color spaces.
+        // TODO: check inside views and color spaces themselves.
+        if let Some(ref space) = self.roles.reference {
+            if !colorspaces.contains(space.as_str()) {
+                return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
+            }
+        };
+        if let Some(ref space) = self.roles.aces_interchange {
+            if !colorspaces.contains(space.as_str()) {
+                return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
+            }
+        };
+        if let Some(ref space) = self.roles.cie_xyz_d65_interchange {
+            if !colorspaces.contains(space.as_str()) {
+                return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
+            }
+        };
+        if let Some(ref space) = self.roles.default {
+            if !colorspaces.contains(space.as_str()) {
+                return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
+            }
+        };
+        if let Some(ref space) = self.roles.data {
+            if !colorspaces.contains(space.as_str()) {
+                return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
+            }
+        };
+        for (_, space) in self.roles.other.iter() {
+            if !colorspaces.contains(space.as_str()) {
+                return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
+            }
+        }
+        for display in self.displays.iter() {
+            for (_, space) in display.views.iter() {
+                if !colorspaces.contains(space.as_str()) {
+                    return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ValidationError {
+    DuplicateColorSpace(String),
+    DuplicateDisplay(String),
+    DuplicateRole(String),
+    DuplicateLook(String),
+    ReferenceToAbsentColorSpace(String),
 }
 
 /// Specifies what color spaces to use for various purposes.

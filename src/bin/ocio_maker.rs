@@ -694,6 +694,48 @@ impl AppMain {
                 config.output_files.push(output_file);
             }
 
+            // Check for validation errors.
+            use ocio_gen::config::ValidationError::*;
+            match config.validate() {
+                Err(DuplicateColorSpace(name)) => {
+                    status
+                        .lock_mut()
+                        .log_error(format!("There is a duplicate color space in the config: \"{}\" \
+                                            \nNote: this may be a conflict with the built-ins of the \
+                                            config template, rather that two visible duplicates in \
+                                            your own colorspace list.", name));
+                    return;
+                },
+                Err(DuplicateDisplay(name)) => {
+                    status
+                        .lock_mut()
+                        .log_error(format!("There is a duplicate display in the config: \"{}\" \
+                                            \nNote: this may be a conflict with the built-ins of the \
+                                            config template, rather that two visible duplicates in \
+                                            your own colorspace list.", name));
+                    return;
+                },
+                Err(DuplicateRole(name)) => {
+                    status
+                        .lock_mut()
+                        .log_error(format!("There is a duplicate role in the config: \"{}\"", name));
+                    return;
+                },
+                Err(DuplicateLook(name)) => {
+                    status
+                        .lock_mut()
+                        .log_error(format!("There is a duplicate look in the config: \"{}\"", name));
+                    return;
+                },
+                Err(ReferenceToAbsentColorSpace(name)) => {
+                    status
+                        .lock_mut()
+                        .log_error(format!("There is a reference to a non-existent colorspace in the config: \"{}\"", name));
+                    return;
+                },
+                Ok(()) => {},
+            }
+
             // Write it out to disk.
             status
                 .lock_mut()
