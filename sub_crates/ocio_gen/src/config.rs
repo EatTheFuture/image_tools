@@ -554,7 +554,7 @@ pub fn write_transform_yaml<W: std::io::Write>(
                 if i != 0 {
                     matrix_string.push_str(", ");
                 }
-                matrix_string.push_str(&n.to_string());
+                matrix_string.push_str(&format!("{:.7}", n));
             }
             format!("!<MatrixTransform> {{ matrix: [{}] }}", matrix_string)
         }

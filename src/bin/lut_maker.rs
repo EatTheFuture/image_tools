@@ -4,7 +4,6 @@ use std::{path::Path, sync::Arc};
 
 use eframe::{egui, epi};
 
-use sensor_analysis::invert_transfer_function_lut;
 use shared_data::Shared;
 
 use lib::{ImageInfo, SourceImage};
@@ -651,22 +650,20 @@ impl AppMain {
                 .lock_mut()
                 .set_progress(format!("Saving LUT: {}", path.to_string_lossy(),), 0.0);
 
-            // Invert the tables if needed.
-            // TODO: account for min/max range properly when inverting.
-            let tables = if inverse {
-                [
-                    invert_transfer_function_lut(&tables[0]),
-                    invert_transfer_function_lut(&tables[1]),
-                    invert_transfer_function_lut(&tables[2]),
-                ]
-            } else {
-                tables
+            let mut lut = colorbox::lut::Lut1D {
+                ranges: vec![(range_min, range_max)],
+                tables: tables.to_vec(),
             };
+
+            // Invert the tables if needed.
+            if inverse {
+                lut = lut.resample_inverted(1024);
+            }
 
             colorbox::formats::cube::write_1d(
                 &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
-                [(range_min, range_max); 3],
-                [&tables[0], &tables[1], &tables[2]],
+                [(lut.ranges[0].0, lut.ranges[0].1); 3],
+                [&lut.tables[0], &lut.tables[1], &lut.tables[2]],
             )
             .unwrap();
         });

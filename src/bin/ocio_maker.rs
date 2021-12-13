@@ -634,11 +634,13 @@ impl AppMain {
                         .replace("]", "\\]")
                         .replace("}", "\\}");
                     let mut transforms = Vec::new();
-                    if let Some((lut, ref path, inverse)) = space.transfer_lut {
-                        let output_file =
-                            output_files
-                                .entry(path.into())
-                                .or_insert(OutputFile::Lut1D {
+                    let mut transforms_inv = Vec::new();
+
+                    let lut_data = space.transfer_lut.map(|(lut, ref path, inverse)| {(
+                        output_files
+                            .entry(path.into())
+                            .or_insert(
+                                OutputFile::Lut1D {
                                     output_path: output_dir.join(format!(
                                         "omkr_{}__{}",
                                         i,
@@ -648,33 +650,60 @@ impl AppMain {
                                             .unwrap_or("lut.cube")
                                     )),
                                     lut: lut.clone(),
-                                });
+                                }
+                            ),
+                        inverse
+                    )});
+
+                    let matrix_pair = space.chroma_space.chromaticities().map(|chroma| {
+                        let forward = colorbox::matrix_compose!(
+                            matrix::rgb_to_xyz_matrix(chroma),
+                            matrix::xyz_chromatic_adaptation_matrix(
+                                chroma.w,
+                                ref_chroma.w,
+                                matrix::AdaptationMethod::Bradford,
+                            ),
+                            matrix::xyz_to_rgb_matrix(ref_chroma),
+                        );
+                        let inverse = colorbox::matrix::invert(forward).unwrap();
+                        (
+                            colorbox::matrix::to_4x4_f32(forward),
+                            colorbox::matrix::to_4x4_f32(inverse),
+                        )
+                    });
+
+                    // "To Reference" transform.
+                    if let Some((ref lut_file, inverse)) = lut_data {
                         transforms.push(Transform::FileTransform {
-                            src: output_file.path().file_name().unwrap().into(),
+                            src: lut_file.path().file_name().unwrap().into(),
                             interpolation: Interpolation::Linear,
                             direction_inverse: inverse,
                         });
                     }
-                    if let Some(chroma) = space.chroma_space.chromaticities() {
-                        transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
-                            colorbox::matrix_compose!(
-                                matrix::rgb_to_xyz_matrix(chroma),
-                                matrix::xyz_chromatic_adaptation_matrix(
-                                    chroma.w,
-                                    ref_chroma.w,
-                                    matrix::AdaptationMethod::Bradford,
-                                ),
-                                matrix::xyz_to_rgb_matrix(ref_chroma),
-                            ),
-                        )));
+                    if let Some((matrix_forward, _)) = matrix_pair {
+                        transforms.push(Transform::MatrixTransform(matrix_forward));
                     }
 
+                    // "From Reference" transform.
+                    if let Some((_, matrix_backward)) = matrix_pair {
+                        transforms_inv.push(Transform::MatrixTransform(matrix_backward));
+                    }
+                    if let Some((ref lut_file, inverse)) = lut_data {
+                        transforms_inv.push(Transform::FileTransform {
+                            src: lut_file.path().file_name().unwrap().into(),
+                            interpolation: Interpolation::Linear,
+                            direction_inverse: !inverse,
+                        });
+                    }
+
+                    // Create the colorspace.
                     config.colorspaces.push(ColorSpace {
                         name: space_name.clone(),
                         family: "IDT".into(),
                         bitdepth: Some(BitDepth::F32),
                         isdata: Some(false),
                         to_reference: transforms,
+                        from_reference: transforms_inv,
                         ..ColorSpace::default()
                     });
 
