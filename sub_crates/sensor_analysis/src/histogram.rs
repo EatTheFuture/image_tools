@@ -4,6 +4,15 @@ pub struct Histogram {
     pub buckets: Vec<usize>,
 }
 
+impl Default for Histogram {
+    fn default() -> Histogram {
+        Histogram {
+            total_samples: 0,
+            buckets: Vec::new(),
+        }
+    }
+}
+
 impl Histogram {
     /// Builds a histogram from any iterator yielding items than can be converted to `usize`.
     ///

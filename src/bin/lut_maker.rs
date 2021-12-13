@@ -1,12 +1,16 @@
 #![windows_subsystem = "windows"] // Don't go through console on Windows.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use eframe::{egui, epi};
 
+use sensor_analysis::Histogram;
 use shared_data::Shared;
 
-use lib::{ImageInfo, SourceImage};
+use lib::ImageInfo;
 
 fn main() {
     clap::App::new("LUT Maker")
@@ -18,18 +22,16 @@ fn main() {
     eframe::run_native(
         Box::new(AppMain {
             job_queue: job_queue::JobQueue::new(),
+            last_opened_directory: None,
 
-            image_sets: Shared::new(Vec::new()),
+            bracket_image_sets: Shared::new(Vec::new()),
             transfer_function_tables: Shared::new(None),
 
             ui_data: Shared::new(UIData {
-                active_image_set: 0,
-                selected_image_index: 0,
-                rounds: 2000,
+                selected_bracket_image_index: (0, 0),
+                bracket_thumbnail_sets: Vec::new(),
 
-                thumbnail_sets: vec![vec![]],
-                image_preview_tex: None,
-                image_preview_tex_needs_update: false,
+                rounds: 2000,
                 transfer_function_preview: None,
             }),
         }),
@@ -42,8 +44,9 @@ fn main() {
 
 struct AppMain {
     job_queue: job_queue::JobQueue,
+    last_opened_directory: Option<PathBuf>,
 
-    image_sets: Shared<Vec<Vec<SourceImage>>>,
+    bracket_image_sets: Shared<Vec<Vec<([Histogram; 3], ImageInfo)>>>,
     transfer_function_tables: Shared<Option<([Vec<f32>; 3], f32, f32)>>, // (table, x_min, x_max)
 
     ui_data: Shared<UIData>,
@@ -54,21 +57,16 @@ struct AppMain {
 /// Nothing other than the UI should lock this data for non-trivial
 /// amounts of time.
 struct UIData {
-    // Widgets.
-    active_image_set: usize,
-    selected_image_index: usize,
-    rounds: usize,
-
-    // Other stuff.
-    thumbnail_sets: Vec<
+    selected_bracket_image_index: (usize, usize), // (set index, image index)
+    bracket_thumbnail_sets: Vec<
         Vec<(
             (Vec<egui::Color32>, usize, usize),
             Option<egui::TextureId>,
             ImageInfo,
         )>,
     >,
-    image_preview_tex: Option<(egui::TextureId, usize, usize)>,
-    image_preview_tex_needs_update: bool,
+
+    rounds: usize,
     transfer_function_preview: Option<([Vec<(f32, f32)>; 3], f32)>, // (curves, error)
 }
 
@@ -96,10 +94,22 @@ impl epi::App for AppMain {
 
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
         let job_count = self.job_queue.job_count();
+        let total_bracket_images: usize = self
+            .ui_data
+            .lock()
+            .bracket_thumbnail_sets
+            .iter()
+            .map(|s| s.len())
+            .sum();
 
         // File dialogs used in the UI.
+        let mut working_dir = self
+            .last_opened_directory
+            .clone()
+            .unwrap_or_else(|| "".into());
         let add_images_dialog = rfd::FileDialog::new()
             .set_title("Add Images")
+            .set_directory(&working_dir)
             .add_filter(
                 "All Images",
                 &[
@@ -113,6 +123,7 @@ impl epi::App for AppMain {
             .add_filter("png", &["png", "PNG"]);
         let save_lut_dialog = rfd::FileDialog::new()
             .set_title("Save LUT")
+            .set_directory(&working_dir)
             .add_filter(".cube", &["cube", "CUBE"]);
 
         //----------------
@@ -148,6 +159,11 @@ impl epi::App for AppMain {
                 {
                     if let Some(paths) = add_images_dialog.clone().pick_files() {
                         self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
+                        if let Some(parent) =
+                            paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
+                        {
+                            working_dir = parent;
+                        }
                     }
                 }
                 // let mut remove_i = None; // Temp to store index of an image to remove.
@@ -233,16 +249,28 @@ impl epi::App for AppMain {
                 // ui.add(egui::widgets::Separator::default().spacing(16.0));
 
                 // Image thumbnails.
+                let mut remove_i = (None, None); // (set index, image index)
                 egui::containers::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let ui_data = &mut *self.ui_data.lock_mut();
-                        let thumbnail_sets = &mut ui_data.thumbnail_sets;
-                        let active_image_set = &mut ui_data.active_image_set;
-                        let selected_image_index = &mut ui_data.selected_image_index;
+                        let bracket_thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
+                        let (ref mut set_index, ref mut image_index) =
+                            &mut ui_data.selected_bracket_image_index;
 
-                        for set_i in 0..thumbnail_sets.len() {
-                            let set = &mut thumbnail_sets[set_i];
+                        for set_i in 0..bracket_thumbnail_sets.len() {
+                            ui.add_space(16.0);
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Image Set {}", set_i + 1));
+                                if ui
+                                    .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
+                                    .clicked()
+                                {
+                                    remove_i = (Some(set_i), None);
+                                }
+                            });
+                            ui.add_space(4.0);
+                            let set = &mut bracket_thumbnail_sets[set_i];
                             for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
                                 set.iter_mut().enumerate()
                             {
@@ -265,12 +293,12 @@ impl epi::App for AppMain {
                                                 tex_id.unwrap(),
                                                 egui::Vec2::new(display_width, display_height),
                                             )
-                                            .selected(img_i == *selected_image_index),
+                                            .selected(set_i == *set_index && img_i == *image_index),
                                         )
                                         .clicked()
                                     {
-                                        *selected_image_index = img_i;
-                                        // self.compute_image_preview(img_i);
+                                        *set_index = set_i;
+                                        *image_index = img_i;
                                     }
                                     if ui
                                         .add_enabled(
@@ -279,16 +307,17 @@ impl epi::App for AppMain {
                                         )
                                         .clicked()
                                     {
-                                        // remove_i = Some(img_i);
+                                        remove_i = (Some(set_i), Some(img_i));
                                     }
                                 });
                             }
                         }
                     });
-
-                // if let Some(img_i) = remove_i {
-                //     self.remove_image(img_i);
-                // }
+                match remove_i {
+                    (Some(set_i), Some(img_i)) => self.remove_bracket_image(set_i, img_i),
+                    (Some(set_i), None) => self.remove_bracket_image_set(set_i),
+                    _ => {}
+                }
             });
 
         // Main area.
@@ -297,7 +326,7 @@ impl epi::App for AppMain {
                 // Estimate transfer function button.
                 if ui
                     .add_enabled(
-                        job_count == 0,
+                        job_count == 0 && total_bracket_images > 0,
                         egui::widgets::Button::new("Estimate Transfer Function"),
                     )
                     .clicked()
@@ -314,26 +343,34 @@ impl epi::App for AppMain {
                         .prefix("Estimation rounds: "),
                 );
 
+                ui.add_space(16.0);
+
                 if ui
                     .add_enabled(
                         self.transfer_function_tables.lock().is_some() && job_count == 0,
-                        egui::widgets::Button::new("Export 'linear -> gamma' LUT..."),
+                        egui::widgets::Button::new("Export 'from linear' LUT..."),
                     )
                     .clicked()
                 {
                     if let Some(path) = save_lut_dialog.clone().save_file() {
-                        self.save_lut(path, false);
+                        self.save_lut(&path, false);
+                        if let Some(parent) = path.parent().map(|p| p.into()) {
+                            working_dir = parent;
+                        }
                     }
                 }
                 if ui
                     .add_enabled(
                         self.transfer_function_tables.lock().is_some() && job_count == 0,
-                        egui::widgets::Button::new("Export 'gamma -> linear' LUT..."),
+                        egui::widgets::Button::new("Export 'to linear' LUT..."),
                     )
                     .clicked()
                 {
                     if let Some(path) = save_lut_dialog.clone().save_file() {
-                        self.save_lut(path, true);
+                        self.save_lut(&path, true);
+                        if let Some(parent) = path.parent().map(|p| p.into()) {
+                            working_dir = parent;
+                        }
                     }
                 }
             });
@@ -373,6 +410,8 @@ impl epi::App for AppMain {
             }
         });
 
+        self.last_opened_directory = Some(working_dir);
+
         //----------------
         // Processing.
 
@@ -392,15 +431,15 @@ impl epi::App for AppMain {
 impl AppMain {
     fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
-        let image_sets = self.image_sets.clone_ref();
+        let bracket_image_sets = self.bracket_image_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
 
             // Create a new image and thumbnail set.
-            image_sets.lock_mut().push(Vec::new());
-            ui_data.lock_mut().thumbnail_sets.push(Vec::new());
+            bracket_image_sets.lock_mut().push(Vec::new());
+            ui_data.lock_mut().bracket_thumbnail_sets.push(Vec::new());
 
             // Load and add images.
             for (img_i, path) in image_paths.drain(..).enumerate() {
@@ -433,9 +472,9 @@ impl AppMain {
                 };
 
                 // Ensure it has the same resolution as the other images.
-                if !image_sets.lock().last().unwrap().is_empty() {
-                    let needed_width = image_sets.lock().last().unwrap()[0].image.width();
-                    let needed_height = image_sets.lock().last().unwrap()[0].image.height();
+                if !bracket_image_sets.lock().last().unwrap().is_empty() {
+                    let needed_width = bracket_image_sets.lock().last().unwrap()[0].1.width as u32;
+                    let needed_height = bracket_image_sets.lock().last().unwrap()[0].1.height as u32;
                     if img.image.width() != needed_width || img.image.height() != needed_height {
                         status.lock_mut().log_error(format!(
                             "Image has a different resolution that the others in the set: \"{}\".  Not loading.  Note: all images in a set must have the same resolution.",
@@ -448,7 +487,7 @@ impl AppMain {
                 // Check if we got exposure data from it.
                 if img.info.exposure.is_none() {
                     status.lock_mut().log_warning(format!(
-                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  HDRI merging will not work correctly.",
+                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  Transfer function estimation will not work correctly.",
                         path.to_string_lossy()
                     ));
                 }
@@ -460,18 +499,21 @@ impl AppMain {
                     None,
                 );
 
+                // Compute histograms.
+                let histograms = lib::job_helpers::compute_image_histograms(&img, 256);
+
                 // Add image and thumbnail to our lists.
                 {
                     let mut ui_data = ui_data.lock_mut();
-                    let set = ui_data.thumbnail_sets.last_mut().unwrap();
+                    let set = ui_data.bracket_thumbnail_sets.last_mut().unwrap();
                     set.push((thumbnail, None, img.info.clone()));
                     set.sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
                 }
                 {
-                    let mut image_sets = image_sets.lock_mut();
-                    let set = image_sets.last_mut().unwrap();
-                    set.push(img);
-                    set.sort_unstable_by(|a, b| a.info.exposure.partial_cmp(&b.info.exposure).unwrap());
+                    let mut bracket_image_sets = bracket_image_sets.lock_mut();
+                    let set = bracket_image_sets.last_mut().unwrap();
+                    set.push((histograms, img.info.clone()));
+                    set.sort_unstable_by(|a, b| a.1.exposure.partial_cmp(&b.1.exposure).unwrap());
                 }
             }
         });
@@ -480,10 +522,77 @@ impl AppMain {
         // self.compute_image_preview(selected_image_index);
     }
 
-    fn estimate_transfer_function(&self) {
-        use sensor_analysis::{emor, estimate_sensor_floor_ceiling, ExposureMapping, Histogram};
+    fn remove_bracket_image(&mut self, set_index: usize, image_index: usize) {
+        if set_index >= self.bracket_image_sets.lock().len() {
+            return;
+        }
+        let image_count = self.bracket_image_sets.lock()[set_index].len();
+        if image_index >= image_count {
+            return;
+        }
 
-        let image_sets = self.image_sets.clone_ref();
+        // If there won't be any images after this, just remove the
+        // whole set.
+        if image_count <= 1 {
+            self.remove_bracket_image_set(set_index);
+            return;
+        }
+
+        // Remove the image.
+        self.bracket_image_sets.lock_mut()[set_index].remove(image_index);
+
+        // Remove the thumbnail.
+        let mut ui_data = self.ui_data.lock_mut();
+        let thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
+        if set_index < thumbnail_sets.len() && image_index < thumbnail_sets[set_index].len() {
+            thumbnail_sets[set_index].remove(image_index);
+        }
+
+        // Adjust the selected image index appropriately.
+        if ui_data.selected_bracket_image_index.0 == set_index
+            && ui_data.selected_bracket_image_index.1 > image_index
+        {
+            ui_data.selected_bracket_image_index.1 -= 1;
+        }
+    }
+
+    fn remove_bracket_image_set(&mut self, set_index: usize) {
+        {
+            // Remove the image set.
+            let mut image_sets = self.bracket_image_sets.lock_mut();
+            if set_index < image_sets.len() {
+                image_sets.remove(set_index);
+            }
+        }
+        {
+            // Remove the thumbnail set.
+            let mut ui_data = self.ui_data.lock_mut();
+            let thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
+            if set_index < thumbnail_sets.len() {
+                thumbnail_sets.remove(set_index);
+            }
+
+            // Adjust the selected image index appropriately.
+            if set_index > ui_data.bracket_thumbnail_sets.len() {
+                let new_set_index = ui_data.bracket_thumbnail_sets.len().saturating_sub(1);
+                let new_image_index = ui_data
+                    .bracket_thumbnail_sets
+                    .get(new_set_index)
+                    .map(|s| s.len().saturating_sub(1))
+                    .unwrap_or(0);
+                ui_data.selected_bracket_image_index = (new_set_index, new_image_index);
+            } else if set_index == ui_data.selected_bracket_image_index.0 {
+                ui_data.selected_bracket_image_index.1 = 0;
+            } else if set_index < ui_data.selected_bracket_image_index.0 {
+                ui_data.selected_bracket_image_index.0 -= 1;
+            }
+        }
+    }
+
+    fn estimate_transfer_function(&self) {
+        use sensor_analysis::{emor, estimate_sensor_floor_ceiling, ExposureMapping};
+
+        let bracket_image_sets = self.bracket_image_sets.clone_ref();
         let transfer_function_tables = self.transfer_function_tables.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
@@ -491,31 +600,17 @@ impl AppMain {
             .add_job("Estimate Transfer Function", move |status| {
                 let total_rounds = ui_data.lock().rounds;
 
-                // Compute histograms.
+                // Collect histograms.
                 status
                     .lock_mut()
-                    .set_progress(format!("Computing image histograms"), 0.0);
+                    .set_progress(format!("Collecting image histograms"), 0.0);
                 let mut histogram_sets: Vec<[Vec<(Histogram, f32)>; 3]> = Vec::new();
-                for images in image_sets.lock().iter() {
-                    let img_len = images.len();
+                for images in bracket_image_sets.lock().iter() {
                     let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
-                    for img_i in 0..img_len {
+                    for src_img in images.iter() {
                         for chan in 0..3 {
-                            if status.lock().is_canceled() {
-                                return;
-                            }
-                            let src_img = &images[img_i];
-                            if let Some(exposure) = src_img.info.exposure {
-                                histograms[chan].push((
-                                    Histogram::from_iter(
-                                        src_img
-                                            .image
-                                            .enumerate_pixels()
-                                            .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
-                                        256,
-                                    ),
-                                    exposure,
-                                ));
+                            if let Some(exposure) = src_img.1.exposure {
+                                histograms[chan].push((src_img.0[chan].clone(), exposure));
                             }
                         }
                     }
@@ -642,8 +737,9 @@ impl AppMain {
             });
     }
 
-    fn save_lut(&self, path: std::path::PathBuf, inverse: bool) {
+    fn save_lut(&self, path: &std::path::Path, inverse: bool) {
         let (tables, range_min, range_max) = self.transfer_function_tables.lock().clone().unwrap();
+        let path = path.to_path_buf();
 
         self.job_queue.add_job("Save LUT", move |status| {
             status

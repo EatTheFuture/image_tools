@@ -4,6 +4,8 @@ use eframe::egui;
 
 use colorbox::{formats, lut::Lut1D};
 
+use sensor_analysis::Histogram;
+
 use crate::{ImageInfo, SourceImage};
 
 #[derive(Debug, Copy, Clone)]
@@ -153,6 +155,24 @@ pub fn make_image_preview(
             resized_image.height() as usize,
         )
     }
+}
+
+pub fn compute_image_histograms(src_img: &SourceImage, bucket_count: usize) -> [Histogram; 3] {
+    let mut histograms = [
+        Histogram::default(),
+        Histogram::default(),
+        Histogram::default(),
+    ];
+    for chan in 0..3 {
+        histograms[chan] = Histogram::from_iter(
+            src_img
+                .image
+                .enumerate_pixels()
+                .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+            bucket_count,
+        );
+    }
+    histograms
 }
 
 pub fn load_1d_lut(path: &Path) -> Result<Lut1D, formats::ReadError> {
