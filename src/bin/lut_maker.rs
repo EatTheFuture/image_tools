@@ -25,11 +25,19 @@ fn main() {
             last_opened_directory: None,
 
             bracket_image_sets: Shared::new(Vec::new()),
+            lens_cap_images: Shared::new(Vec::new()),
             transfer_function_tables: Shared::new(None),
 
             ui_data: Shared::new(UIData {
+                image_view: ImageViewID::Bracketed,
+
                 selected_bracket_image_index: (0, 0),
                 bracket_thumbnail_sets: Vec::new(),
+
+                selected_lens_cap_image_index: 0,
+                lens_cap_thumbnails: Vec::new(),
+
+                noise_floor: None,
 
                 rounds: 2000,
                 transfer_function_preview: None,
@@ -47,6 +55,7 @@ struct AppMain {
     last_opened_directory: Option<PathBuf>,
 
     bracket_image_sets: Shared<Vec<Vec<([Histogram; 3], ImageInfo)>>>,
+    lens_cap_images: Shared<Vec<[Histogram; 3]>>,
     transfer_function_tables: Shared<Option<([Vec<f32>; 3], f32, f32)>>, // (table, x_min, x_max)
 
     ui_data: Shared<UIData>,
@@ -57,6 +66,8 @@ struct AppMain {
 /// Nothing other than the UI should lock this data for non-trivial
 /// amounts of time.
 struct UIData {
+    image_view: ImageViewID,
+
     selected_bracket_image_index: (usize, usize), // (set index, image index)
     bracket_thumbnail_sets: Vec<
         Vec<(
@@ -66,8 +77,32 @@ struct UIData {
         )>,
     >,
 
+    selected_lens_cap_image_index: usize,
+    lens_cap_thumbnails: Vec<(
+        (Vec<egui::Color32>, usize, usize),
+        Option<egui::TextureId>,
+        ImageInfo,
+    )>,
+
+    noise_floor: Option<(f32, f32, f32)>,
+
     rounds: usize,
     transfer_function_preview: Option<([Vec<(f32, f32)>; 3], f32)>, // (curves, error)
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ImageViewID {
+    Bracketed,
+    LensCap,
+}
+
+impl ImageViewID {
+    fn ui_text(&self) -> &'static str {
+        match *self {
+            ImageViewID::Bracketed => "Bracketed Exposures",
+            ImageViewID::LensCap => "Lens Cap Images",
+        }
+    }
 }
 
 impl epi::App for AppMain {
@@ -149,24 +184,28 @@ impl epi::App for AppMain {
             .min_width(200.0)
             .resizable(false)
             .show(ctx, |ui| {
-                // Image set add button.
-                if ui
-                    .add_enabled(
-                        job_count == 0,
-                        egui::widgets::Button::new("Add Image Set..."),
-                    )
-                    .clicked()
+                // View selector.
+                ui.add_space(4.0);
                 {
-                    if let Some(paths) = add_images_dialog.clone().pick_files() {
-                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
-                        if let Some(parent) =
-                            paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
-                        {
-                            working_dir = parent;
-                        }
-                    }
+                    let image_view = &mut self.ui_data.lock_mut().image_view;
+                    egui::ComboBox::from_id_source("Image View Selector")
+                        .width(200.0)
+                        .selected_text(format!("{}", image_view.ui_text()))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                image_view,
+                                ImageViewID::Bracketed,
+                                ImageViewID::Bracketed.ui_text(),
+                            );
+                            ui.selectable_value(
+                                image_view,
+                                ImageViewID::LensCap,
+                                ImageViewID::LensCap.ui_text(),
+                            );
+                        });
                 }
-                // let mut remove_i = None; // Temp to store index of an image to remove.
+
+                ui.add(egui::widgets::Separator::default().spacing(16.0));
 
                 // // Selected image info.
                 // // (Extra scope to contain ui_data's mutex guard.)
@@ -248,75 +287,190 @@ impl epi::App for AppMain {
 
                 // ui.add(egui::widgets::Separator::default().spacing(16.0));
 
-                // Image thumbnails.
-                let mut remove_i = (None, None); // (set index, image index)
-                egui::containers::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let ui_data = &mut *self.ui_data.lock_mut();
-                        let bracket_thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
-                        let (ref mut set_index, ref mut image_index) =
-                            &mut ui_data.selected_bracket_image_index;
-
-                        for set_i in 0..bracket_thumbnail_sets.len() {
-                            ui.add_space(16.0);
-                            ui.horizontal(|ui| {
-                                ui.label(format!("Image Set {}", set_i + 1));
-                                if ui
-                                    .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
-                                    .clicked()
+                let image_view = self.ui_data.lock().image_view;
+                match image_view {
+                    // Lens cap images.
+                    ImageViewID::LensCap => {
+                        // Image add button.
+                        if ui
+                            .add_enabled(
+                                job_count == 0,
+                                egui::widgets::Button::new("Add Lens Cap Image..."),
+                            )
+                            .clicked()
+                        {
+                            if let Some(paths) = add_images_dialog.clone().pick_files() {
+                                self.add_lens_cap_image_files(
+                                    paths.iter().map(|pathbuf| pathbuf.as_path()),
+                                );
+                                if let Some(parent) =
+                                    paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
                                 {
-                                    remove_i = (Some(set_i), None);
+                                    working_dir = parent;
                                 }
-                            });
-                            ui.add_space(4.0);
-                            let set = &mut bracket_thumbnail_sets[set_i];
-                            for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
-                                set.iter_mut().enumerate()
-                            {
-                                let display_height = 64.0;
-                                let display_width = display_height / *height as f32 * *width as f32;
-
-                                // Build thumbnail texture if it doesn't already exist.
-                                if tex_id.is_none() {
-                                    *tex_id = Some(
-                                        frame
-                                            .tex_allocator()
-                                            .alloc_srgba_premultiplied((*width, *height), &pixels),
-                                    );
-                                }
-
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .add(
-                                            egui::widgets::ImageButton::new(
-                                                tex_id.unwrap(),
-                                                egui::Vec2::new(display_width, display_height),
-                                            )
-                                            .selected(set_i == *set_index && img_i == *image_index),
-                                        )
-                                        .clicked()
-                                    {
-                                        *set_index = set_i;
-                                        *image_index = img_i;
-                                    }
-                                    if ui
-                                        .add_enabled(
-                                            job_count == 0,
-                                            egui::widgets::Button::new("🗙"),
-                                        )
-                                        .clicked()
-                                    {
-                                        remove_i = (Some(set_i), Some(img_i));
-                                    }
-                                });
                             }
                         }
-                    });
-                match remove_i {
-                    (Some(set_i), Some(img_i)) => self.remove_bracket_image(set_i, img_i),
-                    (Some(set_i), None) => self.remove_bracket_image_set(set_i),
-                    _ => {}
+
+                        // Image thumbnails.
+                        let mut remove_i = None;
+                        egui::containers::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let ui_data = &mut *self.ui_data.lock_mut();
+                                let thumbnails = &mut ui_data.lens_cap_thumbnails;
+                                let selected_image_index =
+                                    &mut ui_data.selected_lens_cap_image_index;
+
+                                for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
+                                    thumbnails.iter_mut().enumerate()
+                                {
+                                    let display_height = 64.0;
+                                    let display_width =
+                                        display_height / *height as f32 * *width as f32;
+
+                                    // Build thumbnail texture if it doesn't already exist.
+                                    if tex_id.is_none() {
+                                        *tex_id =
+                                            Some(frame.tex_allocator().alloc_srgba_premultiplied(
+                                                (*width, *height),
+                                                &pixels,
+                                            ));
+                                    }
+
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .add(
+                                                egui::widgets::ImageButton::new(
+                                                    tex_id.unwrap(),
+                                                    egui::Vec2::new(display_width, display_height),
+                                                )
+                                                .selected(img_i == *selected_image_index),
+                                            )
+                                            .clicked()
+                                        {
+                                            *selected_image_index = img_i;
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                job_count == 0,
+                                                egui::widgets::Button::new("🗙"),
+                                            )
+                                            .clicked()
+                                        {
+                                            remove_i = Some(img_i);
+                                        }
+                                    });
+                                }
+                            });
+                        if let Some(img_i) = remove_i {
+                            self.remove_lens_cap_image(img_i);
+                        }
+                    }
+
+                    // Bracketed exposure image sets.
+                    ImageViewID::Bracketed => {
+                        // Image set add button.
+                        if ui
+                            .add_enabled(
+                                job_count == 0,
+                                egui::widgets::Button::new("Add Image Set..."),
+                            )
+                            .clicked()
+                        {
+                            if let Some(paths) = add_images_dialog.clone().pick_files() {
+                                self.add_bracket_image_files(
+                                    paths.iter().map(|pathbuf| pathbuf.as_path()),
+                                );
+                                if let Some(parent) =
+                                    paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
+                                {
+                                    working_dir = parent;
+                                }
+                            }
+                        }
+
+                        // Image thumbnails.
+                        let mut remove_i = (None, None); // (set index, image index)
+                        egui::containers::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let ui_data = &mut *self.ui_data.lock_mut();
+                                let bracket_thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
+                                let (ref mut set_index, ref mut image_index) =
+                                    &mut ui_data.selected_bracket_image_index;
+
+                                for set_i in 0..bracket_thumbnail_sets.len() {
+                                    ui.add_space(16.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("Image Set {}", set_i + 1));
+                                        if ui
+                                            .add_enabled(
+                                                job_count == 0,
+                                                egui::widgets::Button::new("🗙"),
+                                            )
+                                            .clicked()
+                                        {
+                                            remove_i = (Some(set_i), None);
+                                        }
+                                    });
+                                    ui.add_space(4.0);
+                                    let set = &mut bracket_thumbnail_sets[set_i];
+                                    for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
+                                        set.iter_mut().enumerate()
+                                    {
+                                        let display_height = 64.0;
+                                        let display_width =
+                                            display_height / *height as f32 * *width as f32;
+
+                                        // Build thumbnail texture if it doesn't already exist.
+                                        if tex_id.is_none() {
+                                            *tex_id = Some(
+                                                frame.tex_allocator().alloc_srgba_premultiplied(
+                                                    (*width, *height),
+                                                    &pixels,
+                                                ),
+                                            );
+                                        }
+
+                                        ui.horizontal(|ui| {
+                                            if ui
+                                                .add(
+                                                    egui::widgets::ImageButton::new(
+                                                        tex_id.unwrap(),
+                                                        egui::Vec2::new(
+                                                            display_width,
+                                                            display_height,
+                                                        ),
+                                                    )
+                                                    .selected(
+                                                        set_i == *set_index
+                                                            && img_i == *image_index,
+                                                    ),
+                                                )
+                                                .clicked()
+                                            {
+                                                *set_index = set_i;
+                                                *image_index = img_i;
+                                            }
+                                            if ui
+                                                .add_enabled(
+                                                    job_count == 0,
+                                                    egui::widgets::Button::new("🗙"),
+                                                )
+                                                .clicked()
+                                            {
+                                                remove_i = (Some(set_i), Some(img_i));
+                                            }
+                                        });
+                                    }
+                                }
+                            });
+                        match remove_i {
+                            (Some(set_i), Some(img_i)) => self.remove_bracket_image(set_i, img_i),
+                            (Some(set_i), None) => self.remove_bracket_image_set(set_i),
+                            _ => {}
+                        }
+                    }
                 }
             });
 
@@ -417,19 +571,29 @@ impl epi::App for AppMain {
 
         // Collect dropped files.
         if !ctx.input().raw.dropped_files.is_empty() {
-            self.add_image_files(
-                ctx.input()
-                    .raw
-                    .dropped_files
-                    .iter()
-                    .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
-            );
+            let image_view = self.ui_data.lock().image_view;
+            match image_view {
+                ImageViewID::Bracketed => self.add_bracket_image_files(
+                    ctx.input()
+                        .raw
+                        .dropped_files
+                        .iter()
+                        .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
+                ),
+                ImageViewID::LensCap => self.add_lens_cap_image_files(
+                    ctx.input()
+                        .raw
+                        .dropped_files
+                        .iter()
+                        .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
+                ),
+            }
         }
     }
 }
 
 impl AppMain {
-    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
+    fn add_bracket_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let bracket_image_sets = self.bracket_image_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
@@ -517,9 +681,6 @@ impl AppMain {
                 }
             }
         });
-
-        // let selected_image_index = self.ui_data.lock().selected_image_index;
-        // self.compute_image_preview(selected_image_index);
     }
 
     fn remove_bracket_image(&mut self, set_index: usize, image_index: usize) {
@@ -586,6 +747,72 @@ impl AppMain {
             } else if set_index < ui_data.selected_bracket_image_index.0 {
                 ui_data.selected_bracket_image_index.0 -= 1;
             }
+        }
+    }
+
+    fn add_lens_cap_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
+        let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
+        let lens_cap_images = self.lens_cap_images.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue.add_job("Add Image(s)", move |status| {
+            let len = image_paths.len() as f32;
+
+            // Load and add images.
+            for (img_i, path) in image_paths.drain(..).enumerate() {
+                if status.lock().is_canceled() {
+                    break;
+                }
+
+                status.lock_mut().set_progress(
+                    format!("Loading: {}", path.to_string_lossy()),
+                    (img_i + 1) as f32 / len,
+                );
+
+                // Load image.
+                let img = match lib::job_helpers::load_image(&path) {
+                    Ok(img) => img,
+                    Err(lib::job_helpers::ImageLoadError::NoAccess) => {
+                        status.lock_mut().log_error(format!(
+                            "Unable to access file \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        return;
+                    }
+                    Err(lib::job_helpers::ImageLoadError::UnknownFormat) => {
+                        status.lock_mut().log_error(format!(
+                            "Unrecognized image file format: \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        return;
+                    }
+                };
+
+                // Make a thumbnail texture.
+                let thumbnail = lib::job_helpers::make_image_preview(&img, Some(128), None);
+
+                // Compute histograms.
+                let histograms = lib::job_helpers::compute_image_histograms(&img, 256);
+
+                // Add image and thumbnail to our lists.
+                ui_data
+                    .lock_mut()
+                    .lens_cap_thumbnails
+                    .push((thumbnail, None, img.info.clone()));
+                let mut lens_cap_images = lens_cap_images.lock_mut();
+                lens_cap_images.push(histograms);
+            }
+        });
+    }
+
+    fn remove_lens_cap_image(&self, image_index: usize) {
+        self.lens_cap_images.lock_mut().remove(image_index);
+
+        let mut ui_data = self.ui_data.lock_mut();
+        ui_data.lens_cap_thumbnails.remove(image_index);
+        if ui_data.selected_lens_cap_image_index > image_index {
+            ui_data.selected_lens_cap_image_index =
+                ui_data.selected_lens_cap_image_index.saturating_sub(1);
         }
     }
 
