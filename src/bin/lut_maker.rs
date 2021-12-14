@@ -30,6 +30,7 @@ fn main() {
 
             ui_data: Shared::new(UIData {
                 image_view: ImageViewID::Bracketed,
+                advanced_mode: false,
 
                 selected_bracket_image_index: (0, 0),
                 bracket_thumbnail_sets: Vec::new(),
@@ -37,8 +38,11 @@ fn main() {
                 selected_lens_cap_image_index: 0,
                 lens_cap_thumbnails: Vec::new(),
 
-                noise_floor: None,
+                sensor_floor: [0.0; 3],
+                sensor_ceiling: [1.0; 3],
 
+                transfer_function_type: TransferFunction::Estimated,
+                transfer_function_resolution: 4096,
                 rounds: 2000,
                 transfer_function_preview: None,
             }),
@@ -67,6 +71,7 @@ struct AppMain {
 /// amounts of time.
 struct UIData {
     image_view: ImageViewID,
+    advanced_mode: bool,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
     bracket_thumbnail_sets: Vec<
@@ -84,8 +89,11 @@ struct UIData {
         ImageInfo,
     )>,
 
-    noise_floor: Option<(f32, f32, f32)>,
+    sensor_floor: [f32; 3],
+    sensor_ceiling: [f32; 3],
 
+    transfer_function_type: TransferFunction,
+    transfer_function_resolution: usize,
     rounds: usize,
     transfer_function_preview: Option<([Vec<(f32, f32)>; 3], f32)>, // (curves, error)
 }
@@ -136,6 +144,7 @@ impl epi::App for AppMain {
             .iter()
             .map(|s| s.len())
             .sum();
+        let total_lens_cap_images: usize = self.ui_data.lock().lens_cap_thumbnails.len();
 
         // File dialogs used in the UI.
         let mut working_dir = self
@@ -477,28 +486,6 @@ impl epi::App for AppMain {
         // Main area.
         egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_top(|ui| {
-                // Estimate transfer function button.
-                if ui
-                    .add_enabled(
-                        job_count == 0 && total_bracket_images > 0,
-                        egui::widgets::Button::new("Estimate Transfer Function"),
-                    )
-                    .clicked()
-                {
-                    self.estimate_transfer_function();
-                }
-
-                // Rounds slider.
-                ui.add_enabled(
-                    job_count == 0,
-                    egui::widgets::DragValue::new(&mut self.ui_data.lock_mut().rounds)
-                        .clamp_range(100..=200000)
-                        .max_decimals(0)
-                        .prefix("Estimation rounds: "),
-                );
-
-                ui.add_space(16.0);
-
                 if ui
                     .add_enabled(
                         self.transfer_function_tables.lock().is_some() && job_count == 0,
@@ -531,6 +518,183 @@ impl epi::App for AppMain {
 
             ui.add(egui::widgets::Separator::default().spacing(12.0));
 
+            // Advanced/simple mode switch.
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut self.ui_data.lock_mut().advanced_mode, false, "Simple");
+                ui.radio_value(&mut self.ui_data.lock_mut().advanced_mode, true, "Advanced");
+            });
+            let advanced_mode = self.ui_data.lock().advanced_mode;
+
+            ui.add_space(4.0);
+
+            // Transfer function controls.
+            if !advanced_mode {
+                // Simple mode.
+                ui.horizontal(|ui| {
+                    // Rounds slider.
+                    ui.add_enabled(
+                        job_count == 0,
+                        egui::widgets::DragValue::new(&mut self.ui_data.lock_mut().rounds)
+                            .clamp_range(100..=200000)
+                            .max_decimals(0)
+                            .prefix("Estimation rounds: "),
+                    );
+
+                    // Estimate transfer function button.
+                    if ui
+                        .add_enabled(
+                            job_count == 0 && total_bracket_images > 0,
+                            egui::widgets::Button::new("Estimate Everything"),
+                        )
+                        .clicked()
+                    {
+                        self.estimate_everything();
+                    }
+                });
+            } else {
+                let area_width = ui.available_width();
+                let sub_area_width = (area_width / 3.0).min(230.0);
+
+                // Advanced mode.
+                ui.horizontal(|ui| {
+                    // Sensor floor controls.
+                    ui.vertical(|ui| {
+                        ui.set_width(sub_area_width);
+
+                        ui.horizontal(|ui| {
+                            ui.label("Sensor Noise Floor");
+                            ui.add_space(4.0);
+                            if ui
+                                .add_enabled(
+                                    job_count == 0
+                                        && (total_bracket_images > 0 || total_lens_cap_images > 0),
+                                    egui::widgets::Button::new("Estimate"),
+                                )
+                                .clicked()
+                            {
+                                todo!();
+                            }
+                        });
+                        ui.add_space(4.0);
+                        for (label, value) in ["R: ", "G: ", "B: "]
+                            .iter()
+                            .zip(self.ui_data.lock_mut().sensor_floor.iter_mut())
+                        {
+                            ui.horizontal(|ui| {
+                                ui.label(label);
+                                ui.add_enabled(
+                                    job_count == 0,
+                                    egui::widgets::Slider::new(value, 0.0..=1.0)
+                                        .max_decimals(5)
+                                        .min_decimals(5),
+                                );
+                            });
+                        }
+                    });
+
+                    ui.add_space(16.0);
+
+                    // Sensor ceiling controls.
+                    ui.vertical(|ui| {
+                        ui.set_width(sub_area_width);
+
+                        ui.horizontal(|ui| {
+                            ui.label("Sensor Ceiling");
+                            ui.add_space(4.0);
+                            if ui
+                                .add_enabled(
+                                    job_count == 0 && total_bracket_images > 0,
+                                    egui::widgets::Button::new("Estimate"),
+                                )
+                                .clicked()
+                            {
+                                todo!();
+                            }
+                        });
+                        ui.add_space(4.0);
+                        for (label, value) in ["R: ", "G: ", "B: "]
+                            .iter()
+                            .zip(self.ui_data.lock_mut().sensor_ceiling.iter_mut())
+                        {
+                            ui.horizontal(|ui| {
+                                ui.label(label);
+                                ui.add_enabled(
+                                    job_count == 0,
+                                    egui::widgets::Slider::new(value, 0.0..=1.0)
+                                        .max_decimals(5)
+                                        .min_decimals(5),
+                                );
+                            });
+                        }
+                    });
+
+                    ui.add_space(16.0);
+
+                    // Transfer curve controls.
+                    ui.vertical(|ui| {
+                        use TransferFunction::*;
+
+                        let mut ui_data = self.ui_data.lock_mut();
+
+                        ui.label("Transfer Curve");
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_source("Transfer Function Type")
+                                .width(150.0)
+                                .selected_text(format!(
+                                    "{}",
+                                    ui_data.transfer_function_type.ui_text()
+                                ))
+                                .show_ui(ui, |ui| {
+                                    for tf in TRANSFER_FUNCTIONS.iter() {
+                                        ui.selectable_value(
+                                            &mut ui_data.transfer_function_type,
+                                            *tf,
+                                            tf.ui_text(),
+                                        );
+                                    }
+                                });
+                        });
+                        ui.add_space(4.0);
+
+                        if ui_data.transfer_function_type == TransferFunction::Estimated {
+                            // Rounds slider.
+                            ui.add_enabled(
+                                job_count == 0,
+                                egui::widgets::DragValue::new(&mut ui_data.rounds)
+                                    .clamp_range(100..=200000)
+                                    .max_decimals(0)
+                                    .prefix("Rounds: "),
+                            );
+
+                            // Estimate transfer function button.
+                            if ui
+                                .add_enabled(
+                                    job_count == 0 && total_bracket_images > 0,
+                                    egui::widgets::Button::new("Estimate"),
+                                )
+                                .clicked()
+                            {
+                                todo!();
+                            }
+                        } else {
+                            ui.add_enabled(
+                                job_count == 0,
+                                egui::widgets::DragValue::new(
+                                    &mut ui_data.transfer_function_resolution,
+                                )
+                                .clamp_range(32..=(1 << 16))
+                                .max_decimals(0)
+                                .prefix("LUT resolution: "),
+                            );
+                        }
+                    });
+                });
+            }
+
+            ui.add_space(16.0);
+
+            // Transfer function graph.
             if let Some((transfer_function_curves, err)) =
                 &self.ui_data.lock().transfer_function_preview
             {
@@ -816,7 +980,7 @@ impl AppMain {
         }
     }
 
-    fn estimate_transfer_function(&self) {
+    fn estimate_everything(&self) {
         use sensor_analysis::{emor, estimate_sensor_floor_ceiling, ExposureMapping};
 
         let bracket_image_sets = self.bracket_image_sets.clone_ref();
@@ -990,5 +1154,92 @@ impl AppMain {
             )
             .unwrap();
         });
+    }
+}
+
+//-------------------------------------------------------------
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum TransferFunction {
+    Estimated,
+    CanonLog1,
+    CanonLog2,
+    CanonLog3,
+    HLG,
+    PQ,
+    Rec709,
+    SonySlog1,
+    SonySlog2,
+    SonySlog3,
+    sRGB,
+}
+
+const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
+    TransferFunction::Estimated,
+    TransferFunction::sRGB,
+    TransferFunction::Rec709,
+    TransferFunction::HLG,
+    TransferFunction::PQ,
+    TransferFunction::CanonLog1,
+    TransferFunction::CanonLog2,
+    TransferFunction::CanonLog3,
+    TransferFunction::SonySlog1,
+    TransferFunction::SonySlog2,
+    TransferFunction::SonySlog3,
+];
+
+impl TransferFunction {
+    fn to_linear(&self, n: f32) -> f32 {
+        use colorbox::transfer_functions::*;
+        use TransferFunction::*;
+        match *self {
+            Estimated => panic!("No built-in function for an estimated transfer function."),
+            CanonLog1 => canon_log1::to_linear(n),
+            CanonLog2 => canon_log2::to_linear(n),
+            CanonLog3 => canon_log3::to_linear(n),
+            HLG => hlg::to_linear(n),
+            PQ => pq::to_linear(n),
+            Rec709 => rec709::to_linear(n),
+            SonySlog1 => sony_slog1::to_linear(n),
+            SonySlog2 => sony_slog2::to_linear(n),
+            SonySlog3 => sony_slog3::to_linear(n),
+            sRGB => srgb::to_linear(n),
+        }
+    }
+
+    fn from_linear(&self, n: f32) -> f32 {
+        use colorbox::transfer_functions::*;
+        use TransferFunction::*;
+        match *self {
+            Estimated => panic!("No built-in function for an estimated transfer function."),
+            CanonLog1 => canon_log1::from_linear(n),
+            CanonLog2 => canon_log2::from_linear(n),
+            CanonLog3 => canon_log3::from_linear(n),
+            HLG => hlg::from_linear(n),
+            PQ => pq::from_linear(n),
+            Rec709 => rec709::from_linear(n),
+            SonySlog1 => sony_slog1::from_linear(n),
+            SonySlog2 => sony_slog2::from_linear(n),
+            SonySlog3 => sony_slog3::from_linear(n),
+            sRGB => srgb::from_linear(n),
+        }
+    }
+
+    fn ui_text(&self) -> &'static str {
+        use TransferFunction::*;
+        match *self {
+            Estimated => "Estimated",
+            CanonLog1 => "Canon Log",
+            CanonLog2 => "Canon Log 2",
+            CanonLog3 => "Canon Log 3",
+            HLG => "Rec.2100 - HLG",
+            PQ => "Rec.2100 - PQ",
+            Rec709 => "Rec.709",
+            SonySlog1 => "Sony S-Log",
+            SonySlog2 => "Sony S-Log2",
+            SonySlog3 => "Sony S-Log3",
+            sRGB => "sRGB",
+        }
     }
 }
