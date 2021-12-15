@@ -172,6 +172,7 @@ impl epi::App for AppMain {
         let save_lut_dialog = rfd::FileDialog::new()
             .set_title("Save LUT")
             .set_directory(&working_dir)
+            .add_filter(".spi1d", &["spi1d", "SPI1D"])
             .add_filter(".cube", &["cube", "CUBE"]);
 
         //----------------
@@ -1360,12 +1361,37 @@ impl AppMain {
             };
 
             // Write out the LUT.
-            colorbox::formats::cube::write_1d(
-                &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
-                [(lut.ranges[0].0, lut.ranges[0].1); 3],
-                [&lut.tables[0], &lut.tables[1], &lut.tables[2]],
-            )
-            .unwrap();
+            let path_ref = &path;
+            let write_result = (|| -> std::io::Result<()> {
+                match path_ref
+                    .extension()
+                    .map(|e| e.to_str())
+                    .flatten()
+                    .unwrap_or_else(|| "")
+                {
+                    "cube" | "CUBE" => colorbox::formats::cube::write_1d(
+                        &mut std::io::BufWriter::new(std::fs::File::create(path_ref)?),
+                        [(lut.ranges[0].0, lut.ranges[0].1); 3],
+                        [&lut.tables[0], &lut.tables[1], &lut.tables[2]],
+                    )?,
+
+                    // Default to spi1d in absence of a known extension.
+                    "spi1d" | "SPI1D" | _ => colorbox::formats::spi1d::write(
+                        &mut std::io::BufWriter::new(std::fs::File::create(path_ref)?),
+                        lut.ranges[0].0,
+                        lut.ranges[0].1,
+                        &[&lut.tables[0], &lut.tables[1], &lut.tables[2]],
+                    )?,
+                }
+                Ok(())
+            })();
+
+            if let Err(_) = write_result {
+                status.lock_mut().log_error(format!(
+                    "couldn't write to {}.  Please make sure the selected file path is writable.",
+                    path.to_string_lossy()
+                ));
+            }
         });
     }
 }
