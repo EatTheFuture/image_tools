@@ -32,6 +32,7 @@ fn main() {
                 image_view: ImageViewID::Bracketed,
                 advanced_mode: false,
                 show_from_linear_graph: false,
+                normalize_graph_view: true,
 
                 selected_bracket_image_index: (0, 0),
                 bracket_thumbnail_sets: Vec::new(),
@@ -74,6 +75,7 @@ struct UIData {
     image_view: ImageViewID,
     advanced_mode: bool,
     show_from_linear_graph: bool,
+    normalize_graph_view: bool,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
     bracket_thumbnail_sets: Vec<
@@ -646,7 +648,7 @@ impl epi::App for AppMain {
                         ui.add_space(4.0);
                         ui.add_enabled_ui(job_count == 0, |ui| {
                             egui::ComboBox::from_id_source("Transfer Function Type")
-                                .width(150.0)
+                                .width(180.0)
                                 .selected_text(format!(
                                     "{}",
                                     ui_data.transfer_function_type.ui_text()
@@ -717,6 +719,11 @@ impl epi::App for AppMain {
                         true,
                         "From Linear",
                     );
+                    ui.add_space(16.0);
+                    ui.checkbox(
+                        &mut self.ui_data.lock_mut().normalize_graph_view,
+                        "Stretch View",
+                    );
                 });
             }
 
@@ -763,7 +770,28 @@ impl epi::App for AppMain {
                     let res = ui_data.transfer_function_resolution;
                     let res_norm = 1.0 / (res - 1) as f32;
                     let function = ui_data.transfer_function_type;
-                    let mut plot = Plot::new("Transfer Function Graph").data_aspect(1.0);
+                    let aspect = if ui_data.normalize_graph_view {
+                        let range = (
+                            (0..3)
+                                .fold(std::f32::INFINITY, |a, b| {
+                                    function.to_linear(0.0, floor[b], ceiling[b]).min(a)
+                                })
+                                .max(0.0),
+                            (0..3).fold(-std::f32::INFINITY, |a, b| {
+                                function.to_linear(1.0, floor[b], ceiling[b]).max(a)
+                            }),
+                        );
+                        let extent = (range.1 - range.0).max(1.0).min(50000.0);
+                        if show_from_linear_graph {
+                            extent
+                        } else {
+                            1.0 / extent
+                        }
+                    } else {
+                        1.0
+                    };
+
+                    let mut plot = Plot::new("Transfer Function Graph").data_aspect(aspect);
                     for chan in 0..3 {
                         if show_from_linear_graph {
                             plot =
@@ -1373,6 +1401,8 @@ enum TransferFunction {
     CanonLog3,
     HLG,
     PQ,
+    PQ_108,
+    PQ_1000,
     Rec709,
     SonySlog1,
     SonySlog2,
@@ -1386,6 +1416,8 @@ const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
     TransferFunction::Rec709,
     TransferFunction::HLG,
     TransferFunction::PQ,
+    TransferFunction::PQ_108,
+    TransferFunction::PQ_1000,
     TransferFunction::CanonLog1,
     TransferFunction::CanonLog2,
     TransferFunction::CanonLog3,
@@ -1410,6 +1442,8 @@ impl TransferFunction {
             CanonLog3 => canon_log3::to_linear(n),
             HLG => hlg::to_linear(n),
             PQ => pq::to_linear(n),
+            PQ_108 => pq::to_linear(n) * (1.0 / 108.0),
+            PQ_1000 => pq::to_linear(n) * (1.0 / 1000.0),
             Rec709 => rec709::to_linear(n),
             SonySlog1 => sony_slog1::to_linear(n),
             SonySlog2 => sony_slog2::to_linear(n),
@@ -1431,6 +1465,8 @@ impl TransferFunction {
             CanonLog3 => canon_log3::from_linear(n),
             HLG => hlg::from_linear(n),
             PQ => pq::from_linear(n),
+            PQ_108 => pq::from_linear(n * 108.0),
+            PQ_1000 => pq::from_linear(n * 1000.0),
             Rec709 => rec709::from_linear(n),
             SonySlog1 => sony_slog1::from_linear(n),
             SonySlog2 => sony_slog2::from_linear(n),
@@ -1471,10 +1507,9 @@ impl TransferFunction {
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
             }
             HLG => (0.0, 1.0, 0.0, 1.0),
-            PQ => {
-                use pq::*;
-                (0.0, 1.0, 0.0, LUMINANCE_MAX)
-            }
+            PQ => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX),
+            PQ_108 => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX / 108.0),
+            PQ_1000 => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX / 1000.0),
             Rec709 => (0.0, 1.0, 0.0, 1.0),
             SonySlog1 => {
                 use sony_slog1::*;
@@ -1501,6 +1536,8 @@ impl TransferFunction {
             CanonLog3 => "Canon Log 3",
             HLG => "Rec.2100 - HLG",
             PQ => "Rec.2100 - PQ",
+            PQ_108 => "Rec.2100 - PQ - 108 nits",
+            PQ_1000 => "Rec.2100 - PQ - 1000 nits",
             Rec709 => "Rec.709",
             SonySlog1 => "Sony S-Log",
             SonySlog2 => "Sony S-Log2",
