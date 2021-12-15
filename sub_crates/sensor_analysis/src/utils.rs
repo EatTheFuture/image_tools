@@ -1,7 +1,7 @@
 pub(crate) type Curve = Vec<(f32, f32)>;
 
 #[inline(always)]
-pub(crate) fn lerp_slice(slice: &[f32], t: f32) -> f32 {
+pub fn lerp_slice(slice: &[f32], t: f32) -> f32 {
     let i1 = ((slice.len() - 1) as f32 * t) as usize;
     let alpha = ((slice.len() - 1) as f32 * t) - i1 as f32;
 

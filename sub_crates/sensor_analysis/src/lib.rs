@@ -3,7 +3,7 @@
 pub mod emor;
 mod exposure_mapping;
 mod histogram;
-mod utils;
+pub mod utils;
 
 pub use histogram::Histogram;
 

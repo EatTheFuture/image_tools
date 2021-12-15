@@ -738,11 +738,6 @@ impl epi::App for AppMain {
                 let show_from_linear_graph = ui_data.show_from_linear_graph;
                 let floor = ui_data.sensor_floor;
                 let ceiling = ui_data.sensor_ceiling;
-                let range = [
-                    ceiling[0] - floor[0],
-                    ceiling[1] - floor[1],
-                    ceiling[2] - floor[2],
-                ];
 
                 let colors = &[lib::colors::RED, lib::colors::GREEN, lib::colors::BLUE];
 
@@ -758,13 +753,18 @@ impl epi::App for AppMain {
                             ),
                         );
                         for i in 0..3 {
+                            let out_floor =
+                                lib::lerp_curve_at_y(&transfer_function_curves[i], floor[i]);
+                            let out_ceil =
+                                lib::lerp_curve_at_y(&transfer_function_curves[i], ceiling[i]);
+                            let out_range = out_ceil - out_floor;
                             plot = plot.line(
                                 Line::new(Values::from_values_iter(
                                     transfer_function_curves[i].iter().copied().map(|(x, y)| {
                                         if show_from_linear_graph {
-                                            Value::new(x, floor[i] + (y * range[i]))
+                                            Value::new((x - out_floor) / out_range, y)
                                         } else {
-                                            Value::new(floor[i] + (y * range[i]), x)
+                                            Value::new(y, (x - out_floor) / out_range)
                                         }
                                     }),
                                 ))
@@ -1314,20 +1314,33 @@ impl AppMain {
 
             // Compute the LUT.
             let lut = if function == TransferFunction::Estimated {
+                use sensor_analysis::utils::lerp_slice;
+
                 // Estimated function.
-                let (tables, range_min, range_max) =
-                    transfer_function_tables.lock().clone().unwrap();
+                let (tables, _, _) = transfer_function_tables.lock().clone().unwrap();
 
-                let lut = colorbox::lut::Lut1D {
-                    ranges: vec![(range_min, range_max)],
+                // Invert the lut to work in the right space.
+                let mut to_linear_lut = colorbox::lut::Lut1D {
+                    ranges: vec![(0.0, 1.0)],
                     tables: tables.to_vec(),
-                };
+                }
+                .resample_inverted(4096);
 
-                // Invert the LUT if needed.
+                // Apply the floor and ceiling.
+                for i in 0..3 {
+                    let floor = lerp_slice(&to_linear_lut.tables[i], floor[i]);
+                    let ceil = lerp_slice(&to_linear_lut.tables[i], ceiling[i]);
+                    let norm = 1.0 / (ceil - floor);
+                    for n in to_linear_lut.tables[i].iter_mut() {
+                        *n = (*n - floor) * norm;
+                    }
+                }
+
+                // Invert the LUT again if needed.
                 if to_linear {
-                    lut.resample_inverted(1024)
+                    to_linear_lut
                 } else {
-                    lut
+                    to_linear_lut.resample_inverted(4096)
                 }
             } else if to_linear {
                 // Fixed function, to linear.
