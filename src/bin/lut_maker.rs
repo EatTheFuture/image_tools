@@ -644,7 +644,7 @@ impl epi::App for AppMain {
 
                         ui.label("Transfer Curve");
                         ui.add_space(4.0);
-                        ui.horizontal(|ui| {
+                        ui.add_enabled_ui(job_count == 0, |ui| {
                             egui::ComboBox::from_id_source("Transfer Function Type")
                                 .width(150.0)
                                 .selected_text(format!(
@@ -659,7 +659,7 @@ impl epi::App for AppMain {
                                             tf.ui_text(),
                                         );
                                     }
-                                });
+                                })
                         });
                         ui.add_space(4.0);
 
@@ -1163,7 +1163,7 @@ impl AppMain {
                 // Compute exposure mappings.
                 status
                     .lock_mut()
-                    .set_progress(format!("Computing exposure mappings"), 0.2);
+                    .set_progress(format!("Computing exposure mappings"), 0.0);
                 let mut mappings = Vec::new();
                 for histograms in histogram_sets.iter() {
                     for chan in 0..histograms.len() {
@@ -1199,7 +1199,7 @@ impl AppMain {
                             round_i * rounds_per_update,
                             total_rounds
                         ),
-                        0.3,
+                        (round_i * rounds_per_update) as f32 / total_rounds as f32,
                     );
                     if status.lock().is_canceled() {
                         return;
