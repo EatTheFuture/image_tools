@@ -221,14 +221,7 @@ impl epi::App for AppMain {
                     ui.add_space(8.0);
 
                     // Graphing colors.
-                    const WHITE: Color32 = Color32::from_rgba_premultiplied(220, 220, 220, 0);
-                    const GRAY: Color32 = Color32::from_rgba_premultiplied(128, 128, 128, 0);
-                    const RED: Color32 = Color32::from_rgba_premultiplied(220, 20, 20, 0);
-                    const GREEN: Color32 = Color32::from_rgba_premultiplied(20, 220, 20, 0);
-                    const BLUE: Color32 = Color32::from_rgba_premultiplied(20, 20, 220, 0);
-                    const CYAN: Color32 = Color32::from_rgba_premultiplied(10, 180, 180, 0);
-                    const MAGENTA: Color32 = Color32::from_rgba_premultiplied(220, 20, 220, 0);
-                    const YELLOW: Color32 = Color32::from_rgba_premultiplied(220, 220, 20, 0);
+                    use lib::colors::*;
 
                     // Chromaticity space.
                     ui.horizontal(|ui| {

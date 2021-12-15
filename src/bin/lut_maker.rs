@@ -32,7 +32,6 @@ fn main() {
                 image_view: ImageViewID::Bracketed,
                 advanced_mode: false,
                 show_from_linear_graph: false,
-                normalize_graph_view: true,
 
                 selected_bracket_image_index: (0, 0),
                 bracket_thumbnail_sets: Vec::new(),
@@ -45,6 +44,7 @@ fn main() {
 
                 transfer_function_type: TransferFunction::Estimated,
                 transfer_function_resolution: 4096,
+                normalize_transfer_function: false,
                 rounds: 2000,
                 transfer_function_preview: None,
             }),
@@ -75,7 +75,6 @@ struct UIData {
     image_view: ImageViewID,
     advanced_mode: bool,
     show_from_linear_graph: bool,
-    normalize_graph_view: bool,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
     bracket_thumbnail_sets: Vec<
@@ -98,6 +97,7 @@ struct UIData {
 
     transfer_function_type: TransferFunction,
     transfer_function_resolution: usize,
+    normalize_transfer_function: bool,
     rounds: usize,
     transfer_function_preview: Option<([Vec<(f32, f32)>; 3], f32)>, // (curves, error)
 }
@@ -536,7 +536,7 @@ impl epi::App for AppMain {
             });
             let advanced_mode = self.ui_data.lock().advanced_mode;
 
-            ui.add_space(4.0);
+            ui.add_space(16.0);
 
             // Transfer function controls.
             if !advanced_mode {
@@ -698,6 +698,13 @@ impl epi::App for AppMain {
                                 .max_decimals(0)
                                 .prefix("LUT resolution: "),
                             );
+                            ui.add_enabled(
+                                job_count == 0,
+                                egui::widgets::Checkbox::new(
+                                    &mut ui_data.normalize_transfer_function,
+                                    "Normalize",
+                                ),
+                            );
                         }
                     });
                 });
@@ -720,11 +727,6 @@ impl epi::App for AppMain {
                         true,
                         "From Linear",
                     );
-                    ui.add_space(16.0);
-                    ui.checkbox(
-                        &mut self.ui_data.lock_mut().normalize_graph_view,
-                        "Stretch View",
-                    );
                 });
             }
 
@@ -742,6 +744,8 @@ impl epi::App for AppMain {
                     ceiling[2] - floor[2],
                 ];
 
+                let colors = &[lib::colors::RED, lib::colors::GREEN, lib::colors::BLUE];
+
                 if ui_data.transfer_function_type == TransferFunction::Estimated {
                     // Estimated curve.
                     if let Some((transfer_function_curves, err)) =
@@ -754,63 +758,74 @@ impl epi::App for AppMain {
                             ),
                         );
                         for i in 0..3 {
-                            plot = plot.line(Line::new(Values::from_values_iter(
-                                transfer_function_curves[i].iter().copied().map(|(x, y)| {
-                                    if show_from_linear_graph {
-                                        Value::new(x, floor[i] + (y * range[i]))
-                                    } else {
-                                        Value::new(floor[i] + (y * range[i]), x)
-                                    }
-                                }),
-                            )));
+                            plot = plot.line(
+                                Line::new(Values::from_values_iter(
+                                    transfer_function_curves[i].iter().copied().map(|(x, y)| {
+                                        if show_from_linear_graph {
+                                            Value::new(x, floor[i] + (y * range[i]))
+                                        } else {
+                                            Value::new(floor[i] + (y * range[i]), x)
+                                        }
+                                    }),
+                                ))
+                                .color(colors[i]),
+                            );
                         }
                         ui.add(plot);
                     }
                 } else {
                     // Fixed curve.
+                    let normalize = ui_data.normalize_transfer_function;
                     let res = ui_data.transfer_function_resolution;
                     let res_norm = 1.0 / (res - 1) as f32;
                     let function = ui_data.transfer_function_type;
-                    let aspect = if ui_data.normalize_graph_view {
-                        let range = (
-                            (0..3)
-                                .fold(std::f32::INFINITY, |a, b| {
-                                    function.to_linear(0.0, floor[b], ceiling[b]).min(a)
-                                })
-                                .max(0.0),
-                            (0..3).fold(-std::f32::INFINITY, |a, b| {
-                                function.to_linear(1.0, floor[b], ceiling[b]).max(a)
-                            }),
-                        );
-                        let extent = (range.1 - range.0).max(1.0).min(50000.0);
-                        if show_from_linear_graph {
-                            extent
-                        } else {
-                            1.0 / extent
-                        }
-                    } else {
-                        1.0
-                    };
 
-                    let mut plot = Plot::new("Transfer Function Graph").data_aspect(aspect);
+                    let mut plot = Plot::new("Transfer Function Graph").data_aspect(1.0);
                     for chan in 0..3 {
                         if show_from_linear_graph {
-                            plot =
-                                plot.line(Line::new(Values::from_values_iter((0..res).map(|i| {
-                                    let a = function.to_linear(0.0, floor[chan], ceiling[chan]);
-                                    let b = function.to_linear(1.0, floor[chan], ceiling[chan]);
+                            plot = plot.line(
+                                Line::new(Values::from_values_iter((0..res).map(|i| {
+                                    let a = function.to_linear_fc(
+                                        0.0,
+                                        floor[chan],
+                                        ceiling[chan],
+                                        normalize,
+                                    );
+                                    let b = function.to_linear_fc(
+                                        1.0,
+                                        floor[chan],
+                                        ceiling[chan],
+                                        normalize,
+                                    );
                                     let x = a + (i as f32 * res_norm * (b - a));
                                     Value::new(
                                         x,
-                                        function.from_linear(x, floor[chan], ceiling[chan]),
+                                        function.from_linear_fc(
+                                            x,
+                                            floor[chan],
+                                            ceiling[chan],
+                                            normalize,
+                                        ),
                                     )
-                                }))));
+                                })))
+                                .color(colors[chan]),
+                            );
                         } else {
-                            plot =
-                                plot.line(Line::new(Values::from_values_iter((0..res).map(|i| {
+                            plot = plot.line(
+                                Line::new(Values::from_values_iter((0..res).map(|i| {
                                     let x = i as f32 * res_norm;
-                                    Value::new(x, function.to_linear(x, floor[chan], ceiling[chan]))
-                                }))));
+                                    Value::new(
+                                        x,
+                                        function.to_linear_fc(
+                                            x,
+                                            floor[chan],
+                                            ceiling[chan],
+                                            normalize,
+                                        ),
+                                    )
+                                })))
+                                .color(colors[chan]),
+                            );
                         }
                     }
                     ui.add(plot);
@@ -1286,13 +1301,14 @@ impl AppMain {
                 .lock_mut()
                 .set_progress(format!("Saving LUT: {}", path.to_string_lossy(),), 0.0);
 
-            let (function, floor, ceiling, resolution) = {
+            let (function, floor, ceiling, resolution, normalize) = {
                 let ui_data = ui_data.lock();
                 (
                     ui_data.transfer_function_type,
                     ui_data.sensor_floor,
                     ui_data.sensor_ceiling,
                     ui_data.transfer_function_resolution,
+                    ui_data.normalize_transfer_function,
                 )
             };
 
@@ -1322,7 +1338,12 @@ impl AppMain {
                         .map(|chan| {
                             (0..resolution)
                                 .map(|i| {
-                                    function.to_linear(i as f32 * norm, floor[chan], ceiling[chan])
+                                    function.to_linear_fc(
+                                        i as f32 * norm,
+                                        floor[chan],
+                                        ceiling[chan],
+                                        normalize,
+                                    )
                                 })
                                 .collect()
                         })
@@ -1333,8 +1354,8 @@ impl AppMain {
                 let ranges: Vec<_> = (0..3)
                     .map(|chan| {
                         (
-                            function.to_linear(0.0, floor[chan], ceiling[chan]),
-                            function.to_linear(0.0, floor[chan], ceiling[chan]),
+                            function.to_linear_fc(0.0, floor[chan], ceiling[chan], normalize),
+                            function.to_linear_fc(0.0, floor[chan], ceiling[chan], normalize),
                         )
                     })
                     .collect();
@@ -1344,10 +1365,11 @@ impl AppMain {
                         let norm = 1.0 / (ranges[chan].1 - ranges[chan].0);
                         (0..resolution)
                             .map(|i| {
-                                function.to_linear(
+                                function.to_linear_fc(
                                     ranges[chan].0 + (i as f32 * norm),
                                     floor[chan],
                                     ceiling[chan],
+                                    normalize,
                                 )
                             })
                             .collect()
@@ -1453,14 +1475,36 @@ const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
 ];
 
 impl TransferFunction {
-    fn to_linear(&self, mut n: f32, floor: f32, ceil: f32) -> f32 {
+    fn to_linear_fc(&self, n: f32, floor: f32, ceil: f32, normalize: bool) -> f32 {
+        let (_, _, _, linear_top, _) = self.constants();
+        let out_floor = self.to_linear(floor);
+        let out_ceil = self.to_linear(ceil);
+
+        let mut out = self.to_linear(n);
+        out = (out - out_floor) / (out_ceil - out_floor);
+        if !normalize {
+            out *= linear_top;
+        }
+
+        out
+    }
+
+    fn from_linear_fc(&self, mut n: f32, floor: f32, ceil: f32, normalize: bool) -> f32 {
+        let (_, _, _, linear_top, _) = self.constants();
+        let in_floor = self.to_linear(floor);
+        let in_ceil = self.to_linear(ceil);
+
+        if !normalize {
+            n /= linear_top;
+        }
+        n = in_floor + (n * (in_ceil - in_floor));
+
+        self.from_linear(n)
+    }
+
+    fn to_linear(&self, n: f32) -> f32 {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
-
-        let (nl_black, nl_sat, _, _) = self.constants();
-        n = nl_black + (n * (nl_sat - nl_black));
-        n = (n - floor) / (ceil - floor);
-
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             CanonLog1 => canon_log1::to_linear(n),
@@ -1478,13 +1522,10 @@ impl TransferFunction {
         }
     }
 
-    fn from_linear(&self, n: f32, floor: f32, ceil: f32) -> f32 {
+    fn from_linear(&self, n: f32) -> f32 {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
-
-        let (nl_black, nl_sat, _, _) = self.constants();
-
-        let mut out = match *self {
+        match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             CanonLog1 => canon_log1::from_linear(n),
             CanonLog2 => canon_log2::from_linear(n),
@@ -1498,16 +1539,11 @@ impl TransferFunction {
             SonySlog2 => sony_slog2::from_linear(n),
             SonySlog3 => sony_slog3::from_linear(n),
             sRGB => srgb::from_linear(n),
-        };
-
-        out = (out - nl_black) / (nl_sat - nl_black);
-        out = floor + (out * (ceil - floor));
-
-        out
+        }
     }
 
-    /// Returns (NONLINEAR_BLACK, NONLINEAR_MAX, LINEAR_MIN, LINEAR_MAX) for the
-    /// transfer function.
+    /// Returns (NONLINEAR_BLACK, NONLINEAR_MAX, LINEAR_MIN, LINEAR_MAX,
+    /// LINEAR_SATURATE) for the transfer function.
     ///
     /// - NONLINEAR_BLACK is the non-linear value of linear = 0.0.
     /// - NONLINEAR_MAX is the maximum nonlinear value that should be
@@ -1515,41 +1551,69 @@ impl TransferFunction {
     ///   functions are weird.
     /// - LINEAR_MIN/MAX are the linear values when the encoded value is
     ///   0.0 and 1.0.
-    fn constants(&self) -> (f32, f32, f32, f32) {
+    /// - LINEAR_SATURATE is the linear value when the encoded value is
+    ///   NONLINEAR_MAX.  Usually the same as LINEAR_MAX, but some
+    ///   transfer functions are weird.
+    #[inline(always)]
+    fn constants(&self) -> (f32, f32, f32, f32, f32) {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             CanonLog1 => {
                 use canon_log1::*;
-                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             CanonLog2 => {
                 use canon_log2::*;
-                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             CanonLog3 => {
                 use canon_log3::*;
-                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
-            HLG => (0.0, 1.0, 0.0, 1.0),
-            PQ => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX),
-            PQ_108 => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX / 108.0),
-            PQ_1000 => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX / 1000.0),
-            Rec709 => (0.0, 1.0, 0.0, 1.0),
+            HLG => (0.0, 1.0, 0.0, 1.0, 1.0),
+            PQ => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX, pq::LUMINANCE_MAX),
+            PQ_108 => (
+                0.0,
+                1.0,
+                0.0,
+                pq::LUMINANCE_MAX / 108.0,
+                pq::LUMINANCE_MAX / 108.0,
+            ),
+            PQ_1000 => (
+                0.0,
+                1.0,
+                0.0,
+                pq::LUMINANCE_MAX / 1000.0,
+                pq::LUMINANCE_MAX / 1000.0,
+            ),
+            Rec709 => (0.0, 1.0, 0.0, 1.0, 1.0),
             SonySlog1 => {
                 use sony_slog1::*;
-                (CV_BLACK, CV_SATURATION, LINEAR_MIN, LINEAR_MAX)
+                (
+                    CV_BLACK,
+                    CV_SATURATION,
+                    LINEAR_MIN,
+                    LINEAR_MAX,
+                    self.to_linear(CV_SATURATION),
+                )
             }
             SonySlog2 => {
                 use sony_slog2::*;
-                (CV_BLACK, CV_SATURATION, LINEAR_MIN, LINEAR_MAX)
+                (
+                    CV_BLACK,
+                    CV_SATURATION,
+                    LINEAR_MIN,
+                    LINEAR_MAX,
+                    self.to_linear(CV_SATURATION),
+                )
             }
             SonySlog3 => {
                 use sony_slog3::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
-            sRGB => (0.0, 1.0, 0.0, 1.0),
+            sRGB => (0.0, 1.0, 0.0, 1.0, 1.0),
         }
     }
 
