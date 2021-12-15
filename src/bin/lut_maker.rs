@@ -572,7 +572,7 @@ impl epi::App for AppMain {
                                 )
                                 .clicked()
                             {
-                                todo!();
+                                self.estimate_sensor_floor();
                             }
                         });
                         ui.add_space(4.0);
@@ -608,7 +608,7 @@ impl epi::App for AppMain {
                                 )
                                 .clicked()
                             {
-                                todo!();
+                                self.estimate_sensor_ceiling();
                             }
                         });
                         ui.add_space(4.0);
@@ -632,8 +632,6 @@ impl epi::App for AppMain {
 
                     // Transfer curve controls.
                     ui.vertical(|ui| {
-                        use TransferFunction::*;
-
                         let mut ui_data = self.ui_data.lock_mut();
 
                         ui.label("Transfer Curve");
@@ -658,6 +656,7 @@ impl epi::App for AppMain {
                         ui.add_space(4.0);
 
                         if ui_data.transfer_function_type == TransferFunction::Estimated {
+                            // Estimated curve.
                             // Rounds slider.
                             ui.add_enabled(
                                 job_count == 0,
@@ -675,9 +674,10 @@ impl epi::App for AppMain {
                                 )
                                 .clicked()
                             {
-                                todo!();
+                                self.estimate_transfer_curve();
                             }
                         } else {
+                            // Fixed curve.
                             ui.add_enabled(
                                 job_count == 0,
                                 egui::widgets::DragValue::new(
@@ -980,8 +980,111 @@ impl AppMain {
         }
     }
 
-    fn estimate_everything(&self) {
-        use sensor_analysis::{emor, estimate_sensor_floor_ceiling, ExposureMapping};
+    fn estimate_sensor_floor(&self) {
+        use sensor_analysis::estimate_sensor_floor_ceiling;
+
+        let bracket_image_sets = self.bracket_image_sets.clone_ref();
+        let lens_cap_images = self.lens_cap_images.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue
+            .add_job("Estimate Sensor Noise Floor", move |status| {
+                status
+                    .lock_mut()
+                    .set_progress(format!("Estimating sensor noise floor"), 0.0);
+
+                if !lens_cap_images.lock().is_empty() {
+                    // Collect stats.
+                    let mut sum = [0.0f64; 3];
+                    let mut sample_count = [0usize; 3];
+                    for histograms in lens_cap_images.lock().iter() {
+                        for chan in 0..3 {
+                            let norm = 1.0 / (histograms[chan].buckets.len() - 1) as f64;
+                            for (i, bucket) in histograms[chan].buckets.iter().enumerate() {
+                                let v = i as f64 * norm;
+                                sum[chan] += (v * v) * *bucket as f64;
+                                sample_count[chan] += *bucket;
+                            }
+                        }
+                    }
+
+                    // Compute floor.
+                    for chan in 0..3 {
+                        let n = (sum[chan] / sample_count[chan].max(1) as f64).sqrt();
+                        ui_data.lock_mut().sensor_floor[chan] = n.max(0.0).min(1.0) as f32;
+                    }
+                } else {
+                    let histogram_sets =
+                        bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
+
+                    // Estimate sensor floor for each channel.
+                    let mut floor: [Option<f32>; 3] = [None; 3];
+                    for histograms in histogram_sets.iter() {
+                        if status.lock().is_canceled() {
+                            return;
+                        }
+                        for i in 0..3 {
+                            let norm = 1.0 / (histograms[i][0].0.buckets.len() - 1) as f32;
+                            if let Some((f, _)) = estimate_sensor_floor_ceiling(&histograms[i]) {
+                                if let Some(ref mut floor) = floor[i] {
+                                    *floor = floor.min(f * norm);
+                                } else {
+                                    floor[i] = Some(f * norm);
+                                }
+                            }
+                        }
+                    }
+
+                    for i in 0..3 {
+                        ui_data.lock_mut().sensor_floor[i] = floor[i].unwrap_or(0.0);
+                    }
+                }
+            });
+    }
+
+    fn estimate_sensor_ceiling(&self) {
+        use sensor_analysis::estimate_sensor_floor_ceiling;
+
+        let bracket_image_sets = self.bracket_image_sets.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue
+            .add_job("Estimate Sensor Ceiling", move |status| {
+                status
+                    .lock_mut()
+                    .set_progress(format!("Estimating sensor ceiling"), 0.0);
+
+                let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
+
+                // Estimate sensor floor for each channel.
+                let mut ceiling: [Option<f32>; 3] = [None; 3];
+                for histograms in histogram_sets.iter() {
+                    if status.lock().is_canceled() {
+                        return;
+                    }
+                    for i in 0..3 {
+                        let norm = 1.0 / (histograms[i][0].0.buckets.len() - 1) as f32;
+                        if let Some((_, c)) = estimate_sensor_floor_ceiling(&histograms[i]) {
+                            if let Some(ref mut ceiling) = ceiling[i] {
+                                *ceiling = ceiling.max(c * norm);
+                            } else {
+                                ceiling[i] = Some(c * norm);
+                            }
+                        }
+                    }
+                }
+
+                for i in 0..3 {
+                    ui_data.lock_mut().sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
+                }
+            });
+    }
+
+    fn estimate_transfer_curve(&self) {
+        use sensor_analysis::{emor, ExposureMapping};
+
+        self.estimate_sensor_floor();
+        self.estimate_sensor_ceiling();
 
         let bracket_image_sets = self.bracket_image_sets.clone_ref();
         let transfer_function_tables = self.transfer_function_tables.clone_ref();
@@ -991,59 +1094,10 @@ impl AppMain {
             .add_job("Estimate Transfer Function", move |status| {
                 let total_rounds = ui_data.lock().rounds;
 
-                // Collect histograms.
-                status
-                    .lock_mut()
-                    .set_progress(format!("Collecting image histograms"), 0.0);
-                let mut histogram_sets: Vec<[Vec<(Histogram, f32)>; 3]> = Vec::new();
-                for images in bracket_image_sets.lock().iter() {
-                    let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
-                    for src_img in images.iter() {
-                        for chan in 0..3 {
-                            if let Some(exposure) = src_img.1.exposure {
-                                histograms[chan].push((src_img.0[chan].clone(), exposure));
-                            }
-                        }
-                    }
+                let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
 
-                    histogram_sets.push(histograms);
-                }
-
-                // Estimate sensor floor/ceiling for each channel.
-                //
-                // The values are normalized to a range of [0.0, 1.0].
-                status
-                    .lock_mut()
-                    .set_progress(format!("Estimating sensor floor and ceiling"), 0.1);
-                let floor_ceil: [(f32, f32); 3] = {
-                    let mut floor: [Option<f32>; 3] = [None; 3];
-                    let mut ceiling: [Option<f32>; 3] = [None; 3];
-                    for histograms in histogram_sets.iter() {
-                        if status.lock().is_canceled() {
-                            return;
-                        }
-                        for i in 0..3 {
-                            let norm = 1.0 / (histograms[i][0].0.buckets.len() - 1) as f32;
-                            if let Some((f, c)) = estimate_sensor_floor_ceiling(&histograms[i]) {
-                                if let Some(ref mut floor) = floor[i] {
-                                    *floor = floor.min(f * norm);
-                                } else {
-                                    floor[i] = Some(f * norm);
-                                }
-                                if let Some(ref mut ceiling) = ceiling[i] {
-                                    *ceiling = ceiling.max(c * norm);
-                                } else {
-                                    ceiling[i] = Some(c * norm);
-                                }
-                            }
-                        }
-                    }
-                    [
-                        (floor[0].unwrap_or(0.0), ceiling[0].unwrap_or(1.0)),
-                        (floor[1].unwrap_or(0.0), ceiling[1].unwrap_or(1.0)),
-                        (floor[2].unwrap_or(0.0), ceiling[2].unwrap_or(1.0)),
-                    ]
-                };
+                let floor = ui_data.lock().sensor_floor;
+                let ceiling = ui_data.lock().sensor_ceiling;
 
                 // Compute exposure mappings.
                 status
@@ -1064,8 +1118,8 @@ impl AppMain {
                                         &histograms[chan][i + j].0,
                                         histograms[chan][i].1,
                                         histograms[chan][i + j].1,
-                                        floor_ceil[chan].0,
-                                        floor_ceil[chan].1,
+                                        floor[chan],
+                                        ceiling[chan],
                                     ));
                                 }
                             }
@@ -1094,11 +1148,8 @@ impl AppMain {
                     let (emor_factors, err) = estimator.current_estimate();
                     let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
                     for i in 0..3 {
-                        curves[i] = emor::emor_factors_to_curve(
-                            &emor_factors,
-                            floor_ceil[i].0,
-                            floor_ceil[i].1,
-                        );
+                        curves[i] =
+                            emor::emor_factors_to_curve(&emor_factors, floor[i], ceiling[i]);
                     }
 
                     // Store the curve and the preview.
@@ -1128,6 +1179,12 @@ impl AppMain {
             });
     }
 
+    fn estimate_everything(&self) {
+        self.estimate_sensor_floor();
+        self.estimate_sensor_ceiling();
+        self.estimate_transfer_curve();
+    }
+
     fn save_lut(&self, path: &std::path::Path, inverse: bool) {
         let (tables, range_min, range_max) = self.transfer_function_tables.lock().clone().unwrap();
         let path = path.to_path_buf();
@@ -1155,6 +1212,26 @@ impl AppMain {
             .unwrap();
         });
     }
+}
+
+/// Utility function to get histograms into the right order for processing.
+fn bracket_images_to_histogram_sets(
+    image_sets: &[Vec<([Histogram; 3], ImageInfo)>],
+) -> Vec<[Vec<(Histogram, f32)>; 3]> {
+    let mut histogram_sets: Vec<[Vec<(Histogram, f32)>; 3]> = Vec::new();
+    for images in image_sets.iter() {
+        let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
+        for src_img in images.iter() {
+            for chan in 0..3 {
+                if let Some(exposure) = src_img.1.exposure {
+                    histograms[chan].push((src_img.0[chan].clone(), exposure));
+                }
+            }
+        }
+
+        histogram_sets.push(histograms);
+    }
+    histogram_sets
 }
 
 //-------------------------------------------------------------
