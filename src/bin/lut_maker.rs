@@ -31,6 +31,7 @@ fn main() {
             ui_data: Shared::new(UIData {
                 image_view: ImageViewID::Bracketed,
                 advanced_mode: false,
+                show_from_linear_graph: false,
 
                 selected_bracket_image_index: (0, 0),
                 bracket_thumbnail_sets: Vec::new(),
@@ -72,6 +73,7 @@ struct AppMain {
 struct UIData {
     image_view: ImageViewID,
     advanced_mode: bool,
+    show_from_linear_graph: bool,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
     bracket_thumbnail_sets: Vec<
@@ -488,13 +490,16 @@ impl epi::App for AppMain {
             ui.horizontal_top(|ui| {
                 if ui
                     .add_enabled(
-                        self.transfer_function_tables.lock().is_some() && job_count == 0,
-                        egui::widgets::Button::new("Export 'from linear' LUT..."),
+                        job_count == 0
+                            && (self.transfer_function_tables.lock().is_some()
+                                || self.ui_data.lock().transfer_function_type
+                                    != TransferFunction::Estimated),
+                        egui::widgets::Button::new("Export 'to linear' LUT..."),
                     )
                     .clicked()
                 {
                     if let Some(path) = save_lut_dialog.clone().save_file() {
-                        self.save_lut(&path, false);
+                        self.save_lut(&path, true);
                         if let Some(parent) = path.parent().map(|p| p.into()) {
                             working_dir = parent;
                         }
@@ -502,13 +507,16 @@ impl epi::App for AppMain {
                 }
                 if ui
                     .add_enabled(
-                        self.transfer_function_tables.lock().is_some() && job_count == 0,
-                        egui::widgets::Button::new("Export 'to linear' LUT..."),
+                        job_count == 0
+                            && (self.transfer_function_tables.lock().is_some()
+                                || self.ui_data.lock().transfer_function_type
+                                    != TransferFunction::Estimated),
+                        egui::widgets::Button::new("Export 'from linear' LUT..."),
                     )
                     .clicked()
                 {
                     if let Some(path) = save_lut_dialog.clone().save_file() {
-                        self.save_lut(&path, true);
+                        self.save_lut(&path, false);
                         if let Some(parent) = path.parent().map(|p| p.into()) {
                             working_dir = parent;
                         }
@@ -683,7 +691,7 @@ impl epi::App for AppMain {
                                 egui::widgets::DragValue::new(
                                     &mut ui_data.transfer_function_resolution,
                                 )
-                                .clamp_range(32..=(1 << 16))
+                                .clamp_range(2..=(1 << 16))
                                 .max_decimals(0)
                                 .prefix("LUT resolution: "),
                             );
@@ -694,37 +702,90 @@ impl epi::App for AppMain {
 
             ui.add_space(16.0);
 
+            // "To linear" / "From linear" view switch.
+            if self.ui_data.lock().transfer_function_type != TransferFunction::Estimated
+                || self.ui_data.lock().transfer_function_preview.is_some()
+            {
+                ui.horizontal(|ui| {
+                    ui.radio_value(
+                        &mut self.ui_data.lock_mut().show_from_linear_graph,
+                        false,
+                        "To Linear",
+                    );
+                    ui.radio_value(
+                        &mut self.ui_data.lock_mut().show_from_linear_graph,
+                        true,
+                        "From Linear",
+                    );
+                });
+            }
+
             // Transfer function graph.
-            if let Some((transfer_function_curves, err)) =
-                &self.ui_data.lock().transfer_function_preview
             {
                 use egui::widgets::plot::{Line, Plot, Value, Values};
-                ui.add(
-                    Plot::new("transfer_function")
-                        .line(Line::new(Values::from_values_iter(
-                            transfer_function_curves[0]
-                                .iter()
-                                .copied()
-                                .map(|(x, y)| Value::new(x, y)),
-                        )))
-                        .line(Line::new(Values::from_values_iter(
-                            transfer_function_curves[1]
-                                .iter()
-                                .copied()
-                                .map(|(x, y)| Value::new(x, y)),
-                        )))
-                        .line(Line::new(Values::from_values_iter(
-                            transfer_function_curves[2]
-                                .iter()
-                                .copied()
-                                .map(|(x, y)| Value::new(x, y)),
-                        )))
-                        .text(egui::widgets::plot::Text::new(
-                            egui::widgets::plot::Value { x: 0.5, y: -0.05 },
-                            format!("Average error: {}", err),
-                        ))
-                        .data_aspect(1.0),
-                );
+                let ui_data = self.ui_data.lock();
+
+                let show_from_linear_graph = ui_data.show_from_linear_graph;
+                let floor = ui_data.sensor_floor;
+                let ceiling = ui_data.sensor_ceiling;
+                let range = [
+                    ceiling[0] - floor[0],
+                    ceiling[1] - floor[1],
+                    ceiling[2] - floor[2],
+                ];
+
+                if ui_data.transfer_function_type == TransferFunction::Estimated {
+                    // Estimated curve.
+                    if let Some((transfer_function_curves, err)) =
+                        &ui_data.transfer_function_preview
+                    {
+                        let mut plot = Plot::new("Transfer Function Graph").data_aspect(1.0).text(
+                            egui::widgets::plot::Text::new(
+                                egui::widgets::plot::Value { x: 0.5, y: -0.05 },
+                                format!("Average error: {}", err),
+                            ),
+                        );
+                        for i in 0..3 {
+                            plot = plot.line(Line::new(Values::from_values_iter(
+                                transfer_function_curves[i].iter().copied().map(|(x, y)| {
+                                    if show_from_linear_graph {
+                                        Value::new(x, floor[i] + (y * range[i]))
+                                    } else {
+                                        Value::new(floor[i] + (y * range[i]), x)
+                                    }
+                                }),
+                            )));
+                        }
+                        ui.add(plot);
+                    }
+                } else {
+                    // Fixed curve.
+                    let res = ui_data.transfer_function_resolution;
+                    let res_norm = 1.0 / (res - 1) as f32;
+                    let function = ui_data.transfer_function_type;
+                    let mut plot = Plot::new("Transfer Function Graph").data_aspect(1.0);
+                    for chan in 0..3 {
+                        if show_from_linear_graph {
+                            plot =
+                                plot.line(Line::new(Values::from_values_iter((0..res).map(|i| {
+                                    let a = function.to_linear(0.0, floor[chan], ceiling[chan]);
+                                    let b = function.to_linear(1.0, floor[chan], ceiling[chan]);
+                                    let x = a + (i as f32 * res_norm * (b - a));
+                                    Value::new(
+                                        x,
+                                        function.from_linear(x, floor[chan], ceiling[chan]),
+                                    )
+                                }))));
+                        } else {
+                            plot =
+                                plot.line(Line::new(Values::from_values_iter((0..res).map(|i| {
+                                    let x = i as f32 * res_norm;
+                                    Value::new(x, function.to_linear(x, floor[chan], ceiling[chan]))
+                                }))));
+                        }
+                    }
+                    ui.add(plot);
+                }
             }
         });
 
@@ -1000,17 +1061,19 @@ impl AppMain {
                     for histograms in lens_cap_images.lock().iter() {
                         for chan in 0..3 {
                             let norm = 1.0 / (histograms[chan].buckets.len() - 1) as f64;
-                            for (i, bucket) in histograms[chan].buckets.iter().enumerate() {
+                            for (i, bucket_population) in
+                                histograms[chan].buckets.iter().enumerate()
+                            {
                                 let v = i as f64 * norm;
-                                sum[chan] += (v * v) * *bucket as f64;
-                                sample_count[chan] += *bucket;
+                                sum[chan] += v * (*bucket_population as f64);
+                                sample_count[chan] += *bucket_population;
                             }
                         }
                     }
 
                     // Compute floor.
                     for chan in 0..3 {
-                        let n = (sum[chan] / sample_count[chan].max(1) as f64).sqrt();
+                        let n = sum[chan] / sample_count[chan].max(1) as f64;
                         ui_data.lock_mut().sensor_floor[chan] = n.max(0.0).min(1.0) as f32;
                     }
                 } else {
@@ -1083,15 +1146,13 @@ impl AppMain {
     fn estimate_transfer_curve(&self) {
         use sensor_analysis::{emor, ExposureMapping};
 
-        self.estimate_sensor_floor();
-        self.estimate_sensor_ceiling();
-
         let bracket_image_sets = self.bracket_image_sets.clone_ref();
         let transfer_function_tables = self.transfer_function_tables.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
             .add_job("Estimate Transfer Function", move |status| {
+                ui_data.lock_mut().transfer_function_type = TransferFunction::Estimated;
                 let total_rounds = ui_data.lock().rounds;
 
                 let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
@@ -1149,7 +1210,8 @@ impl AppMain {
                     let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
                     for i in 0..3 {
                         curves[i] =
-                            emor::emor_factors_to_curve(&emor_factors, floor[i], ceiling[i]);
+                            // emor::emor_factors_to_curve(&emor_factors, floor[i], ceiling[i]);
+                            emor::emor_factors_to_curve(&emor_factors, 0.0, 1.0);
                     }
 
                     // Store the curve and the preview.
@@ -1185,8 +1247,9 @@ impl AppMain {
         self.estimate_transfer_curve();
     }
 
-    fn save_lut(&self, path: &std::path::Path, inverse: bool) {
-        let (tables, range_min, range_max) = self.transfer_function_tables.lock().clone().unwrap();
+    fn save_lut(&self, path: &std::path::Path, to_linear: bool) {
+        let transfer_function_tables = self.transfer_function_tables.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
         let path = path.to_path_buf();
 
         self.job_queue.add_job("Save LUT", move |status| {
@@ -1194,16 +1257,81 @@ impl AppMain {
                 .lock_mut()
                 .set_progress(format!("Saving LUT: {}", path.to_string_lossy(),), 0.0);
 
-            let mut lut = colorbox::lut::Lut1D {
-                ranges: vec![(range_min, range_max)],
-                tables: tables.to_vec(),
+            let (function, floor, ceiling, resolution) = {
+                let ui_data = ui_data.lock();
+                (
+                    ui_data.transfer_function_type,
+                    ui_data.sensor_floor,
+                    ui_data.sensor_ceiling,
+                    ui_data.transfer_function_resolution,
+                )
             };
 
-            // Invert the tables if needed.
-            if inverse {
-                lut = lut.resample_inverted(1024);
-            }
+            // Compute the LUT.
+            let lut = if function == TransferFunction::Estimated {
+                // Estimated function.
+                let (tables, range_min, range_max) =
+                    transfer_function_tables.lock().clone().unwrap();
 
+                let lut = colorbox::lut::Lut1D {
+                    ranges: vec![(range_min, range_max)],
+                    tables: tables.to_vec(),
+                };
+
+                // Invert the LUT if needed.
+                if to_linear {
+                    lut.resample_inverted(1024)
+                } else {
+                    lut
+                }
+            } else if to_linear {
+                // Fixed function, to linear.
+                let norm = 1.0 / (resolution - 1) as f32;
+                colorbox::lut::Lut1D {
+                    ranges: vec![(0.0, 1.0)],
+                    tables: (0..3)
+                        .map(|chan| {
+                            (0..resolution)
+                                .map(|i| {
+                                    function.to_linear(i as f32 * norm, floor[chan], ceiling[chan])
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                }
+            } else {
+                // Fixed function, from linear.
+                let ranges: Vec<_> = (0..3)
+                    .map(|chan| {
+                        (
+                            function.to_linear(0.0, floor[chan], ceiling[chan]),
+                            function.to_linear(0.0, floor[chan], ceiling[chan]),
+                        )
+                    })
+                    .collect();
+
+                let tables: Vec<Vec<_>> = (0..3)
+                    .map(|chan| {
+                        let norm = 1.0 / (ranges[chan].1 - ranges[chan].0);
+                        (0..resolution)
+                            .map(|i| {
+                                function.to_linear(
+                                    ranges[chan].0 + (i as f32 * norm),
+                                    floor[chan],
+                                    ceiling[chan],
+                                )
+                            })
+                            .collect()
+                    })
+                    .collect();
+
+                colorbox::lut::Lut1D {
+                    ranges: ranges,
+                    tables: tables,
+                }
+            };
+
+            // Write out the LUT.
             colorbox::formats::cube::write_1d(
                 &mut std::io::BufWriter::new(std::fs::File::create(path).unwrap()),
                 [(lut.ranges[0].0, lut.ranges[0].1); 3],
@@ -1267,9 +1395,14 @@ const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
 ];
 
 impl TransferFunction {
-    fn to_linear(&self, n: f32) -> f32 {
+    fn to_linear(&self, mut n: f32, floor: f32, ceil: f32) -> f32 {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
+
+        let (nl_black, nl_sat, _, _) = self.constants();
+        n = nl_black + (n * (nl_sat - nl_black));
+        n = (n - floor) / (ceil - floor);
+
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             CanonLog1 => canon_log1::to_linear(n),
@@ -1285,10 +1418,13 @@ impl TransferFunction {
         }
     }
 
-    fn from_linear(&self, n: f32) -> f32 {
+    fn from_linear(&self, n: f32, floor: f32, ceil: f32) -> f32 {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
-        match *self {
+
+        let (nl_black, nl_sat, _, _) = self.constants();
+
+        let mut out = match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             CanonLog1 => canon_log1::from_linear(n),
             CanonLog2 => canon_log2::from_linear(n),
@@ -1300,6 +1436,59 @@ impl TransferFunction {
             SonySlog2 => sony_slog2::from_linear(n),
             SonySlog3 => sony_slog3::from_linear(n),
             sRGB => srgb::from_linear(n),
+        };
+
+        out = (out - nl_black) / (nl_sat - nl_black);
+        out = floor + (out * (ceil - floor));
+
+        out
+    }
+
+    /// Returns (NONLINEAR_BLACK, NONLINEAR_MAX, LINEAR_MIN, LINEAR_MAX) for the
+    /// transfer function.
+    ///
+    /// - NONLINEAR_BLACK is the non-linear value of linear = 0.0.
+    /// - NONLINEAR_MAX is the maximum nonlinear value that should be
+    ///   reportable by a camera sensor.  Usually 1.0, but some transfer
+    ///   functions are weird.
+    /// - LINEAR_MIN/MAX are the linear values when the encoded value is
+    ///   0.0 and 1.0.
+    fn constants(&self) -> (f32, f32, f32, f32) {
+        use colorbox::transfer_functions::*;
+        use TransferFunction::*;
+        match *self {
+            Estimated => panic!("No built-in function for an estimated transfer function."),
+            CanonLog1 => {
+                use canon_log1::*;
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+            }
+            CanonLog2 => {
+                use canon_log2::*;
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+            }
+            CanonLog3 => {
+                use canon_log3::*;
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+            }
+            HLG => (0.0, 1.0, 0.0, 1.0),
+            PQ => {
+                use pq::*;
+                (0.0, 1.0, 0.0, LUMINANCE_MAX)
+            }
+            Rec709 => (0.0, 1.0, 0.0, 1.0),
+            SonySlog1 => {
+                use sony_slog1::*;
+                (CV_BLACK, CV_SATURATION, LINEAR_MIN, LINEAR_MAX)
+            }
+            SonySlog2 => {
+                use sony_slog2::*;
+                (CV_BLACK, CV_SATURATION, LINEAR_MIN, LINEAR_MAX)
+            }
+            SonySlog3 => {
+                use sony_slog3::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX)
+            }
+            sRGB => (0.0, 1.0, 0.0, 1.0),
         }
     }
 
