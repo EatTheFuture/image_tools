@@ -12,10 +12,12 @@ use egui::Color32;
 use colorbox::{formats, lut::Lut1D};
 use shared_data::Shared;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
-    clap::App::new("OCIO Maker")
-        .version("0.1")
-        .author("Nathan Vegdahl")
+    clap::App::new("ETF OCIO Maker")
+        .version(VERSION)
+        .author("Nathan Vegdahl, Ian Hubert")
         .about("Make OCIO configurations easily")
         .get_matches();
 

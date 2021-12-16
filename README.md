@@ -1,33 +1,51 @@
-# Image Tools
+# ETF Image Tools
 
-A collection of tools useful when dealing with the images and colors from cameras in a VFX pipeline.
+Eat the Future's collection of tools for working with captured images and colors in a VFX pipeline.
 
-Currently there are only two tools: HDRI Merge and Camera Analyzer.
+Currently there are three tools: ETF HDRI Merge, ETF LUT Maker, and ETF OCIO Maker.
 
 
-## HDRI Merge
+## ETF HDRI Merge
 
-HDRI Merge is a tool for merging a series of low-dynamic-range images at different exposures into a single high-dynamic-range image.
+A tool for merging a series of low-dynamic-range images at different exposures into a single high-dynamic-range image.
 
-At the moment HDRI Merge only works correctly with image files that contain Exif data about their exposures.  Typically these will be JPEGs, although several standard image formats are supported.  The resulting HDRIs are always saved in .hdr format.
+At the moment this only works correctly with image files that contain Exif data about their exposures.  Typically these will be JPEGs, although several standard image formats are supported.  The resulting HDRIs are always saved in .hdr format.
 
-### TODO:
+### To-do:
 
-- [ ] Let user select a "look" to use for HDRI preview display (currently just applies sRGB gamma).
-- [ ] Let user load and use custom LUTs to linearize and color-transform input images before merging (currently linearization is estimated, and there's no way to transform chroma before merging).
-- [ ] Support camera raw images as input.
+- [ ] Let users select a filmic "look" when previewing the HDRI (currently it just maps straight to sRGB, which isn't great).
+- [ ] Let users load custom transfer function LUTs (e.g. from ETF LUT Maker) to linearize input images.  Currently linearization is always estimated.
+- [ ] Support camera raw images as input, with demosaicing support.
 - [ ] Support saving to EXR files.
 
 
-## LUT Maker
+## ETF LUT Maker
 
-**WORK IN PROGRESS:** this tool is still very much an R&D project and is not ready for real use yet.  You're more than welcome to tinker with it, but don't expect it to be useful or correct yet.
+A tool to generate LUTs by analyzing purpose-captured images from a camera.
 
-LUT Maker will be a tool for creating LUT files for various purposes.  The initial focus will be analyzing and characterizing cameras, the results of which can then be exported as LUTs.  The MVP for a first release will focus on LUTs for linearizing input footage and calibrating black levels, and will likely not include any functionality related to chroma.
+Currently this is only capable of generating transfer function LUTs.
 
-### TODO:
+### To-do:
 
-- [ ] Everything.
+- [ ] Export transfer function LUTs with a bit of buffer outside the normal range of the LUT (useful for e.g. preserving negative values throughout a pipeline).
+- [ ] Generate 3D LUTs for chroma, based on color checker images.
+- [ ] Generate 3D LUTs for chroma, based on camera sensor spectral sensitivity data.
+
+
+## ETF OCIO Maker
+
+A tool to easily generate custom Open Color IO configurations.
+
+Currently this only generates configurations based on the Blender 3.0 default configuration, but other configuration templates are planned.
+
+### To-do:
+
+- [ ] Save data in the OCIO config file that allows OCIO Maker to re-open the config for further editing.  Right now, after closing OCIO Maker you have to start all over if you want to change something, which can be obnoxious.
+- [ ] Add a template for ACES "lite".  Essentially, the same as ACES except without the massive list of IDTs (since you'll be adding your own IDTs).
+- [ ] Add a template for ACES "super lite".  Still using the ACES color spaces, but otherwise super stripped down.
+- [ ] Support for 3D LUTs.
+- [ ] Allow specifying custom chromaticity coordinates (currently limited to presets in a menu).
+- [ ] Allow enabling gamut mapping for OCIO 2.1 configs (once OCIO 2.1 is released).
 
 
 # License

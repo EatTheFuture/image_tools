@@ -6,7 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  executable_names: hdri_merge
+  executable_names: hdri_merge lut_maker ocio_maker
 
 jobs:
   build:
@@ -122,7 +122,7 @@ jobs:
 
           for dir in files-* ; do
               platform=${dir#"files-"}
-              pkgname=image_tools-$TAG-$platform
+              pkgname=etf_image_tools-$TAG-$platform
               mkdir tmp/$pkgname
               mv ${dir}/* tmp/$pkgname/
               for executable in ${executable_names}; do

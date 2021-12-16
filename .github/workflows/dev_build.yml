@@ -111,7 +111,7 @@ jobs:
 
           for dir in files-* ; do
               platform=${dir#"files-"}
-              pkgname=image_tools-dev_build-$platform
+              pkgname=etf_image_tools-dev_build-$platform
               mkdir tmp/$pkgname
               mv ${dir}/* tmp/$pkgname/
               for executable in ${executable_names}; do

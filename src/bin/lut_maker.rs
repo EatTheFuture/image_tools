@@ -12,10 +12,12 @@ use shared_data::Shared;
 
 use lib::ImageInfo;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
-    clap::App::new("LUT Maker")
-        .version("0.1")
-        .author("Nathan Vegdahl")
+    clap::App::new("ETF LUT Maker")
+        .version(VERSION)
+        .author("Nathan Vegdahl, Ian Hubert")
         .about("Does all things color space")
         .get_matches();
 

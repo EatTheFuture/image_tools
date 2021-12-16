@@ -13,10 +13,12 @@ use shared_data::Shared;
 
 use lib::{ImageInfo, SourceImage};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
-    clap::App::new("HDRI Merge")
-        .version("1.0")
-        .author("Nathan Vegdahl")
+    clap::App::new("ETF HDRI Merge")
+        .version(VERSION)
+        .author("Nathan Vegdahl, Ian Hubert")
         .about("Merges LDR images into an HDRI")
         .get_matches();
 
