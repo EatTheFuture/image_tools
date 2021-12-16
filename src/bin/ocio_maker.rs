@@ -692,7 +692,7 @@ impl AppMain {
                     // Create the colorspace.
                     config.colorspaces.push(ColorSpace {
                         name: space_name.clone(),
-                        family: "IDT".into(),
+                        family: "Custom (OCIO Maker)".into(),
                         bitdepth: Some(BitDepth::F32),
                         isdata: Some(false),
                         to_reference: transforms,
