@@ -1312,6 +1312,15 @@ impl AppMain {
                 )
             };
 
+            if floor.iter().zip(ceiling.iter()).any(|(a, b)| *a >= *b) {
+                status.lock_mut().log_error(
+                    "cannot write a valid LUT file when the sensor floor \
+                     has equal or greater values than the ceiling."
+                        .into(),
+                );
+                return;
+            }
+
             // Compute the LUT.
             let lut = if function == TransferFunction::Estimated {
                 use sensor_analysis::utils::lerp_slice;

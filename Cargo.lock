@@ -160,9 +160,9 @@ checksum = "8f1e260c3a9040a7c19a12468758f4c16f31a81a1fe087482be9570ec864bb6c"
 
 [[package]]
 name = "bytemuck"
-version = "1.7.2"
+version = "1.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72957246c41db82b8ef88a5486143830adeb8227ef9837740bdec67724cf2c5b"
+checksum = "439989e6b8c38d1b6570a384ef1e49c8848128f5a97f3914baef02920842712f"
 
 [[package]]
 name = "byteorder"
@@ -291,7 +291,7 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 [[package]]
 name = "colorbox"
 version = "0.2.0"
-source = "git+https://github.com/cessen/colorbox?branch=master#029d3f3538bc1fe4d431ca3ee1e972825214ecee"
+source = "git+https://github.com/cessen/colorbox?branch=master#a1c13fd7b827543a3598085e9077ecf04f0a7065"
 
 [[package]]
 name = "copypasta"
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "image_tools"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "colorbox",
@@ -1808,9 +1808,9 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.131"
+version = "1.0.132"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ad69dfbd3e45369132cc64e6748c2d65cdfb001a2b1c232d128b4ad60561c1"
+checksum = "8b9875c23cf305cd1fd7eb77234cbb705f21ea6a72c637a5c6db5fe4b8e7f008"
 
 [[package]]
 name = "shared_data"
