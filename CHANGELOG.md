@@ -4,6 +4,14 @@
 ## [Unreleased]
 
 
+## [0.2.1] - 2021-12-17
+
+### Bug Fixes
+
+- "From linear" LUTs were not being written correctly from LUT Maker.
+- OCIO Maker would freeze when trying to load a LUT file with non-finite values in it.
+
+
 ## [0.2.0] - 2021-12-16
 
 ### New tools.
@@ -17,6 +25,7 @@
 First release!  Includes a basic HDRI merging tool.
 
 
-[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.2.1...HEAD
+[0.2.0]: https://github.com/EatTheFuture/image_tools/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/EatTheFuture/image_tools/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/EatTheFuture/image_rools/release/tag/v0.1.0
