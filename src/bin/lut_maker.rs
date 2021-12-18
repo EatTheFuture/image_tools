@@ -785,29 +785,27 @@ impl epi::App for AppMain {
                     let mut plot = Plot::new("Transfer Function Graph").data_aspect(1.0);
                     for chan in 0..3 {
                         if show_from_linear_graph {
+                            let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
+                                a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
+                            });
+                            let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
+                                a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], normalize))
+                            });
+                            let extent = range_max - range_min;
                             plot = plot.line(
                                 Line::new(Values::from_values_iter((0..res).map(|i| {
-                                    let a = function.to_linear_fc(
-                                        0.0,
-                                        floor[chan],
-                                        ceiling[chan],
-                                        normalize,
-                                    );
-                                    let b = function.to_linear_fc(
-                                        1.0,
-                                        floor[chan],
-                                        ceiling[chan],
-                                        normalize,
-                                    );
-                                    let x = a + (i as f32 * res_norm * (b - a));
+                                    let x = range_min + (i as f32 * res_norm * extent);
                                     Value::new(
                                         x,
-                                        function.from_linear_fc(
-                                            x,
-                                            floor[chan],
-                                            ceiling[chan],
-                                            normalize,
-                                        ),
+                                        function
+                                            .from_linear_fc(
+                                                x,
+                                                floor[chan],
+                                                ceiling[chan],
+                                                normalize,
+                                            )
+                                            .max(0.0)
+                                            .min(1.0),
                                     )
                                 })))
                                 .color(colors[chan]),
@@ -1366,33 +1364,34 @@ impl AppMain {
                 }
             } else {
                 // Fixed function, from linear.
-                let ranges: Vec<_> = (0..3)
-                    .map(|chan| {
-                        (
-                            function.to_linear_fc(0.0, floor[chan], ceiling[chan], normalize),
-                            function.to_linear_fc(0.0, floor[chan], ceiling[chan], normalize),
-                        )
-                    })
-                    .collect();
+                let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
+                    a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
+                });
+                let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
+                    a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], normalize))
+                });
+                let norm = (range_max - range_min) / (resolution - 1) as f32;
 
                 let tables: Vec<Vec<_>> = (0..3)
                     .map(|chan| {
-                        let norm = 1.0 / (ranges[chan].1 - ranges[chan].0);
                         (0..resolution)
                             .map(|i| {
-                                function.to_linear_fc(
-                                    ranges[chan].0 + (i as f32 * norm),
-                                    floor[chan],
-                                    ceiling[chan],
-                                    normalize,
-                                )
+                                function
+                                    .from_linear_fc(
+                                        range_min + (i as f32 * norm),
+                                        floor[chan],
+                                        ceiling[chan],
+                                        normalize,
+                                    )
+                                    .max(0.0)
+                                    .min(1.0)
                             })
                             .collect()
                     })
                     .collect();
 
                 colorbox::lut::Lut1D {
-                    ranges: ranges,
+                    ranges: vec![(range_min, range_max)],
                     tables: tables,
                 }
             };
