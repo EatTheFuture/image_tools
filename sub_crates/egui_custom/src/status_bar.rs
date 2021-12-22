@@ -3,6 +3,7 @@ use eframe::egui::{
     color::Rgba,
     containers::ScrollArea,
     widgets::{Button, Label, ProgressBar},
+    RichText,
 };
 use job_queue::{JobQueue, LogLevel};
 
@@ -82,16 +83,16 @@ pub fn status_bar(ctx: &egui::CtxRef, job_queue: &JobQueue) {
                 ui.add_space(6.0);
 
                 if error_count > 0 {
-                    ui.add(
-                        Label::new(format!("Errors: {}", error_count))
-                            .text_color(Rgba::from_rgb(1.0, 0.2, 0.1)),
-                    );
+                    ui.add(Label::new(
+                        RichText::new(format!("Errors: {}", error_count))
+                            .color(Rgba::from_rgb(1.0, 0.2, 0.1)),
+                    ));
                 }
                 if warning_count > 0 {
-                    ui.add(
-                        Label::new(format!("Warnings: {}", warning_count))
-                            .text_color(Rgba::from_rgb(0.6, 0.6, 0.05)),
-                    );
+                    ui.add(Label::new(
+                        RichText::new(format!("Warnings: {}", warning_count))
+                            .color(Rgba::from_rgb(0.6, 0.6, 0.05)),
+                    ));
                 }
                 if note_count > 0 {
                     ui.label(format!("Notes: {}", note_count));

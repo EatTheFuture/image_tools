@@ -183,7 +183,7 @@ impl epi::App for AppMain {
         // Menu bar.
         egui::containers::panel::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                egui::menu::menu(ui, "File", |ui| {
+                egui::menu::menu_button(ui, "File", |ui| {
                     ui.separator();
                     if ui.add(egui::widgets::Button::new("Quit")).clicked() {
                         frame.quit();
@@ -594,7 +594,7 @@ impl epi::App for AppMain {
                             .zip(self.ui_data.lock_mut().sensor_floor.iter_mut())
                         {
                             ui.horizontal(|ui| {
-                                ui.label(label);
+                                ui.label(*label);
                                 ui.add_enabled(
                                     job_count == 0,
                                     egui::widgets::Slider::new(value, 0.0..=1.0)
@@ -630,7 +630,7 @@ impl epi::App for AppMain {
                             .zip(self.ui_data.lock_mut().sensor_ceiling.iter_mut())
                         {
                             ui.horizontal(|ui| {
-                                ui.label(label);
+                                ui.label(*label);
                                 ui.add_enabled(
                                     job_count == 0,
                                     egui::widgets::Slider::new(value, 0.0..=1.0)
@@ -748,32 +748,39 @@ impl epi::App for AppMain {
                     if let Some((transfer_function_curves, err)) =
                         &ui_data.transfer_function_preview
                     {
-                        let mut plot = Plot::new("Transfer Function Graph").data_aspect(1.0).text(
-                            egui::widgets::plot::Text::new(
-                                egui::widgets::plot::Value { x: 0.5, y: -0.05 },
-                                format!("Average error: {}", err),
-                            ),
-                        );
-                        for i in 0..3 {
-                            let out_floor =
-                                lib::lerp_curve_at_y(&transfer_function_curves[i], floor[i]);
-                            let out_ceil =
-                                lib::lerp_curve_at_y(&transfer_function_curves[i], ceiling[i]);
-                            let out_range = out_ceil - out_floor;
-                            plot = plot.line(
-                                Line::new(Values::from_values_iter(
-                                    transfer_function_curves[i].iter().copied().map(|(x, y)| {
-                                        if show_from_linear_graph {
-                                            Value::new((x - out_floor) / out_range, y)
-                                        } else {
-                                            Value::new(y, (x - out_floor) / out_range)
-                                        }
-                                    }),
-                                ))
-                                .color(colors[i]),
-                            );
-                        }
-                        ui.add(plot);
+                        Plot::new("Transfer Function Graph")
+                            .data_aspect(1.0)
+                            .show(ui, |plot| {
+                                plot.text(egui::widgets::plot::Text::new(
+                                    egui::widgets::plot::Value { x: 0.5, y: -0.05 },
+                                    format!("Average error: {}", err),
+                                ));
+                                for i in 0..3 {
+                                    let out_floor = lib::lerp_curve_at_y(
+                                        &transfer_function_curves[i],
+                                        floor[i],
+                                    );
+                                    let out_ceil = lib::lerp_curve_at_y(
+                                        &transfer_function_curves[i],
+                                        ceiling[i],
+                                    );
+                                    let out_range = out_ceil - out_floor;
+                                    plot.line(
+                                        Line::new(Values::from_values_iter(
+                                            transfer_function_curves[i].iter().copied().map(
+                                                |(x, y)| {
+                                                    if show_from_linear_graph {
+                                                        Value::new((x - out_floor) / out_range, y)
+                                                    } else {
+                                                        Value::new(y, (x - out_floor) / out_range)
+                                                    }
+                                                },
+                                            ),
+                                        ))
+                                        .color(colors[i]),
+                                    );
+                                }
+                            });
                     }
                 } else {
                     // Fixed curve.
@@ -782,53 +789,61 @@ impl epi::App for AppMain {
                     let res_norm = 1.0 / (res - 1) as f32;
                     let function = ui_data.transfer_function_type;
 
-                    let mut plot = Plot::new("Transfer Function Graph").data_aspect(1.0);
-                    for chan in 0..3 {
-                        if show_from_linear_graph {
-                            let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
-                                a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
-                            });
-                            let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
-                                a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], normalize))
-                            });
-                            let extent = range_max - range_min;
-                            plot = plot.line(
-                                Line::new(Values::from_values_iter((0..res).map(|i| {
-                                    let x = range_min + (i as f32 * res_norm * extent);
-                                    Value::new(
-                                        x,
-                                        function
-                                            .from_linear_fc(
+                    Plot::new("Transfer Function Graph")
+                        .data_aspect(1.0)
+                        .show(ui, |plot| {
+                            for chan in 0..3 {
+                                if show_from_linear_graph {
+                                    let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
+                                        a.min(
+                                            function
+                                                .to_linear_fc(0.0, floor[i], ceiling[i], normalize),
+                                        )
+                                    });
+                                    let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
+                                        a.max(
+                                            function
+                                                .to_linear_fc(1.0, floor[i], ceiling[i], normalize),
+                                        )
+                                    });
+                                    let extent = range_max - range_min;
+                                    plot.line(
+                                        Line::new(Values::from_values_iter((0..res).map(|i| {
+                                            let x = range_min + (i as f32 * res_norm * extent);
+                                            Value::new(
                                                 x,
-                                                floor[chan],
-                                                ceiling[chan],
-                                                normalize,
+                                                function
+                                                    .from_linear_fc(
+                                                        x,
+                                                        floor[chan],
+                                                        ceiling[chan],
+                                                        normalize,
+                                                    )
+                                                    .max(0.0)
+                                                    .min(1.0),
                                             )
-                                            .max(0.0)
-                                            .min(1.0),
-                                    )
-                                })))
-                                .color(colors[chan]),
-                            );
-                        } else {
-                            plot = plot.line(
-                                Line::new(Values::from_values_iter((0..res).map(|i| {
-                                    let x = i as f32 * res_norm;
-                                    Value::new(
-                                        x,
-                                        function.to_linear_fc(
-                                            x,
-                                            floor[chan],
-                                            ceiling[chan],
-                                            normalize,
-                                        ),
-                                    )
-                                })))
-                                .color(colors[chan]),
-                            );
-                        }
-                    }
-                    ui.add(plot);
+                                        })))
+                                        .color(colors[chan]),
+                                    );
+                                } else {
+                                    plot.line(
+                                        Line::new(Values::from_values_iter((0..res).map(|i| {
+                                            let x = i as f32 * res_norm;
+                                            Value::new(
+                                                x,
+                                                function.to_linear_fc(
+                                                    x,
+                                                    floor[chan],
+                                                    ceiling[chan],
+                                                    normalize,
+                                                ),
+                                            )
+                                        })))
+                                        .color(colors[chan]),
+                                    );
+                                }
+                            }
+                        });
                 }
             }
         });

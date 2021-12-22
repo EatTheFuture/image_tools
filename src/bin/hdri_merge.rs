@@ -6,6 +6,7 @@ use std::{
 };
 
 use eframe::{egui, epi};
+use egui::RichText;
 use rayon::prelude::*;
 
 use sensor_analysis::{eval_transfer_function_lut, invert_transfer_function_lut};
@@ -202,7 +203,7 @@ impl epi::App for AppMain {
         // Menu bar.
         egui::containers::panel::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                egui::menu::menu(ui, "File", |ui| {
+                egui::menu::menu_button(ui, "File", |ui| {
                     if ui
                         .add_enabled(job_count == 0, egui::widgets::Button::new("Add Images..."))
                         .clicked()
@@ -252,17 +253,17 @@ impl epi::App for AppMain {
                     ui.add_space(spacing + 4.0);
                     if ui_data.selected_image_index < ui_data.thumbnails.len() {
                         let info = &ui_data.thumbnails[ui_data.selected_image_index].2;
-                        ui.add(Label::new("Filename:").strong());
+                        ui.add(Label::new(RichText::new("Filename:").strong()));
                         ui.indent("", |ui| ui.label(format!("{}", info.filename)));
 
                         ui.add_space(spacing);
-                        ui.add(Label::new("Resolution:").strong());
+                        ui.add(Label::new(RichText::new("Resolution:").strong()));
                         ui.indent("", |ui| {
                             ui.label(format!("{} x {}", info.width, info.height))
                         });
 
                         ui.add_space(spacing);
-                        ui.add(Label::new("Log Exposure:").strong());
+                        ui.add(Label::new(RichText::new("Log Exposure:").strong()));
                         ui.indent("", |ui| {
                             ui.label(if let Some(exposure) = info.exposure {
                                 format!("{:.1}", exposure.log2())

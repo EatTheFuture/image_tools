@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- Temporarily switch to git master of eframe, to get access to a fix for MacOS file dialogs.  Due to a bug in upstream libraries, opening a file dialog on MacOS would cause the whole program to freeze.  Once the fix makes it into a published version, we will switch back.
+
 
 ## [0.2.1] - 2021-12-17
 

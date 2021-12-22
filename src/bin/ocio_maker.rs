@@ -107,7 +107,7 @@ impl epi::App for AppMain {
         // Menu bar.
         egui::containers::panel::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                egui::menu::menu(ui, "File", |ui| {
+                egui::menu::menu_button(ui, "File", |ui| {
                     ui.separator();
                     if ui.add(egui::widgets::Button::new("Quit")).clicked() {
                         frame.quit();
@@ -308,7 +308,8 @@ impl epi::App for AppMain {
                         ui.horizontal(|ui| {
                             ui.label(transfer_lut_label);
                             ui.strong(if let Some(name) = filepath.file_name() {
-                                name.to_string_lossy()
+                                let tmp: String = name.to_string_lossy().into();
+                                tmp
                             } else {
                                 "Unnamed LUT".into()
                             });
@@ -352,14 +353,6 @@ impl epi::App for AppMain {
                         use egui::widgets::plot::{
                             HLine, Line, LineStyle, Plot, VLine, Value, Values,
                         };
-                        let mut plot = Plot::new("chromaticities_plot")
-                            .data_aspect(1.0)
-                            .height(250.0)
-                            .allow_drag(false)
-                            .allow_zoom(false)
-                            .show_x(false)
-                            .show_y(false)
-                            .show_axes([false, false]);
                         let wp_style = LineStyle::Dashed { length: 10.0 };
                         let r = Value {
                             x: chroma.r.0,
@@ -378,51 +371,58 @@ impl epi::App for AppMain {
                             y: chroma.w.1,
                         };
 
-                        // Spectral locus and boundary lines.
-                        plot = plot.line(
-                            Line::new(Values::from_values_iter({
-                                use colorbox::tables::cie_1931_xyz::{X, Y, Z};
-                                (0..X.len()).chain(0..1).map(|i| Value {
-                                    x: (X[i] / (X[i] + Y[i] + Z[i])) as f64,
-                                    y: (Y[i] / (X[i] + Y[i] + Z[i])) as f64,
-                                })
-                            }))
-                            .color(GRAY),
-                        );
-                        plot = plot
-                            .hline(HLine::new(0.0).color(Color32::from_rgb(50, 50, 50)))
-                            .vline(VLine::new(0.0).color(Color32::from_rgb(50, 50, 50)));
+                        Plot::new("chromaticities_plot")
+                            .data_aspect(1.0)
+                            .height(250.0)
+                            .allow_drag(false)
+                            .allow_zoom(false)
+                            .show_x(false)
+                            .show_y(false)
+                            .show_axes([false, false])
+                            .show(ui, |plot| {
+                                // Spectral locus and boundary lines.
+                                plot.line(
+                                    Line::new(Values::from_values_iter({
+                                        use colorbox::tables::cie_1931_xyz::{X, Y, Z};
+                                        (0..X.len()).chain(0..1).map(|i| Value {
+                                            x: (X[i] / (X[i] + Y[i] + Z[i])) as f64,
+                                            y: (Y[i] / (X[i] + Y[i] + Z[i])) as f64,
+                                        })
+                                    }))
+                                    .color(GRAY),
+                                );
+                                plot.hline(HLine::new(0.0).color(Color32::from_rgb(50, 50, 50)));
+                                plot.vline(VLine::new(0.0).color(Color32::from_rgb(50, 50, 50)));
 
-                        // Color space
-                        plot = plot
-                            .line(
-                                Line::new(Values::from_values_iter([r, g].iter().copied()))
-                                    .color(YELLOW),
-                            )
-                            .line(
-                                Line::new(Values::from_values_iter([g, b].iter().copied()))
-                                    .color(CYAN),
-                            )
-                            .line(
-                                Line::new(Values::from_values_iter([b, r].iter().copied()))
-                                    .color(MAGENTA),
-                            )
-                            .line(
-                                Line::new(Values::from_values_iter([r, w].iter().copied()))
-                                    .color(RED)
-                                    .style(wp_style),
-                            )
-                            .line(
-                                Line::new(Values::from_values_iter([g, w].iter().copied()))
-                                    .color(GREEN)
-                                    .style(wp_style),
-                            )
-                            .line(
-                                Line::new(Values::from_values_iter([b, w].iter().copied()))
-                                    .color(BLUE)
-                                    .style(wp_style),
-                            );
-                        ui.add(plot);
+                                // Color space
+                                plot.line(
+                                    Line::new(Values::from_values_iter([r, g].iter().copied()))
+                                        .color(YELLOW),
+                                );
+                                plot.line(
+                                    Line::new(Values::from_values_iter([g, b].iter().copied()))
+                                        .color(CYAN),
+                                );
+                                plot.line(
+                                    Line::new(Values::from_values_iter([b, r].iter().copied()))
+                                        .color(MAGENTA),
+                                );
+                                plot.line(
+                                    Line::new(Values::from_values_iter([r, w].iter().copied()))
+                                        .color(RED)
+                                        .style(wp_style),
+                                );
+                                plot.line(
+                                    Line::new(Values::from_values_iter([g, w].iter().copied()))
+                                        .color(GREEN)
+                                        .style(wp_style),
+                                );
+                                plot.line(
+                                    Line::new(Values::from_values_iter([b, w].iter().copied()))
+                                        .color(BLUE)
+                                        .style(wp_style),
+                                );
+                            });
 
                         ui.add_space(8.0);
                     }
@@ -447,7 +447,6 @@ impl epi::App for AppMain {
                                 extent_x / extent_y
                             }
                         };
-                        let mut plot = Plot::new("transfer function plot").data_aspect(aspect);
                         let colors: &[_] = if lut.tables.len() == 1 {
                             &[WHITE]
                         } else if lut.tables.len() <= 4 {
@@ -455,24 +454,27 @@ impl epi::App for AppMain {
                         } else {
                             unreachable!()
                         };
-                        for (component, table) in lut.tables.iter().enumerate() {
-                            let range = lut.ranges[component.min(lut.ranges.len() - 1)];
-                            plot = plot.line(
-                                Line::new(Values::from_values_iter(
-                                    table.iter().copied().enumerate().map(|(i, y)| {
-                                        let a = i as f32 / (table.len() - 1).max(1) as f32;
-                                        let x = range.0 + (a * (range.1 - range.0));
-                                        if inverse {
-                                            Value::new(y, x)
-                                        } else {
-                                            Value::new(x, y)
-                                        }
-                                    }),
-                                ))
-                                .color(colors[component]),
-                            );
-                        }
-                        ui.add(plot);
+                        Plot::new("transfer function plot")
+                            .data_aspect(aspect)
+                            .show(ui, |plot| {
+                                for (component, table) in lut.tables.iter().enumerate() {
+                                    let range = lut.ranges[component.min(lut.ranges.len() - 1)];
+                                    plot.line(
+                                        Line::new(Values::from_values_iter(
+                                            table.iter().copied().enumerate().map(|(i, y)| {
+                                                let a = i as f32 / (table.len() - 1).max(1) as f32;
+                                                let x = range.0 + (a * (range.1 - range.0));
+                                                if inverse {
+                                                    Value::new(y, x)
+                                                } else {
+                                                    Value::new(x, y)
+                                                }
+                                            }),
+                                        ))
+                                        .color(colors[component]),
+                                    );
+                                }
+                            });
                     }
                 }
             }
