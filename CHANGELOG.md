@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+
+## [0.2.2] - 2021-12-21
+
 ### Bug Fixes
 
 - Temporarily switch to git master of eframe, to get access to a fix for MacOS file dialogs.  Due to a bug in upstream libraries, opening a file dialog on MacOS would cause the whole program to freeze.  Once the fix makes it into a published version, we will switch back.
@@ -29,7 +32,8 @@
 First release!  Includes a basic HDRI merging tool.
 
 
-[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.2.1...HEAD
-[0.2.0]: https://github.com/EatTheFuture/image_tools/compare/v0.2.0...v0.2.1
+[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/EatTheFuture/image_tools/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/EatTheFuture/image_tools/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/EatTheFuture/image_tools/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/EatTheFuture/image_rools/release/tag/v0.1.0
