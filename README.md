@@ -4,6 +4,8 @@ Eat the Future's collection of tools for working with captured images and colors
 
 Currently there are three tools: ETF HDRI Merge, ETF LUT Maker, and ETF OCIO Maker.
 
+**This software is currently alpha quality.**  There is enough there to be useful, but don't expect a polished experience.  We also aren't able to test on all platforms, so you may run into issues depending on your hardware and OS.  Bug reports are very appreciated!
+
 
 ## ETF HDRI Merge
 
