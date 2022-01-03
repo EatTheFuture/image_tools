@@ -26,7 +26,6 @@ fn main() {
 
             images: Shared::new(Vec::new()),
             hdri_merger: Shared::new(None),
-            hdri_preview: Shared::new(None),
             image_preview: Shared::new(None),
 
             ui_data: Shared::new(UIData {
@@ -39,7 +38,6 @@ fn main() {
                 image_preview_tex: None,
                 image_preview_tex_needs_update: false,
                 hdri_preview_tex: None,
-                hdri_preview_tex_needs_update: false,
             }),
         }),
         eframe::NativeOptions {
@@ -54,7 +52,6 @@ struct AppMain {
 
     images: Shared<Vec<SourceImage>>,
     hdri_merger: Shared<Option<HDRIMerger>>,
-    hdri_preview: Shared<Option<(Vec<u8>, usize, usize)>>,
     image_preview: Shared<Option<(Vec<u8>, usize, usize)>>,
 
     ui_data: Shared<UIData>,
@@ -73,7 +70,6 @@ struct UIData {
     image_preview_tex: Option<(egui::TextureId, usize, usize)>,
     image_preview_tex_needs_update: bool,
     hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
-    hdri_preview_tex_needs_update: bool,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -105,36 +101,6 @@ impl epi::App for AppMain {
     }
 
     fn update(&mut self, ctx: &egui::CtxRef, frame: &epi::Frame) {
-        // Update the HDRI preview texture if needed.
-        if self.ui_data.lock().hdri_preview_tex_needs_update {
-            let tex_info = self
-                .hdri_preview
-                .lock()
-                .as_ref()
-                .map(|(pixels, width, height)| {
-                    (
-                        frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
-                            [*width, *height],
-                            pixels,
-                        )),
-                        *width,
-                        *height,
-                    )
-                });
-
-            if let (Some((tex_id, width, height)), mut ui_data) =
-                (tex_info, self.ui_data.lock_mut())
-            {
-                let old = ui_data.hdri_preview_tex;
-                ui_data.hdri_preview_tex = Some((tex_id, width, height));
-                if let Some((old_tex_id, _, _)) = old {
-                    frame.free_texture(old_tex_id);
-                }
-
-                ui_data.hdri_preview_tex_needs_update = false;
-            }
-        }
-
         // Update the image preview texture if needed.
         if self.ui_data.lock().image_preview_tex_needs_update {
             let tex_info = self
@@ -389,7 +355,7 @@ impl epi::App for AppMain {
                     )
                     .clicked()
                 {
-                    self.build_hdri();
+                    self.build_hdri(frame);
                 }
 
                 ui.label(" ➡ ");
@@ -455,7 +421,7 @@ impl epi::App for AppMain {
                         )
                         .changed()
                     {
-                        self.compute_hdri_preview();
+                        self.compute_hdri_preview(frame);
                     }
                 }
 
@@ -634,7 +600,7 @@ impl AppMain {
         self.compute_image_preview(selected_image_index);
     }
 
-    fn build_hdri(&mut self) {
+    fn build_hdri(&mut self, frame: &epi::Frame) {
         use sensor_analysis::Histogram;
 
         let images = self.images.clone_ref();
@@ -722,7 +688,7 @@ impl AppMain {
             ui_data.lock_mut().show_image = ShowImage::HDRI;
         });
 
-        self.compute_hdri_preview();
+        self.compute_hdri_preview(frame);
     }
 
     fn save_hdri(&mut self, path: PathBuf) {
@@ -744,10 +710,10 @@ impl AppMain {
         });
     }
 
-    fn compute_hdri_preview(&mut self) {
+    fn compute_hdri_preview(&mut self, frame: &epi::Frame) {
         let hdri = self.hdri_merger.clone_ref();
-        let hdri_preview = self.hdri_preview.clone_ref();
         let ui_data = self.ui_data.clone_ref();
+        let frame = frame.clone();
 
         self.job_queue
             .cancel_pending_jobs_with_name("Update HDRI preview");
@@ -761,13 +727,13 @@ impl AppMain {
                 let srgb_table: Vec<f32> = (0..256)
                     .map(|n| colorbox::transfer_functions::srgb::from_linear(n as f32 / 255.0))
                     .collect();
-                let preview: Option<(Vec<u8>, usize, usize)> = hdri.lock().as_ref().map(|hdri| {
-                    let map_val = |n: f32| {
-                        (eval_transfer_function_lut(&srgb_table, (n * exposure).max(0.0).min(1.0))
-                            * 255.0)
-                            .round() as u8
-                    };
+                let map_val = |n: f32| {
+                    (eval_transfer_function_lut(&srgb_table, (n * exposure).max(0.0).min(1.0))
+                        * 255.0)
+                        .round() as u8
+                };
 
+                let preview: Option<(Vec<u8>, usize, usize)> = hdri.lock().as_ref().map(|hdri| {
                     (
                         hdri.pixels
                             .par_iter()
@@ -777,7 +743,7 @@ impl AppMain {
                                 let b = map_val(*b);
                                 [r, g, b, 255]
                             })
-                            .flatten()
+                            .flatten_iter()
                             .collect(),
                         hdri.width,
                         hdri.height,
@@ -789,8 +755,28 @@ impl AppMain {
                 }
 
                 if preview.is_some() {
-                    *hdri_preview.lock_mut() = preview;
-                    ui_data.lock_mut().hdri_preview_tex_needs_update = true;
+                    // Update the HDRI preview texture.
+                    let tex_info = preview.as_ref().map(|(pixels, width, height)| {
+                        (
+                            frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
+                                [*width, *height],
+                                pixels,
+                            )),
+                            *width,
+                            *height,
+                        )
+                    });
+
+                    if let Some((tex_id, width, height)) = tex_info {
+                        let mut ui_data = ui_data.lock_mut();
+                        let old = ui_data.hdri_preview_tex;
+                        ui_data.hdri_preview_tex = Some((tex_id, width, height));
+                        drop(ui_data);
+
+                        if let Some((old_tex_id, _, _)) = old {
+                            frame.free_texture(old_tex_id);
+                        }
+                    }
                 }
             });
     }
