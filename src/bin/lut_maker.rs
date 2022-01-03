@@ -76,11 +76,10 @@ struct UIData {
     show_from_linear_graph: bool,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
-    bracket_thumbnail_sets: Vec<Vec<((Vec<u8>, usize, usize), Option<egui::TextureId>, ImageInfo)>>,
+    bracket_thumbnail_sets: Vec<Vec<(egui::TextureId, usize, usize, ImageInfo)>>, // (tex_id, width, height, info)
 
     selected_lens_cap_image_index: usize,
-    lens_cap_thumbnails: Vec<((Vec<u8>, usize, usize), Option<egui::TextureId>, ImageInfo)>,
-
+    lens_cap_thumbnails: Vec<(egui::TextureId, usize, usize, ImageInfo)>, // (tex_id, width, height, info)
     sensor_floor: [f32; 3],
     sensor_ceiling: [f32; 3],
 
@@ -305,6 +304,7 @@ impl epi::App for AppMain {
                             if let Some(paths) = add_images_dialog.clone().pick_files() {
                                 self.add_lens_cap_image_files(
                                     paths.iter().map(|pathbuf| pathbuf.as_path()),
+                                    frame,
                                 );
                                 if let Some(parent) =
                                     paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
@@ -320,32 +320,22 @@ impl epi::App for AppMain {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 let ui_data = &mut *self.ui_data.lock_mut();
-                                let thumbnails = &mut ui_data.lens_cap_thumbnails;
+                                let thumbnails = &ui_data.lens_cap_thumbnails;
                                 let selected_image_index =
                                     &mut ui_data.selected_lens_cap_image_index;
 
-                                for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
-                                    thumbnails.iter_mut().enumerate()
+                                for (img_i, (tex_id, width, height, _)) in
+                                    thumbnails.iter().enumerate()
                                 {
                                     let display_height = 64.0;
                                     let display_width =
                                         display_height / *height as f32 * *width as f32;
 
-                                    // Build thumbnail texture if it doesn't already exist.
-                                    if tex_id.is_none() {
-                                        *tex_id = Some(frame.alloc_texture(
-                                            epi::Image::from_rgba_unmultiplied(
-                                                [*width, *height],
-                                                pixels,
-                                            ),
-                                        ));
-                                    }
-
                                     ui.horizontal(|ui| {
                                         if ui
                                             .add(
                                                 egui::widgets::ImageButton::new(
-                                                    tex_id.unwrap(),
+                                                    *tex_id,
                                                     egui::Vec2::new(display_width, display_height),
                                                 )
                                                 .selected(img_i == *selected_image_index),
@@ -367,7 +357,7 @@ impl epi::App for AppMain {
                                 }
                             });
                         if let Some(img_i) = remove_i {
-                            self.remove_lens_cap_image(img_i);
+                            self.remove_lens_cap_image(img_i, frame);
                         }
                     }
 
@@ -384,6 +374,7 @@ impl epi::App for AppMain {
                             if let Some(paths) = add_images_dialog.clone().pick_files() {
                                 self.add_bracket_image_files(
                                     paths.iter().map(|pathbuf| pathbuf.as_path()),
+                                    frame,
                                 );
                                 if let Some(parent) =
                                     paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
@@ -399,7 +390,7 @@ impl epi::App for AppMain {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 let ui_data = &mut *self.ui_data.lock_mut();
-                                let bracket_thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
+                                let bracket_thumbnail_sets = &ui_data.bracket_thumbnail_sets;
                                 let (ref mut set_index, ref mut image_index) =
                                     &mut ui_data.selected_bracket_image_index;
 
@@ -418,29 +409,19 @@ impl epi::App for AppMain {
                                         }
                                     });
                                     ui.add_space(4.0);
-                                    let set = &mut bracket_thumbnail_sets[set_i];
-                                    for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
-                                        set.iter_mut().enumerate()
+                                    let set = &bracket_thumbnail_sets[set_i];
+                                    for (img_i, (tex_id, width, height, _)) in
+                                        set.iter().enumerate()
                                     {
                                         let display_height = 64.0;
                                         let display_width =
                                             display_height / *height as f32 * *width as f32;
 
-                                        // Build thumbnail texture if it doesn't already exist.
-                                        if tex_id.is_none() {
-                                            *tex_id = Some(frame.alloc_texture(
-                                                epi::Image::from_rgba_unmultiplied(
-                                                    [*width, *height],
-                                                    pixels,
-                                                ),
-                                            ));
-                                        }
-
                                         ui.horizontal(|ui| {
                                             if ui
                                                 .add(
                                                     egui::widgets::ImageButton::new(
-                                                        tex_id.unwrap(),
+                                                        *tex_id,
                                                         egui::Vec2::new(
                                                             display_width,
                                                             display_height,
@@ -470,8 +451,10 @@ impl epi::App for AppMain {
                                 }
                             });
                         match remove_i {
-                            (Some(set_i), Some(img_i)) => self.remove_bracket_image(set_i, img_i),
-                            (Some(set_i), None) => self.remove_bracket_image_set(set_i),
+                            (Some(set_i), Some(img_i)) => {
+                                self.remove_bracket_image(set_i, img_i, frame)
+                            }
+                            (Some(set_i), None) => self.remove_bracket_image_set(set_i, frame),
                             _ => {}
                         }
                     }
@@ -851,6 +834,7 @@ impl epi::App for AppMain {
                         .dropped_files
                         .iter()
                         .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
+                    &frame.clone(),
                 ),
                 ImageViewID::LensCap => self.add_lens_cap_image_files(
                     ctx.input()
@@ -858,6 +842,7 @@ impl epi::App for AppMain {
                         .dropped_files
                         .iter()
                         .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
+                    &frame.clone(),
                 ),
             }
         }
@@ -865,10 +850,15 @@ impl epi::App for AppMain {
 }
 
 impl AppMain {
-    fn add_bracket_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
+    fn add_bracket_image_files<'a, I: Iterator<Item = &'a Path>>(
+        &mut self,
+        paths: I,
+        frame: &epi::Frame,
+    ) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let bracket_image_sets = self.bracket_image_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
+        let frame = frame.clone();
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
@@ -929,11 +919,16 @@ impl AppMain {
                 }
 
                 // Make a thumbnail texture.
-                let thumbnail = lib::job_helpers::make_image_preview(
-                    &img,
-                    Some(128),
-                    None,
-                );
+                let (thumbnail_tex_id, thumbnail_width, thumbnail_height) = {
+                    let (pixels, width, height) = lib::job_helpers::make_image_preview(&img, Some(128), None);
+                    let tex_id = frame.alloc_texture(
+                            epi::Image::from_rgba_unmultiplied(
+                                [width, height],
+                                &pixels,
+                            ),
+                        );
+                    (tex_id, width, height)
+                };
 
                 // Compute histograms.
                 let histograms = lib::job_helpers::compute_image_histograms(&img, 256);
@@ -942,8 +937,8 @@ impl AppMain {
                 {
                     let mut ui_data = ui_data.lock_mut();
                     let set = ui_data.bracket_thumbnail_sets.last_mut().unwrap();
-                    set.push((thumbnail, None, img.info.clone()));
-                    set.sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
+                    set.push((thumbnail_tex_id, thumbnail_width, thumbnail_height, img.info.clone()));
+                    set.sort_unstable_by(|a, b| a.3.exposure.partial_cmp(&b.3.exposure).unwrap());
                 }
                 {
                     let mut bracket_image_sets = bracket_image_sets.lock_mut();
@@ -955,7 +950,7 @@ impl AppMain {
         });
     }
 
-    fn remove_bracket_image(&mut self, set_index: usize, image_index: usize) {
+    fn remove_bracket_image(&mut self, set_index: usize, image_index: usize, frame: &epi::Frame) {
         if set_index >= self.bracket_image_sets.lock().len() {
             return;
         }
@@ -967,7 +962,7 @@ impl AppMain {
         // If there won't be any images after this, just remove the
         // whole set.
         if image_count <= 1 {
-            self.remove_bracket_image_set(set_index);
+            self.remove_bracket_image_set(set_index, frame);
             return;
         }
 
@@ -978,6 +973,7 @@ impl AppMain {
         let mut ui_data = self.ui_data.lock_mut();
         let thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
         if set_index < thumbnail_sets.len() && image_index < thumbnail_sets[set_index].len() {
+            frame.free_texture(thumbnail_sets[set_index][image_index].0);
             thumbnail_sets[set_index].remove(image_index);
         }
 
@@ -989,7 +985,7 @@ impl AppMain {
         }
     }
 
-    fn remove_bracket_image_set(&mut self, set_index: usize) {
+    fn remove_bracket_image_set(&mut self, set_index: usize, frame: &epi::Frame) {
         {
             // Remove the image set.
             let mut image_sets = self.bracket_image_sets.lock_mut();
@@ -1002,6 +998,9 @@ impl AppMain {
             let mut ui_data = self.ui_data.lock_mut();
             let thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
             if set_index < thumbnail_sets.len() {
+                for (tex_id, _, _, _) in thumbnail_sets[set_index].iter() {
+                    frame.free_texture(*tex_id);
+                }
                 thumbnail_sets.remove(set_index);
             }
 
@@ -1022,10 +1021,15 @@ impl AppMain {
         }
     }
 
-    fn add_lens_cap_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
+    fn add_lens_cap_image_files<'a, I: Iterator<Item = &'a Path>>(
+        &mut self,
+        paths: I,
+        frame: &epi::Frame,
+    ) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let lens_cap_images = self.lens_cap_images.clone_ref();
         let ui_data = self.ui_data.clone_ref();
+        let frame = frame.clone();
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
@@ -1061,26 +1065,36 @@ impl AppMain {
                 };
 
                 // Make a thumbnail texture.
-                let thumbnail = lib::job_helpers::make_image_preview(&img, Some(128), None);
+                let (thumbnail_tex_id, thumbnail_width, thumbnail_height) = {
+                    let (pixels, width, height) =
+                        lib::job_helpers::make_image_preview(&img, Some(128), None);
+                    let tex_id = frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
+                        [width, height],
+                        &pixels,
+                    ));
+                    (tex_id, width, height)
+                };
 
                 // Compute histograms.
                 let histograms = lib::job_helpers::compute_image_histograms(&img, 256);
 
                 // Add image and thumbnail to our lists.
-                ui_data
-                    .lock_mut()
-                    .lens_cap_thumbnails
-                    .push((thumbnail, None, img.info.clone()));
-                let mut lens_cap_images = lens_cap_images.lock_mut();
-                lens_cap_images.push(histograms);
+                ui_data.lock_mut().lens_cap_thumbnails.push((
+                    thumbnail_tex_id,
+                    thumbnail_width,
+                    thumbnail_height,
+                    img.info.clone(),
+                ));
+                lens_cap_images.lock_mut().push(histograms);
             }
         });
     }
 
-    fn remove_lens_cap_image(&self, image_index: usize) {
+    fn remove_lens_cap_image(&self, image_index: usize, frame: &epi::Frame) {
         self.lens_cap_images.lock_mut().remove(image_index);
 
         let mut ui_data = self.ui_data.lock_mut();
+        frame.free_texture(ui_data.lens_cap_thumbnails[image_index].0);
         ui_data.lens_cap_thumbnails.remove(image_index);
         if ui_data.selected_lens_cap_image_index > image_index {
             ui_data.selected_lens_cap_image_index =
