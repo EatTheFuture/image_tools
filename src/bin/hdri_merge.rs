@@ -26,7 +26,6 @@ fn main() {
 
             images: Shared::new(Vec::new()),
             hdri_merger: Shared::new(None),
-            image_preview: Shared::new(None),
 
             ui_data: Shared::new(UIData {
                 preview_exposure: 0.0,
@@ -36,7 +35,6 @@ fn main() {
 
                 thumbnails: Vec::new(),
                 image_preview_tex: None,
-                image_preview_tex_needs_update: false,
                 hdri_preview_tex: None,
             }),
         }),
@@ -52,7 +50,6 @@ struct AppMain {
 
     images: Shared<Vec<SourceImage>>,
     hdri_merger: Shared<Option<HDRIMerger>>,
-    image_preview: Shared<Option<(Vec<u8>, usize, usize)>>,
 
     ui_data: Shared<UIData>,
 }
@@ -66,9 +63,8 @@ struct UIData {
     show_image: ShowImage,
 
     // Others.
-    thumbnails: Vec<((Vec<u8>, usize, usize), Option<egui::TextureId>, ImageInfo)>,
+    thumbnails: Vec<(egui::TextureId, usize, usize, ImageInfo)>, // (GPU texture, width, height, info)
     image_preview_tex: Option<(egui::TextureId, usize, usize)>,
-    image_preview_tex_needs_update: bool,
     hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
 }
 
@@ -101,36 +97,6 @@ impl epi::App for AppMain {
     }
 
     fn update(&mut self, ctx: &egui::CtxRef, frame: &epi::Frame) {
-        // Update the image preview texture if needed.
-        if self.ui_data.lock().image_preview_tex_needs_update {
-            let tex_info = self
-                .image_preview
-                .lock()
-                .as_ref()
-                .map(|(pixels, width, height)| {
-                    (
-                        frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
-                            [*width, *height],
-                            pixels,
-                        )),
-                        *width,
-                        *height,
-                    )
-                });
-
-            if let (Some((tex_id, width, height)), mut ui_data) =
-                (tex_info, self.ui_data.lock_mut())
-            {
-                let old = ui_data.image_preview_tex;
-                ui_data.image_preview_tex = Some((tex_id, width, height));
-                if let Some((old_tex_id, _, _)) = old {
-                    frame.free_texture(old_tex_id);
-                }
-
-                ui_data.image_preview_tex_needs_update = false;
-            }
-        }
-
         // Some simple queries we use in drawing the UI.
         let image_count = self.ui_data.lock().thumbnails.len();
         let have_hdri = match self.hdri_merger.try_lock() {
@@ -170,7 +136,10 @@ impl epi::App for AppMain {
                         .clicked()
                     {
                         if let Some(paths) = add_images_dialog.clone().pick_files() {
-                            self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
+                            self.add_image_files(
+                                paths.iter().map(|pathbuf| pathbuf.as_path()),
+                                frame,
+                            );
                         }
                     }
 
@@ -213,7 +182,7 @@ impl epi::App for AppMain {
 
                     ui.add_space(spacing + 4.0);
                     if ui_data.selected_image_index < ui_data.thumbnails.len() {
-                        let info = &ui_data.thumbnails[ui_data.selected_image_index].2;
+                        let info = &ui_data.thumbnails[ui_data.selected_image_index].3;
                         ui.add(Label::new(RichText::new("Filename:").strong()));
                         ui.indent("", |ui| ui.label(format!("{}", info.filename)));
 
@@ -289,25 +258,18 @@ impl epi::App for AppMain {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let ui_data = &mut *self.ui_data.lock_mut();
-                        let thumbnails = &mut ui_data.thumbnails;
+                        let thumbnails = &ui_data.thumbnails;
                         let selected_image_index = &mut ui_data.selected_image_index;
 
-                        for (img_i, ((pixels, width, height), ref mut tex_id, _)) in
-                            thumbnails.iter_mut().enumerate()
-                        {
+                        for (img_i, (tex_id, width, height, _)) in thumbnails.iter().enumerate() {
                             let display_height = 64.0;
                             let display_width = display_height / *height as f32 * *width as f32;
-
-                            // Build thumbnail texture if it doesn't already exist.
-                            if tex_id.is_none() {
-                                *tex_id = Some(make_texture((&pixels, *width, *height), frame));
-                            }
 
                             ui.horizontal(|ui| {
                                 if ui
                                     .add(
                                         egui::widgets::ImageButton::new(
-                                            tex_id.unwrap(),
+                                            *tex_id,
                                             egui::Vec2::new(display_width, display_height),
                                         )
                                         .selected(img_i == *selected_image_index),
@@ -315,7 +277,7 @@ impl epi::App for AppMain {
                                     .clicked()
                                 {
                                     *selected_image_index = img_i;
-                                    self.compute_image_preview(img_i);
+                                    self.compute_image_preview(img_i, frame);
                                 }
                                 if ui
                                     .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
@@ -328,7 +290,7 @@ impl epi::App for AppMain {
                     });
 
                 if let Some(img_i) = remove_i {
-                    self.remove_image(img_i);
+                    self.remove_image(img_i, frame);
                 }
             });
 
@@ -341,7 +303,7 @@ impl epi::App for AppMain {
                     .clicked()
                 {
                     if let Some(paths) = add_images_dialog.clone().pick_files() {
-                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()));
+                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()), frame);
                     }
                 }
 
@@ -487,16 +449,19 @@ impl epi::App for AppMain {
                     .dropped_files
                     .iter()
                     .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
+                frame,
             );
         }
     }
 }
 
 impl AppMain {
-    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I) {
+    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I, frame: &epi::Frame) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let images = self.images.clone_ref();
         let ui_data = self.ui_data.clone_ref();
+        let frame1 = frame.clone();
+        let frame2 = frame.clone();
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
@@ -551,35 +516,45 @@ impl AppMain {
                 }
 
                 // Make a thumbnail texture.
-                let thumbnail = lib::job_helpers::make_image_preview(
-                    &img,
-                    Some(128),
-                    None,
-                );
+                let (thumbnail_tex_id, thumbnail_width, thumbnail_height) = {
+                    let (pixels, width, height) = lib::job_helpers::make_image_preview(
+                        &img,
+                        Some(128),
+                        None,
+                    );
+                    (
+                        make_texture((&pixels, width, height), &frame1),
+                        width,
+                        height,
+                    )
+                };
 
                 // Add image and thumbnail to our lists.
-                ui_data
-                    .lock_mut()
-                    .thumbnails
-                    .push((thumbnail, None, img.info.clone()));
-                ui_data
-                    .lock_mut()
-                    .thumbnails
-                    .sort_unstable_by(|a, b| a.2.exposure.partial_cmp(&b.2.exposure).unwrap());
-                images.lock_mut().push(img);
-                images
-                    .lock_mut()
-                    .sort_unstable_by(|a, b| a.info.exposure.partial_cmp(&b.info.exposure).unwrap());
+                {
+                    let mut ui_data = ui_data.lock_mut();
+                    ui_data.thumbnails
+                        .push((thumbnail_tex_id, thumbnail_width, thumbnail_height, img.info.clone()));
+                    ui_data.thumbnails
+                        .sort_unstable_by(|a, b| a.3.exposure.partial_cmp(&b.3.exposure).unwrap());
+                }
+                {
+                    let mut images = images.lock_mut();
+                    images.push(img);
+                    images
+                        .sort_unstable_by(|a, b| a.info.exposure.partial_cmp(&b.info.exposure).unwrap());
+                }
             }
         });
 
         let selected_image_index = self.ui_data.lock().selected_image_index;
-        self.compute_image_preview(selected_image_index);
+        self.compute_image_preview(selected_image_index, &frame2);
     }
 
-    fn remove_image(&self, image_index: usize) {
+    fn remove_image(&self, image_index: usize, frame: &epi::Frame) {
         let images = self.images.clone_ref();
         let ui_data = self.ui_data.clone_ref();
+        let frame_1 = frame.clone();
+        let frame_2 = frame.clone();
 
         self.job_queue.add_job("Remove Image", move |status| {
             status
@@ -588,16 +563,21 @@ impl AppMain {
 
             {
                 images.lock_mut().remove(image_index);
+
                 let mut ui_data = ui_data.lock_mut();
+                let tex_id = ui_data.thumbnails[image_index].0;
                 ui_data.thumbnails.remove(image_index);
                 if ui_data.selected_image_index > image_index {
                     ui_data.selected_image_index -= 1;
                 }
+                drop(ui_data);
+
+                frame_1.free_texture(tex_id);
             }
         });
 
         let selected_image_index = self.ui_data.lock().selected_image_index;
-        self.compute_image_preview(selected_image_index);
+        self.compute_image_preview(selected_image_index, &frame_2);
     }
 
     fn build_hdri(&mut self, frame: &epi::Frame) {
@@ -781,10 +761,10 @@ impl AppMain {
             });
     }
 
-    fn compute_image_preview(&self, image_index: usize) {
+    fn compute_image_preview(&self, image_index: usize, frame: &epi::Frame) {
         let images = self.images.clone_ref();
-        let image_preview = self.image_preview.clone_ref();
         let ui_data = self.ui_data.clone_ref();
+        let frame = frame.clone();
 
         self.job_queue.cancel_jobs_with_name("Update image preview");
         self.job_queue
@@ -802,9 +782,21 @@ impl AppMain {
                     return;
                 }
 
-                if preview.is_some() {
-                    *image_preview.lock_mut() = preview;
-                    ui_data.lock_mut().image_preview_tex_needs_update = true;
+                if let Some((pixels, width, height)) = preview {
+                    // Update the image preview texture.
+                    let tex_id = frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
+                        [width, height],
+                        &pixels,
+                    ));
+
+                    let mut ui_data = ui_data.lock_mut();
+                    let old = ui_data.image_preview_tex;
+                    ui_data.image_preview_tex = Some((tex_id, width, height));
+                    drop(ui_data);
+
+                    if let Some((old_tex_id, _, _)) = old {
+                        frame.free_texture(old_tex_id);
+                    }
                 }
             });
     }

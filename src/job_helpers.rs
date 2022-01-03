@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use colorbox::{formats, lut::Lut1D};
+use rayon::prelude::*;
 
 use sensor_analysis::Histogram;
 
@@ -131,9 +132,10 @@ pub fn make_image_preview(
     if new_dim == old_dim {
         (
             img.image
-                .pixels()
+                .as_raw()
+                .par_chunks(3)
                 .map(|pix| [pix[0], pix[1], pix[2], 255])
-                .flatten()
+                .flatten_iter()
                 .collect(),
             img.image.width() as usize,
             img.image.height() as usize,
@@ -147,9 +149,10 @@ pub fn make_image_preview(
         );
         (
             resized_image
-                .pixels()
+                .as_raw()
+                .par_chunks(3)
                 .map(|pix| [pix[0], pix[1], pix[2], 255])
-                .flatten()
+                .flatten_iter()
                 .collect(),
             resized_image.width() as usize,
             resized_image.height() as usize,
