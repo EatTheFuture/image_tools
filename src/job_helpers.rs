@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use eframe::egui;
-
 use colorbox::{formats, lut::Lut1D};
 
 use sensor_analysis::Histogram;
@@ -97,7 +95,7 @@ pub fn make_image_preview(
     img: &SourceImage,
     max_width: Option<usize>,
     max_height: Option<usize>,
-) -> (Vec<egui::Color32>, usize, usize) {
+) -> (Vec<u8>, usize, usize) {
     let old_dim = (img.image.width() as usize, img.image.height() as usize);
     let new_dim = match (max_width, max_height) {
         (None, None) => old_dim,
@@ -134,7 +132,8 @@ pub fn make_image_preview(
         (
             img.image
                 .pixels()
-                .map(|pix| egui::Color32::from_rgb(pix[0], pix[1], pix[2]))
+                .map(|pix| [pix[0], pix[1], pix[2], 255])
+                .flatten()
                 .collect(),
             img.image.width() as usize,
             img.image.height() as usize,
@@ -149,7 +148,8 @@ pub fn make_image_preview(
         (
             resized_image
                 .pixels()
-                .map(|pix| egui::Color32::from_rgb(pix[0], pix[1], pix[2]))
+                .map(|pix| [pix[0], pix[1], pix[2], 255])
+                .flatten()
                 .collect(),
             resized_image.width() as usize,
             resized_image.height() as usize,

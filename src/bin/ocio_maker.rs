@@ -3,7 +3,6 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use eframe::{egui, epi};
@@ -64,12 +63,12 @@ impl epi::App for AppMain {
     fn setup(
         &mut self,
         _ctx: &egui::CtxRef,
-        frame: &mut epi::Frame<'_>,
+        frame: &epi::Frame,
         _storage: Option<&dyn epi::Storage>,
     ) {
-        let repaint_signal = Arc::clone(&frame.repaint_signal());
+        let frame_clone = frame.clone();
         self.job_queue.set_update_fn(move || {
-            repaint_signal.request_repaint();
+            frame_clone.request_repaint();
         });
     }
 
@@ -78,7 +77,7 @@ impl epi::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
+    fn update(&mut self, ctx: &egui::CtxRef, frame: &epi::Frame) {
         let job_count = self.job_queue.job_count();
         let mut working_dir = self
             .last_opened_directory

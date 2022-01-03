@@ -6,8 +6,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# eframe = "0.15"
-eframe = { git = "https://github.com/emilk/egui/", rev = "c69fe941afdea5ef6f3f84ed063554500b6262e8" }
+eframe = "0.16"
 
 [dependencies.job_queue]
 path = "../job_queue"

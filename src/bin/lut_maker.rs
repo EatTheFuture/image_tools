@@ -1,9 +1,6 @@
 #![windows_subsystem = "windows"] // Don't go through console on Windows.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 use eframe::{egui, epi};
 
@@ -79,20 +76,10 @@ struct UIData {
     show_from_linear_graph: bool,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
-    bracket_thumbnail_sets: Vec<
-        Vec<(
-            (Vec<egui::Color32>, usize, usize),
-            Option<egui::TextureId>,
-            ImageInfo,
-        )>,
-    >,
+    bracket_thumbnail_sets: Vec<Vec<((Vec<u8>, usize, usize), Option<egui::TextureId>, ImageInfo)>>,
 
     selected_lens_cap_image_index: usize,
-    lens_cap_thumbnails: Vec<(
-        (Vec<egui::Color32>, usize, usize),
-        Option<egui::TextureId>,
-        ImageInfo,
-    )>,
+    lens_cap_thumbnails: Vec<((Vec<u8>, usize, usize), Option<egui::TextureId>, ImageInfo)>,
 
     sensor_floor: [f32; 3],
     sensor_ceiling: [f32; 3],
@@ -127,12 +114,12 @@ impl epi::App for AppMain {
     fn setup(
         &mut self,
         _ctx: &egui::CtxRef,
-        frame: &mut epi::Frame<'_>,
+        frame: &epi::Frame,
         _storage: Option<&dyn epi::Storage>,
     ) {
-        let repaint_signal = Arc::clone(&frame.repaint_signal());
+        let frame_clone = frame.clone();
         self.job_queue.set_update_fn(move || {
-            repaint_signal.request_repaint();
+            frame_clone.request_repaint();
         });
     }
 
@@ -141,7 +128,7 @@ impl epi::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
+    fn update(&mut self, ctx: &egui::CtxRef, frame: &epi::Frame) {
         let job_count = self.job_queue.job_count();
         let total_bracket_images: usize = self
             .ui_data
@@ -346,11 +333,12 @@ impl epi::App for AppMain {
 
                                     // Build thumbnail texture if it doesn't already exist.
                                     if tex_id.is_none() {
-                                        *tex_id =
-                                            Some(frame.tex_allocator().alloc_srgba_premultiplied(
-                                                (*width, *height),
-                                                &pixels,
-                                            ));
+                                        *tex_id = Some(frame.alloc_texture(
+                                            epi::Image::from_rgba_unmultiplied(
+                                                [*width, *height],
+                                                pixels,
+                                            ),
+                                        ));
                                     }
 
                                     ui.horizontal(|ui| {
@@ -440,12 +428,12 @@ impl epi::App for AppMain {
 
                                         // Build thumbnail texture if it doesn't already exist.
                                         if tex_id.is_none() {
-                                            *tex_id = Some(
-                                                frame.tex_allocator().alloc_srgba_premultiplied(
-                                                    (*width, *height),
-                                                    &pixels,
+                                            *tex_id = Some(frame.alloc_texture(
+                                                epi::Image::from_rgba_unmultiplied(
+                                                    [*width, *height],
+                                                    pixels,
                                                 ),
-                                            );
+                                            ));
                                         }
 
                                         ui.horizontal(|ui| {

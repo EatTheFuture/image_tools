@@ -21,8 +21,7 @@ name = "lib"
 path = "src/lib.rs"
 
 [dependencies]
-# eframe = "0.15"
-eframe = { git = "https://github.com/emilk/egui/", rev = "c69fe941afdea5ef6f3f84ed063554500b6262e8" }
+eframe = "0.16"
 rfd = "0.6"
 image = "0.23"
 rawloader = "0.37"

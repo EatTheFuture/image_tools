@@ -1,9 +1,6 @@
 #![windows_subsystem = "windows"] // Don't go through console on Windows.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 use eframe::{egui, epi};
 use egui::RichText;
@@ -57,8 +54,8 @@ struct AppMain {
 
     images: Shared<Vec<SourceImage>>,
     hdri_merger: Shared<Option<HDRIMerger>>,
-    hdri_preview: Shared<Option<(Vec<egui::Color32>, usize, usize)>>,
-    image_preview: Shared<Option<(Vec<egui::Color32>, usize, usize)>>,
+    hdri_preview: Shared<Option<(Vec<u8>, usize, usize)>>,
+    image_preview: Shared<Option<(Vec<u8>, usize, usize)>>,
 
     ui_data: Shared<UIData>,
 }
@@ -72,11 +69,7 @@ struct UIData {
     show_image: ShowImage,
 
     // Others.
-    thumbnails: Vec<(
-        (Vec<egui::Color32>, usize, usize),
-        Option<egui::TextureId>,
-        ImageInfo,
-    )>,
+    thumbnails: Vec<((Vec<u8>, usize, usize), Option<egui::TextureId>, ImageInfo)>,
     image_preview_tex: Option<(egui::TextureId, usize, usize)>,
     image_preview_tex_needs_update: bool,
     hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
@@ -97,12 +90,12 @@ impl epi::App for AppMain {
     fn setup(
         &mut self,
         _ctx: &egui::CtxRef,
-        frame: &mut epi::Frame<'_>,
+        frame: &epi::Frame,
         _storage: Option<&dyn epi::Storage>,
     ) {
-        let repaint_signal = Arc::clone(&frame.repaint_signal());
+        let frame_clone = frame.clone();
         self.job_queue.set_update_fn(move || {
-            repaint_signal.request_repaint();
+            frame_clone.request_repaint();
         });
     }
 
@@ -111,7 +104,7 @@ impl epi::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
+    fn update(&mut self, ctx: &egui::CtxRef, frame: &epi::Frame) {
         // Update the HDRI preview texture if needed.
         if self.ui_data.lock().hdri_preview_tex_needs_update {
             let tex_info = self
@@ -120,9 +113,10 @@ impl epi::App for AppMain {
                 .as_ref()
                 .map(|(pixels, width, height)| {
                     (
-                        frame
-                            .tex_allocator()
-                            .alloc_srgba_premultiplied((*width, *height), &pixels),
+                        frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
+                            [*width, *height],
+                            pixels,
+                        )),
                         *width,
                         *height,
                     )
@@ -134,7 +128,7 @@ impl epi::App for AppMain {
                 let old = ui_data.hdri_preview_tex;
                 ui_data.hdri_preview_tex = Some((tex_id, width, height));
                 if let Some((old_tex_id, _, _)) = old {
-                    frame.tex_allocator().free(old_tex_id);
+                    frame.free_texture(old_tex_id);
                 }
 
                 ui_data.hdri_preview_tex_needs_update = false;
@@ -149,9 +143,10 @@ impl epi::App for AppMain {
                 .as_ref()
                 .map(|(pixels, width, height)| {
                     (
-                        frame
-                            .tex_allocator()
-                            .alloc_srgba_premultiplied((*width, *height), &pixels),
+                        frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
+                            [*width, *height],
+                            pixels,
+                        )),
                         *width,
                         *height,
                     )
@@ -163,7 +158,7 @@ impl epi::App for AppMain {
                 let old = ui_data.image_preview_tex;
                 ui_data.image_preview_tex = Some((tex_id, width, height));
                 if let Some((old_tex_id, _, _)) = old {
-                    frame.tex_allocator().free(old_tex_id);
+                    frame.free_texture(old_tex_id);
                 }
 
                 ui_data.image_preview_tex_needs_update = false;
@@ -339,10 +334,7 @@ impl epi::App for AppMain {
 
                             // Build thumbnail texture if it doesn't already exist.
                             if tex_id.is_none() {
-                                *tex_id = Some(make_texture(
-                                    (&pixels, *width, *height),
-                                    frame.tex_allocator(),
-                                ));
+                                *tex_id = Some(make_texture((&pixels, *width, *height), frame));
                             }
 
                             ui.horizontal(|ui| {
@@ -769,30 +761,28 @@ impl AppMain {
                 let srgb_table: Vec<f32> = (0..256)
                     .map(|n| colorbox::transfer_functions::srgb::from_linear(n as f32 / 255.0))
                     .collect();
-                let preview: Option<(Vec<egui::Color32>, usize, usize)> =
-                    hdri.lock().as_ref().map(|hdri| {
-                        let map_val = |n: f32| {
-                            (eval_transfer_function_lut(
-                                &srgb_table,
-                                (n * exposure).max(0.0).min(1.0),
-                            ) * 255.0)
-                                .round() as u8
-                        };
+                let preview: Option<(Vec<u8>, usize, usize)> = hdri.lock().as_ref().map(|hdri| {
+                    let map_val = |n: f32| {
+                        (eval_transfer_function_lut(&srgb_table, (n * exposure).max(0.0).min(1.0))
+                            * 255.0)
+                            .round() as u8
+                    };
 
-                        (
-                            hdri.pixels
-                                .par_iter()
-                                .map(|[r, g, b]| {
-                                    let r = map_val(*r);
-                                    let g = map_val(*g);
-                                    let b = map_val(*b);
-                                    egui::Color32::from_rgba_unmultiplied(r, g, b, 255)
-                                })
-                                .collect(),
-                            hdri.width,
-                            hdri.height,
-                        )
-                    });
+                    (
+                        hdri.pixels
+                            .par_iter()
+                            .map(|[r, g, b]| {
+                                let r = map_val(*r);
+                                let g = map_val(*g);
+                                let b = map_val(*b);
+                                [r, g, b, 255]
+                            })
+                            .flatten()
+                            .collect(),
+                        hdri.width,
+                        hdri.height,
+                    )
+                });
 
                 if status.lock().is_canceled() {
                     return;
@@ -905,10 +895,7 @@ impl HDRIMerger {
     }
 }
 
-fn make_texture(
-    img: (&[egui::Color32], usize, usize),
-    tex_allocator: &mut dyn epi::TextureAllocator,
-) -> egui::TextureId {
-    assert_eq!(img.0.len(), img.1 * img.2);
-    tex_allocator.alloc_srgba_premultiplied((img.1, img.2), img.0)
+fn make_texture(img: (&[u8], usize, usize), frame: &epi::Frame) -> egui::TextureId {
+    assert_eq!(img.0.len(), img.1 * img.2 * 4);
+    frame.alloc_texture(epi::Image::from_rgba_unmultiplied([img.1, img.2], img.0))
 }
