@@ -278,7 +278,7 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 [[package]]
 name = "colorbox"
 version = "0.2.0"
-source = "git+https://github.com/cessen/colorbox?branch=master#3488e343ec896e86e19c1255bdaa27f84c2b78bb"
+source = "git+https://github.com/cessen/colorbox?branch=master#f2c380f5b000fee27912a8eddf11dbfbe8900d15"
 
 [[package]]
 name = "copypasta"

@@ -46,7 +46,7 @@ Currently this only generates configurations based on the Blender 3.0 default co
 - [ ] Add a template for ACES "lite".  Essentially, the same as ACES except without the massive list of IDTs (since you'll be adding your own IDTs).
 - [ ] Add a template for ACES "super lite".  Still using the ACES color spaces, but otherwise super stripped down.
 - [ ] Support for 3D LUTs.
-- [ ] Allow specifying custom chromaticity coordinates (currently limited to presets in a menu).
+- [x] Allow specifying custom chromaticity coordinates (currently limited to presets in a menu).
 - [ ] Allow enabling gamut mapping for OCIO 2.1 configs (once OCIO 2.1 is released).
 
 

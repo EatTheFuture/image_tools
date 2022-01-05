@@ -238,6 +238,11 @@ impl epi::App for AppMain {
                                 );
                                 ui.selectable_value(
                                     &mut space.chroma_space,
+                                    ChromaSpace::Custom,
+                                    ChromaSpace::Custom.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
                                     ChromaSpace::Rec709,
                                     ChromaSpace::Rec709.ui_text(),
                                 );
@@ -304,6 +309,75 @@ impl epi::App for AppMain {
                             });
                     });
 
+                    // Custom chromaticity coordinates.
+                    if space.chroma_space == ChromaSpace::Custom {
+                        ui.indent("custom_chroma_container", |ui| {
+                            egui::Grid::new("custom_chroma")
+                                .min_col_width(4.0)
+                                .show(ui, |ui| {
+                                    let precision = 0.0001;
+
+                                    ui.label("");
+                                    ui.label("x");
+                                    ui.label("y");
+                                    ui.end_row();
+
+                                    ui.label("R");
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.r.0)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.r.1)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.end_row();
+
+                                    ui.label("G");
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.g.0)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.g.1)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.end_row();
+
+                                    ui.label("B");
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.b.0)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.b.1)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.end_row();
+
+                                    ui.label("W");
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.w.0)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.add(
+                                        egui::widgets::DragValue::new(&mut space.custom_chroma.w.1)
+                                            .clamp_range(-1.0..=2.0)
+                                            .speed(precision),
+                                    );
+                                    ui.end_row();
+                                });
+                        });
+                        ui.add_space(8.0);
+                    }
+
                     ui.add_space(8.0);
 
                     // Transfer function.
@@ -353,7 +427,7 @@ impl epi::App for AppMain {
                     ui.add_space(8.0);
 
                     // Visualize chromaticities / gamut.
-                    if let Some(chroma) = space.chroma_space.chromaticities() {
+                    if let Some(chroma) = space.chroma_space.chromaticities(space.custom_chroma) {
                         use egui::widgets::plot::{
                             HLine, Line, LineStyle, Plot, VLine, Value, Values,
                         };
@@ -656,7 +730,7 @@ impl AppMain {
                         inverse
                     )});
 
-                    let matrix_pair = space.chroma_space.chromaticities().map(|chroma| {
+                    let matrix_pair = space.chroma_space.chromaticities(space.custom_chroma).map(|chroma| {
                         let forward = colorbox::matrix_compose!(
                             matrix::rgb_to_xyz_matrix(chroma),
                             matrix::xyz_chromatic_adaptation_matrix(
@@ -786,6 +860,7 @@ struct ColorSpaceSpec {
     name: String,
     transfer_lut: Option<(Lut1D, PathBuf, bool)>, // The bool is whether to do the inverse transform.
     chroma_space: ChromaSpace,
+    custom_chroma: colorbox::chroma::Chromaticities,
     include_as_display: bool,
 }
 
@@ -795,6 +870,13 @@ impl ColorSpaceSpec {
             name: name.into(),
             transfer_lut: None,
             chroma_space: ChromaSpace::None,
+            custom_chroma: colorbox::chroma::Chromaticities {
+                // Default to Rec.2020, just to have a starting point.
+                r: (0.708, 0.292),
+                g: (0.170, 0.797),
+                b: (0.131, 0.046),
+                w: (0.3127, 0.3290),
+            },
             include_as_display: false,
         }
     }
@@ -803,6 +885,7 @@ impl ColorSpaceSpec {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ChromaSpace {
     None,
+    Custom,
     Rec709,
     Rec2020,
     DciP3,
@@ -819,9 +902,13 @@ enum ChromaSpace {
 }
 
 impl ChromaSpace {
-    fn chromaticities(&self) -> Option<colorbox::chroma::Chromaticities> {
+    fn chromaticities(
+        &self,
+        custom: colorbox::chroma::Chromaticities,
+    ) -> Option<colorbox::chroma::Chromaticities> {
         match *self {
             ChromaSpace::None => None,
+            ChromaSpace::Custom => Some(custom),
             ChromaSpace::Rec709 => Some(colorbox::chroma::REC709),
             ChromaSpace::Rec2020 => Some(colorbox::chroma::REC2020),
             ChromaSpace::DciP3 => Some(colorbox::chroma::DCI_P3),
@@ -843,6 +930,7 @@ impl ChromaSpace {
     fn ui_text(&self) -> &'static str {
         match *self {
             ChromaSpace::None => "None",
+            ChromaSpace::Custom => "Custom",
             ChromaSpace::Rec709 => "Rec.709 / sRGB",
             ChromaSpace::Rec2020 => "Rec.2020",
             ChromaSpace::DciP3 => "DCI-P3",
@@ -851,7 +939,7 @@ impl ChromaSpace {
             ChromaSpace::AdobeRGB => "Adobe RGB",
             ChromaSpace::AdobeWideGamutRGB => "Adobe Wide Gamut RGB",
             ChromaSpace::AlexaWideGamutRGB => "Alexa Wide Gamut RGB",
-            ChromaSpace::BlackmagicWideGamutGen4 => "Blackmagic Wide Gamut Gen4/Gen5",
+            ChromaSpace::BlackmagicWideGamutGen4 => "BMD Wide Gamut Gen4/Gen5",
             ChromaSpace::ProPhoto => "ProPhoto",
             ChromaSpace::RedWideGamutRGB => "RED Wide Gamut RGB",
             ChromaSpace::SGamut => "Sony S-Gamut / S-Gamut3",
