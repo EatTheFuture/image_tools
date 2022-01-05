@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+### New in LUT Maker
+- Add a "linear" transfer function option, for when you only want to use it for black levels/noise floor.
+
+### New in OCIO Maker
+- Add Blackmagic Design's Wide Gamut Gen4/Gen5 color space chromaticities.
+- Allow users to manually specify custom color space chromaticities.
+
 
 ## [0.2.2] - 2021-12-21
 
