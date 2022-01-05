@@ -1484,6 +1484,7 @@ fn bracket_images_to_histogram_sets(
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum TransferFunction {
     Estimated,
+    Linear,
     CanonLog1,
     CanonLog2,
     CanonLog3,
@@ -1500,6 +1501,7 @@ enum TransferFunction {
 
 const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
     TransferFunction::Estimated,
+    TransferFunction::Linear,
     TransferFunction::sRGB,
     TransferFunction::Rec709,
     TransferFunction::HLG,
@@ -1547,6 +1549,7 @@ impl TransferFunction {
         use TransferFunction::*;
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
+            Linear => n,
             CanonLog1 => canon_log1::to_linear(n),
             CanonLog2 => canon_log2::to_linear(n),
             CanonLog3 => canon_log3::to_linear(n),
@@ -1567,6 +1570,7 @@ impl TransferFunction {
         use TransferFunction::*;
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
+            Linear => n,
             CanonLog1 => canon_log1::from_linear(n),
             CanonLog2 => canon_log2::from_linear(n),
             CanonLog3 => canon_log3::from_linear(n),
@@ -1600,6 +1604,7 @@ impl TransferFunction {
         use TransferFunction::*;
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
+            Linear => (0.0, 1.0, 0.0, 1.0, 1.0),
             CanonLog1 => {
                 use canon_log1::*;
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
@@ -1661,6 +1666,7 @@ impl TransferFunction {
         use TransferFunction::*;
         match *self {
             Estimated => "Estimated",
+            Linear => "Linear",
             CanonLog1 => "Canon Log",
             CanonLog2 => "Canon Log 2",
             CanonLog3 => "Canon Log 3",
