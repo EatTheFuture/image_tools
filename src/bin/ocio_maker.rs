@@ -273,8 +273,23 @@ impl epi::App for AppMain {
                                 );
                                 ui.selectable_value(
                                     &mut space.chroma_space,
+                                    ChromaSpace::AlexaWideGamutRGB,
+                                    ChromaSpace::AlexaWideGamutRGB.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::BlackmagicWideGamutGen4,
+                                    ChromaSpace::BlackmagicWideGamutGen4.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
                                     ChromaSpace::ProPhoto,
                                     ChromaSpace::ProPhoto.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::RedWideGamutRGB,
+                                    ChromaSpace::RedWideGamutRGB.ui_text(),
                                 );
                                 ui.selectable_value(
                                     &mut space.chroma_space,
@@ -285,16 +300,6 @@ impl epi::App for AppMain {
                                     &mut space.chroma_space,
                                     ChromaSpace::SGamut3Cine,
                                     ChromaSpace::SGamut3Cine.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::AlexaWideGamutRGB,
-                                    ChromaSpace::AlexaWideGamutRGB.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::RedWideGamutRGB,
-                                    ChromaSpace::RedWideGamutRGB.ui_text(),
                                 );
                             });
                     });
@@ -805,11 +810,12 @@ enum ChromaSpace {
     AcesAP1,
     AdobeRGB,
     AdobeWideGamutRGB,
+    AlexaWideGamutRGB,
+    BlackmagicWideGamutGen4,
     ProPhoto,
+    RedWideGamutRGB,
     SGamut,
     SGamut3Cine,
-    AlexaWideGamutRGB,
-    RedWideGamutRGB,
 }
 
 impl ChromaSpace {
@@ -823,11 +829,14 @@ impl ChromaSpace {
             ChromaSpace::AcesAP1 => Some(colorbox::chroma::ACES_AP1),
             ChromaSpace::AdobeRGB => Some(colorbox::chroma::ADOBE_RGB),
             ChromaSpace::AdobeWideGamutRGB => Some(colorbox::chroma::ADOBE_WIDE_GAMUT_RGB),
-            ChromaSpace::ProPhoto => Some(colorbox::chroma::PROPHOTO),
-            ChromaSpace::SGamut => Some(colorbox::chroma::S_GAMUT),
-            ChromaSpace::SGamut3Cine => Some(colorbox::chroma::S_GAMUT3_CINE),
             ChromaSpace::AlexaWideGamutRGB => Some(colorbox::chroma::ALEXA_WIDE_GAMUT_RGB),
+            ChromaSpace::BlackmagicWideGamutGen4 => {
+                Some(colorbox::chroma::blackmagic::BMD_WIDE_GAMUT_GEN4)
+            }
+            ChromaSpace::ProPhoto => Some(colorbox::chroma::PROPHOTO),
             ChromaSpace::RedWideGamutRGB => Some(colorbox::chroma::RED_WIDE_GAMUT_RGB),
+            ChromaSpace::SGamut => Some(colorbox::chroma::sony::S_GAMUT),
+            ChromaSpace::SGamut3Cine => Some(colorbox::chroma::sony::S_GAMUT3_CINE),
         }
     }
 
@@ -841,11 +850,12 @@ impl ChromaSpace {
             ChromaSpace::AcesAP1 => "ACES AP1",
             ChromaSpace::AdobeRGB => "Adobe RGB",
             ChromaSpace::AdobeWideGamutRGB => "Adobe Wide Gamut RGB",
+            ChromaSpace::AlexaWideGamutRGB => "Alexa Wide Gamut RGB",
+            ChromaSpace::BlackmagicWideGamutGen4 => "Blackmagic Wide Gamut Gen4/Gen5",
             ChromaSpace::ProPhoto => "ProPhoto",
+            ChromaSpace::RedWideGamutRGB => "RED Wide Gamut RGB",
             ChromaSpace::SGamut => "Sony S-Gamut / S-Gamut3",
             ChromaSpace::SGamut3Cine => "Sony S-Gamut3.Cine",
-            ChromaSpace::AlexaWideGamutRGB => "Alexa Wide Gamut RGB",
-            ChromaSpace::RedWideGamutRGB => "RED Wide Gamut RGB",
         }
     }
 }
