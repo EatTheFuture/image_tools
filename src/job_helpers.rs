@@ -178,7 +178,8 @@ pub fn compute_image_histograms(src_img: &SourceImage, bucket_count: usize) -> [
     histograms
 }
 
-pub fn load_1d_lut(path: &Path) -> Result<Lut1D, formats::ReadError> {
+pub fn load_1d_lut<P: AsRef<Path>>(path: P) -> Result<Lut1D, formats::ReadError> {
+    let path: &Path = path.as_ref();
     let file = std::io::BufReader::new(std::fs::File::open(path)?);
 
     match path.extension().map(|e| e.to_str()) {
@@ -186,4 +187,34 @@ pub fn load_1d_lut(path: &Path) -> Result<Lut1D, formats::ReadError> {
         Some(Some("spi1d")) => Ok(formats::spi1d::read(file)?),
         _ => Err(formats::ReadError::FormatErr),
     }
+}
+
+/// Ensures that a directory path exists and that we have permission to
+/// write to it.  If it doesn't exists, this will attempt to create it.
+///
+/// Will return an error if:
+/// - The path exists, but is not a directory.
+/// - The path exists, but we don't have permission to write to it.
+/// - The path doesn't exist, and we are unable to create it.
+pub fn ensure_dir_exists<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
+    let path: &Path = path.as_ref();
+
+    if !path.exists() {
+        std::fs::create_dir_all(path)?;
+    } else {
+        let metadata = std::fs::metadata(path)?;
+        if !metadata.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Specified path is not a directory",
+            ));
+        }
+        if metadata.permissions().readonly() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Specified path is read only",
+            ));
+        }
+    }
+    Ok(())
 }

@@ -28,6 +28,7 @@ rawloader = "0.37"
 kamadak-exif = "0.5"
 clap = "2"
 rayon = "1"
+pathdiff = { version = "0.2", features = [] }
 colorbox = { git = "https://github.com/cessen/colorbox", branch = "master" }
 # colorbox = { path = "../colorbox" }
 

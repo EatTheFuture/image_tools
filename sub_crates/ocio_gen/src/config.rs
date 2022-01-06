@@ -11,6 +11,9 @@ pub struct OCIOConfig {
     // Files to include.
     pub output_files: Vec<OutputFile>,
 
+    // Top-level comment at the start of the config file.
+    pub header_comment: String,
+
     // Header fields.
     pub name: Option<String>,
     pub description: Option<String>,
@@ -34,6 +37,7 @@ impl Default for OCIOConfig {
         OCIOConfig {
             output_files: Vec::new(),
 
+            header_comment: String::new(),
             name: None,
             description: None,
             search_path: Vec::new(),
@@ -129,6 +133,14 @@ impl OCIOConfig {
     }
 
     fn write_config_file<W: std::io::Write>(&self, mut file: W) -> std::io::Result<()> {
+        // Header comment.
+        if !self.header_comment.trim().is_empty() {
+            for line in self.header_comment.lines() {
+                file.write_all(format!("# {}\n", line).as_bytes())?;
+            }
+            file.write_all(b"\n")?;
+        }
+
         // Header.
         file.write_all(b"ocio_profile_version: 2\n\n")?;
         if let Some(name) = &self.name {
