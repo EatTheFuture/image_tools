@@ -42,7 +42,7 @@ Currently this only generates configurations based on the Blender 3.0 default co
 
 ### To-do:
 
-- [ ] Save data in the OCIO config file that allows OCIO Maker to re-open the config for further editing.  Right now, after closing OCIO Maker you have to start all over if you want to change something, which can be obnoxious.
+- [x] Save data in the OCIO config file that allows OCIO Maker to re-open the config for further editing.  Right now, after closing OCIO Maker you have to start all over if you want to change something, which can be obnoxious.
 - [ ] Add a template for ACES "lite".  Essentially, the same as ACES except without the massive list of IDTs (since you'll be adding your own IDTs).
 - [ ] Add a template for ACES "super lite".  Still using the ACES color spaces, but otherwise super stripped down.
 - [ ] Support for 3D LUTs.

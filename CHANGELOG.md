@@ -9,6 +9,7 @@
 ### New in OCIO Maker
 - Add Blackmagic Design's Wide Gamut Gen4/Gen5 color space chromaticities.
 - Allow users to manually specify custom color space chromaticities.
+- Can now re-open its own configs for further editing.
 
 
 ## [0.2.2] - 2021-12-21
