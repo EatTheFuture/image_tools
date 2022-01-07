@@ -1,3 +1,4 @@
+use randomize::{formulas::f32_half_open_right, PCG32};
 use rayon::prelude::*;
 
 use crate::exposure_mapping::ExposureMapping;
@@ -18,11 +19,12 @@ pub struct EmorEstimator<'a> {
     current_round: usize,
     rounds_without_change: usize,
     step_size: f32,
+    rand: PCG32,
 }
 
 impl<'a> EmorEstimator<'a> {
     pub fn new(mappings: &'a [ExposureMapping], test_points: usize) -> EmorEstimator<'a> {
-        let initial_factors = [0.5f32; EMOR_FACTOR_COUNT];
+        let initial_factors = [0.0f32; EMOR_FACTOR_COUNT];
         let initial_err = calc_emor_error(mappings, &initial_factors, test_points);
         EmorEstimator {
             mappings: mappings,
@@ -34,6 +36,7 @@ impl<'a> EmorEstimator<'a> {
             current_round: 0,
             rounds_without_change: 0,
             step_size: 1.0,
+            rand: PCG32::seed(0xdd60c3b293895214, 0xc16fa8cdc70cc1c3),
         }
     }
 
@@ -52,7 +55,15 @@ impl<'a> EmorEstimator<'a> {
                     * delta_inv;
             }
 
-            let diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
+            let mut diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
+
+            // Jostle it a bit if seems to be stuck.
+            if !(diff_length > 0.0) {
+                for i in 0..EMOR_FACTOR_COUNT {
+                    error_diffs[i] = f32_half_open_right(self.rand.next_u32()) * delta;
+                }
+                diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
+            }
 
             if diff_length > 0.0 {
                 let diff_norm = 1.0 / diff_length;
@@ -193,8 +204,6 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
             let inv_floor = lerp_slice(&transfer_curve, mapping.floor);
             let inv_ceil = lerp_slice(&transfer_curve, mapping.ceiling);
             let inv_floor_ceil_norm = 1.0 / (inv_ceil - inv_floor);
-            let floor = mapping.floor;
-            let floor_ceil_norm = mapping.ceiling - floor;
 
             // Helper function.
             let eval = |n: f32| -> f32 {
@@ -215,18 +224,17 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
                     let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);
                     adjusted_extent.abs() // * adjusted_extent
                 };
-                let sample_count_weight = mapping.curve.len() as f32 / 256.0;
-                sample_count_weight * extent_weight * exposure_weight
+                extent_weight * exposure_weight
             };
             if weight > 0.0 {
                 let inv_exposure_ratio = 1.0 / mapping.exposure_ratio;
-                for i in 0..point_count {
+                for (x, y) in mapping
+                    .curve
+                    .iter()
+                    .filter(|(x, y)| x.min(*y) > mapping.floor && x.max(*y) < mapping.ceiling)
+                    .copied()
+                {
                     // Compute "linear" x and y with our current estimated inverse EMoR curves.
-                    let x = ((i + 1) as f32 / (point_count + 1) as f32 * floor_ceil_norm) + floor;
-                    let y = match mapping.eval_at_x(x) {
-                        Some(y) if y >= mapping.floor && y <= mapping.ceiling => y,
-                        _ => continue,
-                    };
                     let x_linear = eval(x);
                     let y_linear = eval(y);
 

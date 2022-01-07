@@ -1480,6 +1480,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "randomize"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88c38c99b51f33c9fcc655252bf02ac8048eb70f35244e4697b0de9c473e940a"
+
+[[package]]
 name = "raw-window-handle"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,6 +1630,7 @@ dependencies = [
 name = "sensor_analysis"
 version = "0.1.0"
 dependencies = [
+ "randomize",
  "rayon",
 ]
 
