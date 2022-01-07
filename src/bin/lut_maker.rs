@@ -44,7 +44,7 @@ fn main() {
                 transfer_function_type: TransferFunction::Estimated,
                 transfer_function_resolution: 4096,
                 normalize_transfer_function: false,
-                rounds: 2000,
+                rounds: 4000,
                 transfer_function_preview: None,
             }),
         }),
@@ -737,11 +737,11 @@ impl epi::App for AppMain {
                                     format!("Average error: {}", err),
                                 ));
                                 for i in 0..3 {
-                                    let out_floor = lib::lerp_curve_at_y(
+                                    let out_floor = lib::lerp_curve_at_x(
                                         &transfer_function_curves[i],
                                         floor[i],
                                     );
-                                    let out_ceil = lib::lerp_curve_at_y(
+                                    let out_ceil = lib::lerp_curve_at_x(
                                         &transfer_function_curves[i],
                                         ceiling[i],
                                     );
@@ -751,9 +751,9 @@ impl epi::App for AppMain {
                                             transfer_function_curves[i].iter().copied().map(
                                                 |(x, y)| {
                                                     if show_from_linear_graph {
-                                                        Value::new((x - out_floor) / out_range, y)
+                                                        Value::new((y - out_floor) / out_range, x)
                                                     } else {
-                                                        Value::new(y, (x - out_floor) / out_range)
+                                                        Value::new(x, (y - out_floor) / out_range)
                                                     }
                                                 },
                                             ),
@@ -1277,12 +1277,12 @@ impl AppMain {
                     }
 
                     estimator.do_rounds(rounds_per_update);
-                    let (emor_factors, err) = estimator.current_estimate();
+                    let (inv_emor_factors, err) = estimator.current_estimate();
                     let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
                     for i in 0..3 {
                         curves[i] =
-                            // emor::emor_factors_to_curve(&emor_factors, floor[i], ceiling[i]);
-                            emor::emor_factors_to_curve(&emor_factors, 0.0, 1.0);
+                            // emor::inv_emor_factors_to_curve(&inv_emor_factors, floor[i], ceiling[i]);
+                            emor::inv_emor_factors_to_curve(&inv_emor_factors, 0.0, 1.0);
                     }
 
                     // Store the curve and the preview.
@@ -1355,12 +1355,11 @@ impl AppMain {
                 // Estimated function.
                 let (tables, _, _) = transfer_function_tables.lock().clone().unwrap();
 
-                // Invert the lut to work in the right space.
+                // Build LUT.
                 let mut to_linear_lut = colorbox::lut::Lut1D {
                     ranges: vec![(0.0, 1.0)],
                     tables: tables.to_vec(),
-                }
-                .resample_inverted(4096);
+                };
 
                 // Apply the floor and ceiling.
                 for i in 0..3 {
@@ -1372,7 +1371,7 @@ impl AppMain {
                     }
                 }
 
-                // Invert the LUT again if needed.
+                // Invert if needed.
                 if to_linear {
                     to_linear_lut
                 } else {

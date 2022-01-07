@@ -86,47 +86,67 @@ impl<'a> EmorEstimator<'a> {
     }
 }
 
-pub fn emor_at_index(factors: &[f32], i: usize) -> f32 {
-    eval_emor(factors, (i as f32 * (1.0 / 1023.0)).min(1.0))
-}
+// pub fn emor_at_index(factors: &[f32], i: usize) -> f32 {
+//     let mut y = EMOR_TABLE[0][i] + EMOR_TABLE[1][i];
+//     for f in 0..factors.len() {
+//         y += EMOR_TABLE[f + 2][i] * factors[f];
+//     }
+//     y
+// }
 
-pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
-    // let mut yar = [0.0f32; EMOR_FACTOR_COUNT + 2];
-    // yar[0] = 0.0;
-    // yar[EMOR_FACTOR_COUNT + 1] = 1.0;
-    // for i in 0..factors.len() {
-    //     yar[i + 1] = factors[i];
-    // }
-    // return lerp_slice(&yar, x);
+// pub fn eval_emor(factors: &[f32], x: f32) -> f32 {
+//     let mut y = x + lerp_slice(&EMOR_TABLE[1], x);
+//     for f in 0..factors.len() {
+//         y += lerp_slice(&EMOR_TABLE[f + 2], x) * factors[f];
+//     }
+//     y
+// }
 
-    let mut y = x + lerp_slice(&EMOR_TABLE[1], x);
-    for i in 0..factors.len() {
-        y += lerp_slice(&EMOR_TABLE[i + 2], x) * factors[i];
+pub fn inv_emor_at_index(factors: &[f32], i: usize) -> f32 {
+    let mut y = INV_EMOR_TABLE[0][i] + INV_EMOR_TABLE[1][i];
+    for f in 0..factors.len() {
+        y += INV_EMOR_TABLE[f + 2][i] * factors[f];
     }
     y
 }
 
-/// Estimates EMoR factors to fit the passed mappings.
+pub fn eval_inv_emor(factors: &[f32], x: f32) -> f32 {
+    let mut y = x + lerp_slice(&INV_EMOR_TABLE[1], x);
+    for f in 0..factors.len() {
+        y += lerp_slice(&INV_EMOR_TABLE[f + 2], x) * factors[f];
+    }
+    y
+}
+
+/// Estimates inverse EMoR factors to fit the passed mappings.
 ///
-/// Returns the EMoR factors and the average error of the fit.
-pub fn estimate_emor(
+/// Returns the inverse EMoR factors and the average error of the fit.
+pub fn estimate_inv_emor(
     mappings: &[ExposureMapping],
     test_points: usize,
 ) -> ([f32; EMOR_FACTOR_COUNT], f32) {
     let mut estimator = EmorEstimator::new(mappings, test_points);
-    estimator.do_rounds(2000);
+    estimator.do_rounds(4000);
     estimator.current_estimate()
 }
 
-pub fn emor_factors_to_curve(factors: &[f32], sensor_floor: f32, sensor_ceiling: f32) -> Vec<f32> {
-    let sensor_range = sensor_ceiling - sensor_floor;
-    let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + sensor_floor };
-    let resolution = EMOR_TABLE[0].len();
+pub fn inv_emor_factors_to_curve(
+    factors: &[f32],
+    sensor_floor: f32,
+    sensor_ceiling: f32,
+) -> Vec<f32> {
+    let resolution = INV_EMOR_TABLE[0].len();
     let step = 1.0 / (resolution - 1) as f32;
 
+    // Compute floor/ceiling factors.
+    let inv_floor = eval_inv_emor(factors, sensor_floor);
+    let inv_ceil = eval_inv_emor(factors, sensor_ceiling);
+    let norm = 1.0 / (inv_ceil - inv_floor);
+
+    // Build the curve.
     let mut curve = vec![0.0f32; resolution];
     for i in 0..resolution {
-        curve[i] = map_floor_ceil(eval_emor(factors, i as f32 * step));
+        curve[i] = (eval_inv_emor(factors, i as f32 * step) - inv_floor) * norm;
     }
 
     // Ensure monotonicity.
@@ -137,11 +157,6 @@ pub fn emor_factors_to_curve(factors: &[f32], sensor_floor: f32, sensor_ceiling:
         }
     }
 
-    // Ensure they're in the range [0, 1].
-    for n in curve.iter_mut() {
-        *n = n.max(0.0).min(1.0);
-    }
-
     curve
 }
 
@@ -149,15 +164,19 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
     let mut err_sum = 0.0f32;
     let mut err_weight_sum = 0.0f32;
 
+    // Compute the curve.
+    let transfer_curve: Vec<f32> = (0..INV_EMOR_TABLE[0].len())
+        .map(|i| inv_emor_at_index(emor_factors, i))
+        .collect();
+
     // Discourage non-monotonic curves by strongly encouraging a minimum slope.
-    const MIN_SLOPE: f32 = 1.0 / 4096.0;
-    const MIN_DELTA: f32 = MIN_SLOPE / EMOR_TABLE[0].len() as f32;
+    const MIN_SLOPE: f32 = 1.0 / (1 << 16) as f32;
+    const MIN_DELTA: f32 = MIN_SLOPE / INV_EMOR_TABLE[0].len() as f32;
     let total_error_measurements = mappings.len() * point_count;
     let non_mono_weight =
-        4096.0 * (1.0 / EMOR_TABLE[0].len() as f32) * total_error_measurements as f32;
+        4096.0 * (1.0 / INV_EMOR_TABLE[0].len() as f32) * total_error_measurements as f32;
     let mut last_y = -MIN_DELTA;
-    for i in 0..EMOR_TABLE[0].len() {
-        let y = emor_at_index(emor_factors, i);
+    for y in transfer_curve.iter().copied() {
         let non_mono = (last_y - y + MIN_DELTA).max(0.0);
         last_y = y;
         err_sum += non_mono * non_mono_weight;
@@ -170,13 +189,16 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
             let mut mapping_err = 0.0;
             let mut mapping_err_weight = 0.0;
 
-            let sensor_range = mapping.ceiling - mapping.floor;
-            let map_floor_ceil = |n: f32| -> f32 { n * sensor_range + mapping.floor };
-            let relative_err = |a: f32, b: f32| -> f32 {
-                let x = a.min(b);
-                let y = a.max(b);
-                let err = if y > 0.0 { (y - x) / y } else { 0.0 };
-                err
+            // Compute floor/ceiling adjustments.
+            let inv_floor = lerp_slice(&transfer_curve, mapping.floor);
+            let inv_ceil = lerp_slice(&transfer_curve, mapping.ceiling);
+            let inv_floor_ceil_norm = 1.0 / (inv_ceil - inv_floor);
+            let floor = mapping.floor;
+            let floor_ceil_norm = mapping.ceiling - floor;
+
+            // Helper function.
+            let eval = |n: f32| -> f32 {
+                (lerp_slice(&transfer_curve, n) - inv_floor) * inv_floor_ceil_norm
             };
 
             let weight = {
@@ -197,20 +219,21 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_cou
                 sample_count_weight * extent_weight * exposure_weight
             };
             if weight > 0.0 {
+                let inv_exposure_ratio = 1.0 / mapping.exposure_ratio;
                 for i in 0..point_count {
-                    let y_linear = (i + 1) as f32 / (point_count + 1) as f32;
-                    let x_linear = y_linear / mapping.exposure_ratio;
-                    let x = map_floor_ceil(eval_emor(emor_factors, x_linear));
-                    let y = map_floor_ceil(eval_emor(emor_factors, y_linear));
+                    // Compute "linear" x and y with our current estimated inverse EMoR curves.
+                    let x = ((i + 1) as f32 / (point_count + 1) as f32 * floor_ceil_norm) + floor;
+                    let y = match mapping.eval_at_x(x) {
+                        Some(y) if y >= mapping.floor && y <= mapping.ceiling => y,
+                        _ => continue,
+                    };
+                    let x_linear = eval(x);
+                    let y_linear = eval(y);
 
-                    if let Some(x_err) = mapping.eval_at_y(y).map(|x_map| relative_err(x, x_map)) {
-                        mapping_err += x_err * weight;
-                        mapping_err_weight += weight;
-                    }
-                    if let Some(y_err) = mapping.eval_at_x(x).map(|y_map| relative_err(y, y_map)) {
-                        mapping_err += y_err * weight;
-                        mapping_err_weight += weight;
-                    }
+                    // Compute error.
+                    let err = (inv_exposure_ratio - (x_linear / y_linear)).abs();
+                    mapping_err += err * weight;
+                    mapping_err_weight += weight;
                 }
             }
 

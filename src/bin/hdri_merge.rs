@@ -6,7 +6,7 @@ use eframe::{egui, epi};
 use egui::RichText;
 use rayon::prelude::*;
 
-use sensor_analysis::{eval_transfer_function_lut, invert_transfer_function_lut};
+use sensor_analysis::eval_transfer_function_lut;
 use shared_data::Shared;
 
 use lib::{ImageInfo, SourceImage};
@@ -620,18 +620,11 @@ impl AppMain {
             }
 
             // Estimate linearizating curve.
-            let inv_mapping: [Vec<f32>; 3] = {
-                let (mapping, _) = sensor_analysis::estimate_transfer_function(&[
-                    &histograms[0],
-                    &histograms[1],
-                    &histograms[2],
-                ]);
-                [
-                    invert_transfer_function_lut(&mapping[0]),
-                    invert_transfer_function_lut(&mapping[1]),
-                    invert_transfer_function_lut(&mapping[2]),
-                ]
-            };
+            let (inv_mapping, _) = sensor_analysis::estimate_transfer_function(&[
+                &histograms[0],
+                &histograms[1],
+                &histograms[2],
+            ]);
 
             // Merge images.
             let mut hdri_merger = HDRIMerger::new(width, height);

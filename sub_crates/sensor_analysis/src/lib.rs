@@ -57,14 +57,18 @@ pub fn estimate_transfer_function(histograms: &[&[(Histogram, f32)]]) -> (Vec<Ve
         }
     }
 
-    let (emor_factors, err) = emor::estimate_emor(&mappings, bucket_count);
+    let (emor_factors, err) = emor::estimate_inv_emor(&mappings, bucket_count);
 
     (
         floor_ceil_pairs
             .iter()
             .copied()
             .map(|(f, c)| {
-                emor::emor_factors_to_curve(&emor_factors, f * floor_ceil_norm, c * floor_ceil_norm)
+                emor::inv_emor_factors_to_curve(
+                    &emor_factors,
+                    f * floor_ceil_norm,
+                    c * floor_ceil_norm,
+                )
             })
             .collect(),
         err,
