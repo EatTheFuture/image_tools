@@ -11,7 +11,6 @@ const EMOR_FACTOR_COUNT: usize = 7;
 
 pub struct EmorEstimator<'a> {
     mappings: &'a [ExposureMapping],
-    test_points: usize,
     factors: [f32; EMOR_FACTOR_COUNT],
     err: f32,
     best_factors: [f32; EMOR_FACTOR_COUNT],
@@ -23,12 +22,11 @@ pub struct EmorEstimator<'a> {
 }
 
 impl<'a> EmorEstimator<'a> {
-    pub fn new(mappings: &'a [ExposureMapping], test_points: usize) -> EmorEstimator<'a> {
+    pub fn new(mappings: &'a [ExposureMapping]) -> EmorEstimator<'a> {
         let initial_factors = [0.0f32; EMOR_FACTOR_COUNT];
-        let initial_err = calc_emor_error(mappings, &initial_factors, test_points);
+        let initial_err = calc_emor_error(mappings, &initial_factors);
         EmorEstimator {
             mappings: mappings,
-            test_points: test_points,
             factors: initial_factors,
             err: initial_err,
             best_factors: initial_factors,
@@ -50,9 +48,8 @@ impl<'a> EmorEstimator<'a> {
             for i in 0..EMOR_FACTOR_COUNT {
                 let mut test_factors = self.factors;
                 test_factors[i] += delta;
-                error_diffs[i] = (calc_emor_error(self.mappings, &test_factors, self.test_points)
-                    - self.err)
-                    * delta_inv;
+                error_diffs[i] =
+                    (calc_emor_error(self.mappings, &test_factors) - self.err) * delta_inv;
             }
 
             let mut diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
@@ -70,7 +67,7 @@ impl<'a> EmorEstimator<'a> {
                 for i in 0..EMOR_FACTOR_COUNT {
                     self.factors[i] -= error_diffs[i] * diff_norm * self.step_size;
                 }
-                self.err = calc_emor_error(self.mappings, &self.factors, self.test_points);
+                self.err = calc_emor_error(self.mappings, &self.factors);
 
                 if self.err < self.best_err {
                     self.best_err = self.err;
@@ -132,11 +129,8 @@ pub fn eval_inv_emor(factors: &[f32], x: f32) -> f32 {
 /// Estimates inverse EMoR factors to fit the passed mappings.
 ///
 /// Returns the inverse EMoR factors and the average error of the fit.
-pub fn estimate_inv_emor(
-    mappings: &[ExposureMapping],
-    test_points: usize,
-) -> ([f32; EMOR_FACTOR_COUNT], f32) {
-    let mut estimator = EmorEstimator::new(mappings, test_points);
+pub fn estimate_inv_emor(mappings: &[ExposureMapping]) -> ([f32; EMOR_FACTOR_COUNT], f32) {
+    let mut estimator = EmorEstimator::new(mappings);
     estimator.do_rounds(4000);
     estimator.current_estimate()
 }
@@ -171,9 +165,11 @@ pub fn inv_emor_factors_to_curve(
     curve
 }
 
-fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32], point_count: usize) -> f32 {
+fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
     let mut err_sum = 0.0f32;
     let mut err_weight_sum = 0.0f32;
+
+    let point_count: usize = mappings.iter().map(|m| m.curve.len()).sum();
 
     // Compute the curve.
     let transfer_curve: Vec<f32> = (0..INV_EMOR_TABLE[0].len())

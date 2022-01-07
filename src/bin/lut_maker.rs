@@ -1261,8 +1261,7 @@ impl AppMain {
 
                 // Estimate transfer function.
                 let rounds_per_update = (1000 / mappings.len()).max(1);
-                let mut estimator =
-                    emor::EmorEstimator::new(&mappings, histogram_sets[0][0][0].0.buckets.len());
+                let mut estimator = emor::EmorEstimator::new(&mappings);
                 for round_i in 0..(total_rounds / rounds_per_update) {
                     status.lock_mut().set_progress(
                         format!(
