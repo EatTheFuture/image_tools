@@ -57,19 +57,22 @@ jobs:
             chmod +x appimagetool
             sudo mv appimagetool /usr/local/bin/
             cargo +${{ matrix.rust }} install cargo-appimage --version 1.3.1
+            # TODO: use the release-debug profile here too.  Currently cargo-appimage can't
+            # take the --profile argument, but once that's fixed.
             cargo +${{ matrix.rust }} appimage --target=${{ matrix.target }}
           else
-            cargo +${{ matrix.rust }} build --release --target=${{ matrix.target }}
+            cargo +${{ matrix.rust }} build --profile=release-debug --target=${{ matrix.target }}
           fi
       
-      - name: Strip release binary (macos)
-        shell: bash
-        run: |
-          if [[ ! "${{ matrix.os }}" =~ ("windows"|"ubuntu") ]]; then
-            for executable in ${executable_names}; do
-              strip "target/${{ matrix.target }}/release/${executable}"
-            done
-          fi
+      # # We don't want to strip for dev builds, so users can help track down bugs.
+      # - name: Strip release binary (macos)
+      #   shell: bash
+      #   run: |
+      #     if [[ ! "${{ matrix.os }}" =~ ("windows"|"ubuntu") ]]; then
+      #       for executable in ${executable_names}; do
+      #         strip "target/${{ matrix.target }}/release/${executable}"
+      #       done
+      #     fi
           
       - name: Upload files for packaging
         shell: bash

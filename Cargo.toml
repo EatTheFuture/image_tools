@@ -8,6 +8,12 @@ members = [
     "sub_crates/shared_data",
 ]
 
+# Builds a release executable, but with debug info.
+[profile.release-debug]
+inherits = "release"
+debug = true
+debug-assertions = true
+
 [package]
 name = "image_tools"
 version = "0.2.2"
