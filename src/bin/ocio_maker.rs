@@ -86,24 +86,36 @@ impl epi::App for AppMain {
             .unwrap_or_else(|| "".into());
 
         // File dialogs used in the UI.
-        let load_1d_lut_dialog = rfd::FileDialog::new()
-            .set_directory(&working_dir)
-            .set_title("Load 1D LUT")
-            .add_filter("All Supported LUTs", &["spi1d", "cube"])
-            .add_filter("cube", &["cube"])
-            .add_filter("spi1d", &["spi1d"]);
-        let load_config_dialog = rfd::FileDialog::new()
-            .set_directory(&working_dir)
-            .set_title("Load Config")
-            .add_filter("OCIO Maker config", &["ocio"]);
-        let current_export_dir = if !self.ui_data.lock().export_path.is_empty() {
-            self.ui_data.lock().export_path.clone().into()
-        } else {
-            working_dir.clone()
+        let load_1d_lut_dialog = {
+            let mut d = rfd::FileDialog::new()
+                .set_title("Load 1D LUT")
+                .add_filter("All Supported LUTs", &["spi1d", "cube"])
+                .add_filter("cube", &["cube"])
+                .add_filter("spi1d", &["spi1d"]);
+            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
+                d = d.set_directory(&working_dir);
+            }
+            d
         };
-        let select_export_directory_dialog = rfd::FileDialog::new()
-            .set_directory(&current_export_dir)
-            .set_title("Select Export Directory");
+        let load_config_dialog = {
+            let mut d = rfd::FileDialog::new()
+                .set_title("Load Config")
+                .add_filter("OCIO Maker config", &["ocio"]);
+            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
+                d = d.set_directory(&working_dir);
+            }
+            d
+        };
+        let select_export_directory_dialog = {
+            let mut d = rfd::FileDialog::new().set_title("Select Export Directory");
+            let export_path: PathBuf = self.ui_data.lock().export_path.clone().into();
+            if !export_path.as_os_str().is_empty() && export_path.is_dir() {
+                d = d.set_directory(&export_path);
+            } else if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
+                d = d.set_directory(&working_dir);
+            };
+            d
+        };
 
         //----------------
         // GUI.

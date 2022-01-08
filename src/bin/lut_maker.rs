@@ -143,25 +143,35 @@ impl epi::App for AppMain {
             .last_opened_directory
             .clone()
             .unwrap_or_else(|| "".into());
-        let add_images_dialog = rfd::FileDialog::new()
-            .set_title("Add Images")
-            .set_directory(&working_dir)
-            .add_filter(
-                "All Images",
-                &[
-                    "jpg", "JPG", "jpeg", "JPEG", "tiff", "TIFF", "tif", "TIF", "webp", "WEBP",
-                    "png", "PNG",
-                ],
-            )
-            .add_filter("jpeg", &["jpg", "JPG", "jpeg", "JPEG"])
-            .add_filter("tiff", &["tiff", "TIFF", "tif", "TIF"])
-            .add_filter("webp", &["webp", "WEBP"])
-            .add_filter("png", &["png", "PNG"]);
-        let save_lut_dialog = rfd::FileDialog::new()
-            .set_title("Save LUT")
-            .set_directory(&working_dir)
-            .add_filter(".spi1d", &["spi1d", "SPI1D"])
-            .add_filter(".cube", &["cube", "CUBE"]);
+        let add_images_dialog = {
+            let mut d = rfd::FileDialog::new()
+                .set_title("Add Images")
+                .add_filter(
+                    "All Images",
+                    &[
+                        "jpg", "JPG", "jpeg", "JPEG", "tiff", "TIFF", "tif", "TIF", "webp", "WEBP",
+                        "png", "PNG",
+                    ],
+                )
+                .add_filter("jpeg", &["jpg", "JPG", "jpeg", "JPEG"])
+                .add_filter("tiff", &["tiff", "TIFF", "tif", "TIF"])
+                .add_filter("webp", &["webp", "WEBP"])
+                .add_filter("png", &["png", "PNG"]);
+            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
+                d = d.set_directory(&working_dir);
+            }
+            d
+        };
+        let save_lut_dialog = {
+            let mut d = rfd::FileDialog::new()
+                .set_title("Save LUT")
+                .add_filter(".spi1d", &["spi1d", "SPI1D"])
+                .add_filter(".cube", &["cube", "CUBE"]);
+            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
+                d = d.set_directory(&working_dir);
+            }
+            d
+        };
 
         //----------------
         // GUI.
