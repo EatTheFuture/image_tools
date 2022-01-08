@@ -70,7 +70,7 @@ jobs:
       #   run: |
       #     if [[ ! "${{ matrix.os }}" =~ ("windows"|"ubuntu") ]]; then
       #       for executable in ${executable_names}; do
-      #         strip "target/${{ matrix.target }}/release/${executable}"
+      #         strip "target/${{ matrix.target }}/release-debug/${executable}"
       #       done
       #     fi
           
@@ -80,11 +80,11 @@ jobs:
           mkdir dist
           for executable in ${executable_names}; do
             if [[ "${{ matrix.os }}" =~ "windows" ]]; then
-              cp "target/${{ matrix.target }}/release/${executable}.exe" "dist/"
+              cp "target/${{ matrix.target }}/release-debug/${executable}.exe" "dist/"
             elif [[ "${{ matrix.os }}" =~ "ubuntu" ]]; then
               cp "${executable}"*.AppImage "dist/${executable}.AppImage"
             else
-              cp "target/${{ matrix.target }}/release/${executable}" "dist/"
+              cp "target/${{ matrix.target }}/release-debug/${executable}" "dist/"
             fi
           done
           cp LICENSE.md README.md "dist/"
