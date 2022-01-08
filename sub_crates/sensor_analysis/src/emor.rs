@@ -7,7 +7,7 @@ use crate::utils::lerp_slice;
 // Provides `EMOR_TABLE` and `INV_EMOR_TABLE`;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
-const EMOR_FACTOR_COUNT: usize = 7;
+const EMOR_FACTOR_COUNT: usize = 6;
 
 pub struct EmorEstimator<'a> {
     mappings: &'a [ExposureMapping],
@@ -23,7 +23,7 @@ pub struct EmorEstimator<'a> {
 
 impl<'a> EmorEstimator<'a> {
     pub fn new(mappings: &'a [ExposureMapping]) -> EmorEstimator<'a> {
-        let initial_factors = [0.0f32; EMOR_FACTOR_COUNT];
+        let initial_factors = [0.5f32; EMOR_FACTOR_COUNT];
         let initial_err = calc_emor_error(mappings, &initial_factors);
         EmorEstimator {
             mappings: mappings,
@@ -36,6 +36,10 @@ impl<'a> EmorEstimator<'a> {
             step_size: 1.0,
             rand: PCG32::seed(0xdd60c3b293895214, 0xc16fa8cdc70cc1c3),
         }
+    }
+
+    fn rand_0_1(&mut self) -> f32 {
+        f32_half_open_right(self.rand.next_u32())
     }
 
     pub fn do_rounds(&mut self, rounds: usize) {
@@ -57,7 +61,7 @@ impl<'a> EmorEstimator<'a> {
             // Jostle it a bit if seems to be stuck.
             if !(diff_length > 0.0) {
                 for i in 0..EMOR_FACTOR_COUNT {
-                    error_diffs[i] = f32_half_open_right(self.rand.next_u32()) * delta;
+                    error_diffs[i] = self.rand_0_1() * delta;
                 }
                 diff_length = error_diffs.iter().fold(0.0f32, |a, b| a + (b * b)).sqrt();
             }
@@ -80,7 +84,7 @@ impl<'a> EmorEstimator<'a> {
                 break;
             }
 
-            if self.rounds_without_change >= 32 {
+            if self.rounds_without_change >= 64 {
                 self.step_size *= 0.9090909;
                 self.rounds_without_change = 0;
                 self.factors = self.best_factors;
@@ -180,8 +184,7 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
     const MIN_SLOPE: f32 = 1.0 / (1 << 16) as f32;
     const MIN_DELTA: f32 = MIN_SLOPE / INV_EMOR_TABLE[0].len() as f32;
     let total_error_measurements = mappings.len() * point_count;
-    let non_mono_weight =
-        4096.0 * (1.0 / INV_EMOR_TABLE[0].len() as f32) * total_error_measurements as f32;
+    let non_mono_weight = (1.0 / INV_EMOR_TABLE[0].len() as f32) * total_error_measurements as f32;
     let mut last_y = -MIN_DELTA;
     for y in transfer_curve.iter().copied() {
         let non_mono = (last_y - y + MIN_DELTA).max(0.0);
@@ -214,29 +217,45 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
                     let x = mapping.exposure_ratio - 2.0;
                     1.0 / (0.5 * x * x + 1.0)
                 };
-                const MIN_EXTENT: f32 = 0.5;
-                let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
                 let extent_weight = {
+                    const MIN_EXTENT: f32 = 0.5;
+                    let y_extent = (mapping.curve[0].1 - mapping.curve.last().unwrap().1).abs();
                     let adjusted_extent = (y_extent - MIN_EXTENT).max(0.0) / (1.0 - MIN_EXTENT);
-                    adjusted_extent.abs() // * adjusted_extent
+                    adjusted_extent.abs()
                 };
-                extent_weight * exposure_weight
+                exposure_weight * extent_weight
             };
             if weight > 0.0 {
                 let inv_exposure_ratio = 1.0 / mapping.exposure_ratio;
-                for (x, y) in mapping
-                    .curve
-                    .iter()
-                    .filter(|(x, y)| x.min(*y) > mapping.floor && x.max(*y) < mapping.ceiling)
-                    .copied()
-                {
+                for i in 0..mapping.curve.len() {
+                    let (x, y) = mapping.curve[i];
+                    if x.min(y) <= mapping.floor || y.max(x) >= mapping.ceiling {
+                        continue;
+                    }
+
+                    let point_weight = {
+                        let left = if i > 0 {
+                            let (x2, y2) = mapping.curve[i - 1];
+                            (x - x2) + (y - y2)
+                        } else {
+                            0.0
+                        };
+                        let right = if (i + 1) < mapping.curve.len() {
+                            let (x2, y2) = mapping.curve[i + 1];
+                            (x2 - x) + (y2 - y)
+                        } else {
+                            0.0
+                        };
+                        (left + right) * 0.25
+                    };
+
                     // Compute "linear" x and y with our current estimated inverse EMoR curves.
                     let x_linear = eval(x);
                     let y_linear = eval(y);
 
                     // Compute error.
                     let err = (inv_exposure_ratio - (x_linear / y_linear)).abs();
-                    mapping_err += err * weight;
+                    mapping_err += err * point_weight * weight;
                     mapping_err_weight += weight;
                 }
             }
