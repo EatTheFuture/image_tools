@@ -27,4 +27,4 @@ jobs:
           override: true
 
       # Build and test, and make sure benchmarks build.
-      - run: cargo +stable test --release --all && cargo +stable bench --no-run --all
+      - run: cargo +stable test --all && cargo +stable bench --profile=dev --no-run --all

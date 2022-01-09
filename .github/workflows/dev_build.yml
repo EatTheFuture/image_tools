@@ -7,30 +7,33 @@ env:
   CARGO_TERM_COLOR: always
   EXECUTABLE_NAMES: hdri_merge lut_maker ocio_maker
 jobs:
-  build-info:
-    # Because github actions don't let us set dynamic
-    # environment variables.
-    name: Get build info
+  # Because github actions don't let us set dynamic
+  # environment variables.
+  env2:
+    name: Get misc info
     runs-on: ubuntu-latest
     outputs:
       hash: ${{ steps.vars.outputs.HASH }}
       date: ${{ steps.vars.outputs.DATE }}
+      date_hash_tag: ${{ steps.vars.outputs.DATE_HASH_TAG }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
 
-      - name: Get build info
+      - name: Get info
         id: vars
         shell: bash
         run: |
           BUILD_HASH=$(git rev-parse --short "$GITHUB_SHA")
           BUILD_DATE=$(date +'%Y-%m-%d')
+          BUILD_DATE_HASH_TAG=$(echo $BUILD_DATE | sed -e 's/-/_/g')-${BUILD_HASH}
           echo "::set-output name=HASH::$BUILD_HASH"
           echo "::set-output name=DATE::$BUILD_DATE"
+          echo "::set-output name=DATE_HASH_TAG::$BUILD_DATE_HASH_TAG"
 
   dev-build:
     name: Development Build
-    needs: [build-info]
+    needs: [env2]
     runs-on: ${{ matrix.os }}   
     strategy:
       matrix:
@@ -117,7 +120,7 @@ jobs:
   
   publish:
     name: Publish
-    needs: [build-info, dev-build]
+    needs: [env2, dev-build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v2
@@ -135,7 +138,7 @@ jobs:
 
           for dir in files-* ; do
               platform=${dir#"files-"}
-              pkgname=etf_image_tools-dev-${{ needs.build-info.outputs.date }}-${{ needs.build-info.outputs.hash }}-$platform
+              pkgname=etf_image_tools-${{ needs.env2.outputs.date_hash_tag }}-$platform
               mkdir tmp/$pkgname
               mv ${dir}/* tmp/$pkgname/
               for executable in ${EXECUTABLE_NAMES}; do
@@ -161,7 +164,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/*
           file_glob: true
-          tag: dev-build-${{ needs.build-info.outputs.date }}-${{ needs.build-info.outputs.hash }}
-          release_name: Dev Build (${{ needs.build-info.outputs.date }} ${{ needs.build-info.outputs.hash }})
+          tag: dev_build-${{ needs.env2.outputs.date_hash_tag }}
+          release_name: "Dev Build: ${{ needs.env2.outputs.date }} | ${{ needs.env2.outputs.hash }}"
           overwrite: true
           prerelease: true

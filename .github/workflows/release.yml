@@ -6,11 +6,36 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  executable_names: hdri_merge lut_maker ocio_maker
+  EXECUTABLE_NAMES: hdri_merge lut_maker ocio_maker
 
 jobs:
+  # Because github actions don't let us set dynamic
+  # environment variables.
+  env2:
+    name: Get misc info
+    runs-on: ubuntu-latest
+    outputs:
+      hash: ${{ steps.vars.outputs.HASH }}
+      date: ${{ steps.vars.outputs.DATE }}
+      date_hash_tag: ${{ steps.vars.outputs.DATE_HASH_TAG }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Get info
+        id: vars
+        shell: bash
+        run: |
+          BUILD_HASH=$(git rev-parse --short "$GITHUB_SHA")
+          BUILD_DATE=$(date +'%Y-%m-%d')
+          BUILD_DATE_HASH_TAG=$(echo $BUILD_DATE | sed -e 's/-/_/g')-${BUILD_HASH}
+          echo "::set-output name=HASH::$BUILD_HASH"
+          echo "::set-output name=DATE::$BUILD_DATE"
+          echo "::set-output name=DATE_HASH_TAG::$BUILD_DATE_HASH_TAG"
+
   build:
     name: Build
+    needs: [env2]
     runs-on: ${{ matrix.os }}   
     strategy:
       matrix:
@@ -67,7 +92,7 @@ jobs:
         shell: bash
         run: |
           if [[ ! "${{ matrix.os }}" =~ ("windows"|"ubuntu") ]]; then
-            for executable in ${executable_names}; do
+            for executable in ${EXECUTABLE_NAMES}; do
               strip "target/${{ matrix.target }}/release/${executable}"
             done
           fi
@@ -76,7 +101,7 @@ jobs:
         shell: bash
         run: |
           mkdir dist
-          for executable in ${executable_names}; do
+          for executable in ${EXECUTABLE_NAMES}; do
             if [[ "${{ matrix.os }}" =~ "windows" ]]; then
               cp "target/${{ matrix.target }}/release/${executable}.exe" "dist/"
             elif [[ "${{ matrix.os }}" =~ "ubuntu" ]]; then
@@ -94,7 +119,7 @@ jobs:
   
   publish:
     name: Publish
-    needs: [build]
+    needs: [env2, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v2
@@ -125,7 +150,7 @@ jobs:
               pkgname=etf_image_tools-$TAG-$platform
               mkdir tmp/$pkgname
               mv ${dir}/* tmp/$pkgname/
-              for executable in ${executable_names}; do
+              for executable in ${EXECUTABLE_NAMES}; do
                 if [[ $platform =~ "windows" ]]; then
                   chmod +x tmp/$pkgname/${executable}.exe
                 elif [[ $platform =~ "linux" ]]; then
