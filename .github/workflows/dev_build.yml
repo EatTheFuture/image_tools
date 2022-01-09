@@ -5,11 +5,32 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  executable_names: hdri_merge lut_maker ocio_maker
-
+  EXECUTABLE_NAMES: hdri_merge lut_maker ocio_maker
 jobs:
+  build-info:
+    # Because github actions don't let us set dynamic
+    # environment variables.
+    name: Get build info
+    runs-on: ubuntu-latest
+    outputs:
+      hash: ${{ steps.vars.outputs.HASH }}
+      date: ${{ steps.vars.outputs.DATE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Get build info
+        id: vars
+        shell: bash
+        run: |
+          BUILD_HASH=$(git rev-parse --short "$GITHUB_SHA")
+          BUILD_DATE=$(date +'%Y-%m-%d')
+          echo "::set-output name=HASH::$BUILD_HASH"
+          echo "::set-output name=DATE::$BUILD_DATE"
+
   dev-build:
     name: Development Build
+    needs: [build-info]
     runs-on: ${{ matrix.os }}   
     strategy:
       matrix:
@@ -69,7 +90,7 @@ jobs:
       #   shell: bash
       #   run: |
       #     if [[ ! "${{ matrix.os }}" =~ ("windows"|"ubuntu") ]]; then
-      #       for executable in ${executable_names}; do
+      #       for executable in ${EXECUTABLE_NAMES}; do
       #         strip "target/${{ matrix.target }}/release-debug/${executable}"
       #       done
       #     fi
@@ -78,7 +99,7 @@ jobs:
         shell: bash
         run: |
           mkdir dist
-          for executable in ${executable_names}; do
+          for executable in ${EXECUTABLE_NAMES}; do
             if [[ "${{ matrix.os }}" =~ "windows" ]]; then
               cp "target/${{ matrix.target }}/release-debug/${executable}.exe" "dist/"
             elif [[ "${{ matrix.os }}" =~ "ubuntu" ]]; then
@@ -96,7 +117,7 @@ jobs:
   
   publish:
     name: Publish
-    needs: [dev-build]
+    needs: [build-info, dev-build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v2
@@ -114,10 +135,10 @@ jobs:
 
           for dir in files-* ; do
               platform=${dir#"files-"}
-              pkgname=etf_image_tools-dev_build-$platform
+              pkgname=etf_image_tools-dev-${{ needs.build-info.outputs.date }}-${{ needs.build-info.outputs.hash }}-$platform
               mkdir tmp/$pkgname
               mv ${dir}/* tmp/$pkgname/
-              for executable in ${executable_names}; do
+              for executable in ${EXECUTABLE_NAMES}; do
                 if [[ $platform =~ "windows" ]]; then
                   chmod +x tmp/$pkgname/${executable}.exe
                 elif [[ $platform =~ "linux" ]]; then
@@ -140,7 +161,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/*
           file_glob: true
-          tag: dev-build
-          release_name: Development Build
+          tag: dev-build-${{ needs.build-info.outputs.date }}-${{ needs.build-info.outputs.hash }}
+          release_name: Dev Build (${{ needs.build-info.outputs.date }} ${{ needs.build-info.outputs.hash }})
           overwrite: true
           prerelease: true
