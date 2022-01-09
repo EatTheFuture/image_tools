@@ -11,6 +11,8 @@
 - Allow users to manually specify custom color space chromaticities.
 - Can now re-open its own configs for further editing.
 
+### Bug Fixes
+- Opening file dialogs would sometimes crash on MacOS (issue #5).
 
 ## [0.2.2] - 2021-12-21
 
