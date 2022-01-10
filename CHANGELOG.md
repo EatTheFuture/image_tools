@@ -13,6 +13,7 @@
 
 ### Bug Fixes
 - Opening file dialogs would sometimes crash on MacOS (issue #5).
+- HDRI Merge wasn't accounting for sensor noise floors properly, which could lead to incorrectly noisy results in dark areas.
 
 ## [0.2.2] - 2021-12-21
 
