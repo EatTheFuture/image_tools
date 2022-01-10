@@ -26,15 +26,17 @@ impl ExposureMapping {
     ) -> Self {
         assert_eq!(h1.total_samples, h2.total_samples);
 
+        let floor_i1 = (floor * (h1.buckets.len() - 1) as f32) as usize;
+        let floor_i2 = (floor * (h2.buckets.len() - 1) as f32) as usize;
         let norm1 = 1.0 / (h1.buckets.len() - 1) as f32;
         let norm2 = 1.0 / (h2.buckets.len() - 1) as f32;
 
         // Build the mapping curve.
         let mut curve = Vec::new();
-        let mut i1 = 1;
-        let mut i2 = 1;
-        let mut seg1 = (0, h1.buckets[0]);
-        let mut seg2 = (0, h2.buckets[0]);
+        let mut i1 = floor_i1 + 1;
+        let mut i2 = floor_i2 + 1;
+        let mut seg1 = (0, h1.buckets[floor_i1]);
+        let mut seg2 = (0, h2.buckets[floor_i2]);
         let mut prev_plot = 0;
         while i1 < h1.buckets.len() && i2 < h2.buckets.len() {
             // Plot a point.
@@ -73,13 +75,15 @@ impl ExposureMapping {
         curve.dedup_by_key(|n| n.1);
 
         // Create curves optimized for fast eval.
-        let res = 2048;
+        let res = h1.buckets.len().max(h2.buckets.len()) * 8;
         let mut x_curve = Vec::with_capacity(res);
         let mut y_curve = Vec::with_capacity(res);
-        for i in 0..res {
-            let n = i as f32 / (res - 1) as f32;
-            x_curve.push(lerp_curve_at_x(&curve, n));
-            y_curve.push(lerp_curve_at_y(&curve, n));
+        if !curve.is_empty() {
+            for i in 0..res {
+                let n = i as f32 / (res - 1) as f32;
+                x_curve.push(lerp_curve_at_x(&curve, n));
+                y_curve.push(lerp_curve_at_y(&curve, n));
+            }
         }
 
         ExposureMapping {
