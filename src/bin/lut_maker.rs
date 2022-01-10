@@ -1242,18 +1242,29 @@ impl AppMain {
                             if status.lock().is_canceled() {
                                 return;
                             }
-                            for j in 0..1 {
-                                let j = j + 1;
-                                if (i + j) < histograms[chan].len() {
-                                    mappings.push(ExposureMapping::from_histograms(
-                                        &histograms[chan][i].0,
-                                        &histograms[chan][i + j].0,
-                                        histograms[chan][i].1,
-                                        histograms[chan][i + j].1,
-                                        floor[chan],
-                                        ceiling[chan],
-                                    ));
+
+                            // Find the histogram with closest to 2x the exposure of this one.
+                            let mut other_hist_i = i;
+                            let mut best_ratio: f32 = -std::f32::INFINITY;
+                            for j in (i + 1)..histograms[chan].len() {
+                                let ratio = histograms[chan][j].1 / histograms[chan][i].1;
+                                if (ratio - 2.0).abs() > (best_ratio - 2.0).abs() {
+                                    break;
                                 }
+                                other_hist_i = j;
+                                best_ratio = ratio;
+                            }
+
+                            // Compute and add the exposure mapping.
+                            if other_hist_i > i {
+                                mappings.push(ExposureMapping::from_histograms(
+                                    &histograms[chan][i].0,
+                                    &histograms[chan][other_hist_i].0,
+                                    histograms[chan][i].1,
+                                    histograms[chan][other_hist_i].1,
+                                    floor[chan],
+                                    ceiling[chan],
+                                ));
                             }
                         }
                     }
