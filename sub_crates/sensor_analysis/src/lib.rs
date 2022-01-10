@@ -17,13 +17,17 @@ pub use exposure_mapping::ExposureMapping;
 /// example, if the input exposure mappings are from sRGB images, the
 /// returned lookup table would convert linear -> sRGB gamma.
 ///
-/// Also returns the average error of the fit.
-pub fn estimate_transfer_function(histograms: &[&[(Histogram, f32)]]) -> (Vec<Vec<f32>>, f32) {
+/// Also returns the estimated floor and ceiling of the image for each
+/// channel, and an average error of the fit.
+pub fn estimate_transfer_function(
+    histograms: &[&[(Histogram, f32)]],
+) -> (Vec<Vec<f32>>, Vec<(f32, f32)>, f32) {
     if histograms[0].len() < 2 || histograms[1].len() < 2 || histograms[2].len() < 2 {
         // We don't have enough histograms to infer anything from, so
         // just assume linear.
         return (
-            vec![vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]],
+            (0..histograms.len()).map(|_| vec![0.0, 1.0]).collect(),
+            (0..histograms.len()).map(|_| (0.0, 1.0)).collect(),
             std::f32::INFINITY,
         );
     }
@@ -80,6 +84,11 @@ pub fn estimate_transfer_function(histograms: &[&[(Histogram, f32)]]) -> (Vec<Ve
                     c * floor_ceil_norm,
                 )
             })
+            .collect(),
+        floor_ceil_pairs
+            .iter()
+            .copied()
+            .map(|(f, c)| (f * floor_ceil_norm, c * floor_ceil_norm))
             .collect(),
         err,
     )

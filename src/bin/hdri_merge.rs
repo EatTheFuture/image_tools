@@ -620,11 +620,12 @@ impl AppMain {
             }
 
             // Estimate linearizating curve.
-            let (inv_mapping, _) = sensor_analysis::estimate_transfer_function(&[
-                &histograms[0],
-                &histograms[1],
-                &histograms[2],
-            ]);
+            let (inv_mapping, floor_ceil_pairs, _) =
+                sensor_analysis::estimate_transfer_function(&[
+                    &histograms[0],
+                    &histograms[1],
+                    &histograms[2],
+                ]);
 
             // Merge images.
             let mut hdri_merger = HDRIMerger::new(width, height);
@@ -641,6 +642,7 @@ impl AppMain {
                 hdri_merger.add_image(
                     &src_img.image,
                     src_img.info.exposure.unwrap_or(1.0),
+                    &floor_ceil_pairs,
                     &inv_mapping,
                     img_i == 0,
                     img_i == img_len - 1,
@@ -817,6 +819,7 @@ impl HDRIMerger {
         &mut self,
         img: &image::RgbImage,
         exposure: f32,
+        floor_ceil: &[(f32, f32)],
         linearizing_curves: &[Vec<f32>],
         is_lowest_exposed: bool,
         is_highest_exposed: bool,
@@ -824,11 +827,36 @@ impl HDRIMerger {
         debug_assert_eq!(self.width, img.width() as usize);
         debug_assert_eq!(self.height, img.height() as usize);
 
-        let calc_weight = |n: f32| -> f32 {
+        let r_floor = floor_ceil[0].0;
+        let r_norm = 1.0 / (floor_ceil[0].1 - floor_ceil[0].0);
+        let g_floor = floor_ceil[1].0;
+        let g_norm = 1.0 / (floor_ceil[1].1 - floor_ceil[1].0);
+        let b_floor = floor_ceil[2].0;
+        let b_norm = 1.0 / (floor_ceil[2].1 - floor_ceil[2].0);
+
+        let calc_weight = |encoded_rgb: (f32, f32, f32), linear_rgb: (f32, f32, f32)| -> f32 {
+            let r = (encoded_rgb.0 - r_floor) * r_norm;
+            let g = (encoded_rgb.1 - g_floor) * g_norm;
+            let b = (encoded_rgb.2 - b_floor) * b_norm;
+            let (lr, lg, lb) = linear_rgb;
+
+            if r.min(g).min(b).min(lr).min(lg).min(lb) < 0.0 {
+                return 0.0;
+            }
+
+            let n = if r.max(g).max(b) >= 1.0 {
+                // Make sure clipped colors are treated as such.
+                1.0
+            } else {
+                // Otherwise use the average because it seems to
+                // work the best in practice.
+                ((r + g + b) * (1.0 / 3.0)).min(1.0)
+            };
+
             // Triangle weight.
             let tri = if (is_lowest_exposed && n > 0.5) || (is_highest_exposed && n < 0.5) {
                 // For highest/lowest exposed image, make the appropriate
-                // half constant 1.0 instead of sloping down to zero.
+                // half a constant 1.0 instead of sloping down to zero.
                 1.0
             } else {
                 (0.5 - (n - 0.5).abs()) * 2.0
@@ -839,14 +867,17 @@ impl HDRIMerger {
         };
 
         let inv_exposure = 1.0 / exposure;
+        let quant_norm = 1.0 / 255.0;
         for (i, pixel) in img.pixels().enumerate() {
-            let r = pixel[0] as f32 / 255.0;
-            let g = pixel[1] as f32 / 255.0;
-            let b = pixel[2] as f32 / 255.0;
+            let r = pixel[0] as f32 * quant_norm;
+            let g = pixel[1] as f32 * quant_norm;
+            let b = pixel[2] as f32 * quant_norm;
+
             let r_linear = eval_transfer_function_lut(&linearizing_curves[0][..], r);
             let g_linear = eval_transfer_function_lut(&linearizing_curves[1][..], g);
             let b_linear = eval_transfer_function_lut(&linearizing_curves[2][..], b);
-            let weight = calc_weight(r.max(g).max(b));
+
+            let weight = calc_weight((r, g, b), (r_linear, g_linear, b_linear));
 
             self.pixels[i][0] += r_linear * inv_exposure * weight;
             self.pixels[i][1] += g_linear * inv_exposure * weight;
