@@ -69,7 +69,7 @@ impl OCIOConfig {
         }
         for path in self.search_path.iter() {
             if path.is_relative() {
-                crate::ensure_dir_exists(&path)?;
+                crate::ensure_dir_exists(&dir_path.join(path))?;
             }
         }
 
