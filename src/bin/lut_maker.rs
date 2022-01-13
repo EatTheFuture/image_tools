@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::{egui, epi};
 
-use sensor_analysis::Histogram;
+use sensor_analysis::{ExposureMapping, Histogram};
 use shared_data::Shared;
 
 use lib::ImageInfo;
@@ -40,6 +40,7 @@ fn main() {
 
                 sensor_floor: [0.0; 3],
                 sensor_ceiling: [1.0; 3],
+                exposure_mappings: Vec::new(),
 
                 transfer_function_type: TransferFunction::Estimated,
                 transfer_function_resolution: 4096,
@@ -82,6 +83,7 @@ struct UIData {
     lens_cap_thumbnails: Vec<(egui::TextureId, usize, usize, ImageInfo)>, // (tex_id, width, height, info)
     sensor_floor: [f32; 3],
     sensor_ceiling: [f32; 3],
+    exposure_mappings: Vec<ExposureMapping>,
 
     transfer_function_type: TransferFunction,
     transfer_function_resolution: usize,
@@ -958,6 +960,9 @@ impl AppMain {
                 }
             }
         });
+
+        // Update the exposure mappings.
+        self.compute_exposure_mappings();
     }
 
     fn remove_bracket_image(&mut self, set_index: usize, image_index: usize, frame: &epi::Frame) {
@@ -993,6 +998,9 @@ impl AppMain {
         {
             ui_data.selected_bracket_image_index.1 -= 1;
         }
+
+        // Update the exposure mappings.
+        self.compute_exposure_mappings();
     }
 
     fn remove_bracket_image_set(&mut self, set_index: usize, frame: &epi::Frame) {
@@ -1029,6 +1037,9 @@ impl AppMain {
                 ui_data.selected_bracket_image_index.0 -= 1;
             }
         }
+
+        // Update the exposure mappings.
+        self.compute_exposure_mappings();
     }
 
     fn add_lens_cap_image_files<'a, I: Iterator<Item = &'a Path>>(
@@ -1214,20 +1225,13 @@ impl AppMain {
             });
     }
 
-    fn estimate_transfer_curve(&self) {
-        use sensor_analysis::{emor, ExposureMapping};
-
+    fn compute_exposure_mappings(&self) {
         let bracket_image_sets = self.bracket_image_sets.clone_ref();
-        let transfer_function_tables = self.transfer_function_tables.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
-            .add_job("Estimate Transfer Function", move |status| {
-                ui_data.lock_mut().transfer_function_type = TransferFunction::Estimated;
-                let total_rounds = ui_data.lock().rounds;
-
+            .add_job("Compute Exposure Mappings", move |status| {
                 let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
-
                 let floor = ui_data.lock().sensor_floor;
                 let ceiling = ui_data.lock().sensor_ceiling;
 
@@ -1270,6 +1274,29 @@ impl AppMain {
                     }
                 }
 
+                ui_data.lock_mut().exposure_mappings = mappings;
+            });
+    }
+
+    fn estimate_transfer_curve(&self) {
+        use sensor_analysis::emor;
+
+        // Make sure the exposure mappings are up-to-date.
+        self.compute_exposure_mappings();
+
+        let transfer_function_tables = self.transfer_function_tables.clone_ref();
+        let ui_data = self.ui_data.clone_ref();
+
+        self.job_queue
+            .add_job("Estimate Transfer Function", move |status| {
+                ui_data.lock_mut().transfer_function_type = TransferFunction::Estimated;
+                let total_rounds = ui_data.lock().rounds;
+
+                let mappings = ui_data.lock().exposure_mappings.clone();
+                if mappings.is_empty() {
+                    return;
+                }
+
                 // Estimate transfer function.
                 let rounds_per_update = (1000 / mappings.len()).max(1);
                 let mut estimator = emor::EmorEstimator::new(&mappings);
@@ -1290,9 +1317,9 @@ impl AppMain {
                     let (inv_emor_factors, err) = estimator.current_estimate();
                     let mut curves: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
                     for i in 0..3 {
-                        curves[i] =
-                            // emor::inv_emor_factors_to_curve(&inv_emor_factors, floor[i], ceiling[i]);
-                            emor::inv_emor_factors_to_curve(&inv_emor_factors, 0.0, 1.0);
+                        // The (0.0, 1.0) floor/ceil here is because we handle the
+                        // floor/ceil adjustment dynamically when previewing and exporting.
+                        curves[i] = emor::inv_emor_factors_to_curve(&inv_emor_factors, 0.0, 1.0);
                     }
 
                     // Store the curve and the preview.
