@@ -695,32 +695,31 @@ impl epi::App for AppMain {
                 });
             }
 
-            ui.add_space(16.0);
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
 
-            // "To linear" / "From linear" / "Mapping" view switch.
-            if self.ui_data.lock().transfer_function_type != TransferFunction::Estimated
-                || self.ui_data.lock().transfer_function_preview.is_some()
-            {
-                ui.horizontal(|ui| {
-                    ui.radio_value(
-                        &mut self.ui_data.lock_mut().preview_mode,
-                        PreviewMode::ToLinear,
-                        "To Linear",
-                    );
-                    ui.radio_value(
-                        &mut self.ui_data.lock_mut().preview_mode,
-                        PreviewMode::FromLinear,
-                        "From Linear",
-                    );
-                    ui.radio_value(
-                        &mut self.ui_data.lock_mut().preview_mode,
-                        PreviewMode::ExposureMappings,
-                        "Mappings",
-                    );
-                });
-            }
+            // "To linear" / "From linear" / "Exposures Plot" view switch.
+            ui.horizontal(|ui| {
+                ui.label("View: ");
+                ui.radio_value(
+                    &mut self.ui_data.lock_mut().preview_mode,
+                    PreviewMode::ToLinear,
+                    "To Linear",
+                );
+                ui.radio_value(
+                    &mut self.ui_data.lock_mut().preview_mode,
+                    PreviewMode::FromLinear,
+                    "From Linear",
+                );
+                ui.radio_value(
+                    &mut self.ui_data.lock_mut().preview_mode,
+                    PreviewMode::ExposureMappings,
+                    "Bracketed Exposures Plot",
+                );
+            });
 
-            // Transfer function/mapping graph.
+            // Transfer function/exposures graph.
             {
                 use egui::widgets::plot::{Line, Plot, Points, Value, Values};
                 let ui_data = self.ui_data.lock();
@@ -730,184 +729,194 @@ impl epi::App for AppMain {
                 let show_from_linear_graph = ui_data.preview_mode == PreviewMode::FromLinear;
                 let colors = &[lib::colors::RED, lib::colors::GREEN, lib::colors::BLUE];
 
-                if ui_data.transfer_function_type == TransferFunction::Estimated {
-                    // Estimated curve.
-                    if let Some((luts, err)) = &ui_data.transfer_function_preview {
-                        let fcr: Vec<_> = (0..3)
-                            .map(|i| {
-                                let floor = lerp_slice(&luts[i], floor[i]);
-                                let ceil = lerp_slice(&luts[i], ceiling[i]);
-                                let norm = 1.0 / (ceil - floor);
-                                (floor, ceil, norm)
-                            })
-                            .collect();
 
-                        if ui_data.preview_mode == PreviewMode::ExposureMappings {
-                            // Exposure mappings.
-                            Plot::new("Mappings Graph").show(ui, |plot| {
+                // Exposure mappings plot view.
+                if ui_data.preview_mode == PreviewMode::ExposureMappings {
+                    // Normalized to-linear luts.
+                    let luts: Vec<Vec<f32>> = if ui_data.transfer_function_type == TransferFunction::Estimated {
+                        let simple = [
+                            vec![0.0, 1.0],
+                            vec![0.0, 1.0],
+                            vec![0.0, 1.0],
+                        ];
+                        let luts = if let Some((luts, _)) = &ui_data.transfer_function_preview {
+                            luts
+                        } else {
+                            &simple
+                        };
+
+                        (0..3).map(|chan| {
+                            let out_floor = lerp_slice(&luts[chan], floor[chan]);
+                            let out_ceil = lerp_slice(&luts[chan], ceiling[chan]);
+                            let out_norm = 1.0 / (out_ceil - out_floor);
+                            luts[chan].iter().map(|y| {
+                                (y - out_floor) * out_norm
+                            }).collect()
+                        }).collect()
+                    } else {
+                        let res = ui_data.transfer_function_resolution;
+                        let res_norm = 1.0 / (res - 1) as f32;
+                        (0..3).map(|chan|
+                            (0..res).map(|i| {
+                                let x = i as f32 * res_norm;
+                                ui_data.transfer_function_type.to_linear_fc(
+                                    x,
+                                    floor[chan],
+                                    ceiling[chan],
+                                    true,
+                                )
+                            }).collect()
+                        ).collect()
+                    };
+                    let luts = &luts;
+
+                    // The graph plot.
+                    Plot::new("Exposure mappings Graph")
+                        .data_aspect(1.0)
+                        .show(ui, |plot| {
+                            if ui_data.exposure_mappings[0].is_empty() {
+                                plot.text(egui::widgets::plot::Text::new(
+                                    egui::widgets::plot::Value { x: 0.5, y: 0.5 },
+                                    "Two or more bracketed exposure images needed to generate data.",
+                                ));
+                            } else {
+                                plot.line(
+                                    Line::new(Values::from_values_iter(
+                                        [Value::new(0.0, 0.0), Value::new(1.0, 1.0)]
+                                            .iter()
+                                            .copied(),
+                                    ))
+                                    .color(lib::colors::GRAY),
+                                );
                                 for chan in 0..3 {
-                                    let eval = |x: f32| {
-                                        let lut: &[f32] = &luts[chan][..];
-                                        let (out_floor, _, out_norm) = fcr[chan];
-                                        let y = lerp_slice(lut, x);
-                                        (y - out_floor) * out_norm
-                                    };
                                     plot.points(Points::new(Values::from_values_iter(
                                         ui_data.exposure_mappings[chan]
                                             .iter()
                                             .map(|m| {
                                                 let norm = m.exposure_ratio;
                                                 m.curve.iter().map(move |(x, y)| {
-                                                    Value::new(eval(*x) * norm, eval(*y))
+                                                    Value::new(
+                                                        lerp_slice(&luts[chan], *x) * norm,
+                                                        lerp_slice(&luts[chan], *y),
+                                                    )
                                                 })
                                             })
                                             .flatten(),
                                     )));
                                 }
-                            });
-                        } else {
-                            // Transfer function.
-                            Plot::new("Transfer Function Graph").data_aspect(1.0).show(
-                                ui,
-                                |plot| {
-                                    plot.text(egui::widgets::plot::Text::new(
-                                        egui::widgets::plot::Value { x: 0.5, y: -0.05 },
-                                        format!("Average error: {}", err),
-                                    ));
+                            }
+                        });
+                }
+                // Estimated transfer function view.
+                else if ui_data.transfer_function_type == TransferFunction::Estimated {
+                    if let Some((luts, err)) = &ui_data.transfer_function_preview {
+                        Plot::new("Transfer Function Graph")
+                            .data_aspect(1.0)
+                            .show(ui, |plot| {
+                                plot.text(egui::widgets::plot::Text::new(
+                                    egui::widgets::plot::Value { x: 0.5, y: -0.05 },
+                                    format!("Average error: {}", err),
+                                ));
 
-                                    for i in 0..3 {
-                                        let (out_floor, _, out_norm) = fcr[i];
-                                        let x_norm = 1.0 / (luts[i].len() - 1) as f32;
-                                        plot.line(
-                                            Line::new(Values::from_values_iter(
-                                                luts[i].iter().copied().enumerate().map(
-                                                    |(idx, y)| {
-                                                        let x = idx as f32 * x_norm;
-                                                        if show_from_linear_graph {
-                                                            Value::new(
-                                                                (y - out_floor) * out_norm,
-                                                                x,
-                                                            )
-                                                        } else {
-                                                            Value::new(
-                                                                x,
-                                                                (y - out_floor) * out_norm,
-                                                            )
-                                                        }
-                                                    },
-                                                ),
-                                            ))
-                                            .color(colors[i]),
-                                        );
-                                    }
-                                },
-                            );
-                        }
+                                for chan in 0..3 {
+                                    let out_floor = lerp_slice(&luts[chan], floor[chan]);
+                                    let out_ceil = lerp_slice(&luts[chan], ceiling[chan]);
+                                    let out_norm = 1.0 / (out_ceil - out_floor);
+                                    let x_norm = 1.0 / (luts[chan].len() - 1) as f32;
+                                    plot.line(
+                                        Line::new(Values::from_values_iter(luts[chan].iter().enumerate().map(
+                                            |(idx, y)| {
+                                                let x = idx as f32 * x_norm;
+                                                let y = (y - out_floor) * out_norm;
+                                                if show_from_linear_graph {
+                                                    Value::new(y, x)
+                                                } else {
+                                                    Value::new(x, y)
+                                                }
+                                            },
+                                        )))
+                                        .color(colors[chan]),
+                                    );
+                                }
+                            });
+                    } else {
+                        Plot::new("Transfer Function Graph")
+                            .data_aspect(1.0)
+                            .show(ui, |plot| {
+                                plot.text(egui::widgets::plot::Text::new(
+                                    egui::widgets::plot::Value { x: 0.5, y: 0.5 },
+                                    "No estimated or selected transfer function.",
+                                ));
+                            });
                     }
-                } else {
-                    // Fixed curve.
+                }
+                // Fixed transfer function view.
+                else {
                     let normalize = ui_data.normalize_transfer_function;
                     let res = ui_data.transfer_function_resolution;
                     let res_norm = 1.0 / (res - 1) as f32;
                     let function = ui_data.transfer_function_type;
 
-                    if ui_data.preview_mode == PreviewMode::ExposureMappings {
-                        // Exposure mappings.
-                        Plot::new("Mappings Graph").show(ui, |plot| {
+                    Plot::new("Transfer Function Graph")
+                        .data_aspect(1.0)
+                        .show(ui, |plot| {
                             for chan in 0..3 {
-                                let lut: Vec<f32> = (0..res)
-                                    .map(|i| {
-                                        let x = i as f32 * res_norm;
-                                        function.to_linear_fc(
-                                            x,
-                                            floor[chan],
-                                            ceiling[chan],
-                                            // `true` because we always want to visualize this,
-                                            // normalized, so it's easier to compare.
-                                            true,
-                                        )
-                                    })
-                                    .collect();
-                                let rlut = &lut[..]; // Work arround closure rules.
-                                plot.points(Points::new(Values::from_values_iter(
-                                    ui_data.exposure_mappings[chan]
-                                        .iter()
-                                        .map(|m| {
-                                            let norm = m.exposure_ratio;
-                                            m.curve.iter().map(move |(x, y)| {
+                                if show_from_linear_graph {
+                                    let range_min =
+                                        (0..3).fold(std::f32::INFINITY, |a, i| {
+                                            a.min(function.to_linear_fc(
+                                                0.0, floor[i], ceiling[i], normalize,
+                                            ))
+                                        });
+                                    let range_max =
+                                        (0..3).fold(-std::f32::INFINITY, |a, i| {
+                                            a.max(function.to_linear_fc(
+                                                1.0, floor[i], ceiling[i], normalize,
+                                            ))
+                                        });
+                                    let extent = range_max - range_min;
+                                    plot.line(
+                                        Line::new(Values::from_values_iter((0..res).map(
+                                            |i| {
+                                                let x =
+                                                    range_min + (i as f32 * res_norm * extent);
                                                 Value::new(
-                                                    lerp_slice(rlut, *x) * norm,
-                                                    lerp_slice(rlut, *y),
-                                                )
-                                            })
-                                        })
-                                        .flatten(),
-                                )));
-                            }
-                        });
-                    } else {
-                        // Transfer function.
-                        Plot::new("Transfer Function Graph")
-                            .data_aspect(1.0)
-                            .show(ui, |plot| {
-                                for chan in 0..3 {
-                                    if show_from_linear_graph {
-                                        let range_min =
-                                            (0..3).fold(std::f32::INFINITY, |a, i| {
-                                                a.min(function.to_linear_fc(
-                                                    0.0, floor[i], ceiling[i], normalize,
-                                                ))
-                                            });
-                                        let range_max =
-                                            (0..3).fold(-std::f32::INFINITY, |a, i| {
-                                                a.max(function.to_linear_fc(
-                                                    1.0, floor[i], ceiling[i], normalize,
-                                                ))
-                                            });
-                                        let extent = range_max - range_min;
-                                        plot.line(
-                                            Line::new(Values::from_values_iter((0..res).map(
-                                                |i| {
-                                                    let x =
-                                                        range_min + (i as f32 * res_norm * extent);
-                                                    Value::new(
-                                                        x,
-                                                        function
-                                                            .from_linear_fc(
-                                                                x,
-                                                                floor[chan],
-                                                                ceiling[chan],
-                                                                normalize,
-                                                            )
-                                                            .max(0.0)
-                                                            .min(1.0),
-                                                    )
-                                                },
-                                            )))
-                                            .color(colors[chan]),
-                                        );
-                                    } else {
-                                        plot.line(
-                                            Line::new(Values::from_values_iter((0..res).map(
-                                                |i| {
-                                                    let x = i as f32 * res_norm;
-                                                    Value::new(
-                                                        x,
-                                                        function.to_linear_fc(
+                                                    x,
+                                                    function
+                                                        .from_linear_fc(
                                                             x,
                                                             floor[chan],
                                                             ceiling[chan],
                                                             normalize,
-                                                        ),
-                                                    )
-                                                },
-                                            )))
-                                            .color(colors[chan]),
-                                        );
-                                    }
+                                                        )
+                                                        .max(0.0)
+                                                        .min(1.0),
+                                                )
+                                            },
+                                        )))
+                                        .color(colors[chan]),
+                                    );
+                                } else {
+                                    plot.line(
+                                        Line::new(Values::from_values_iter((0..res).map(
+                                            |i| {
+                                                let x = i as f32 * res_norm;
+                                                Value::new(
+                                                    x,
+                                                    function.to_linear_fc(
+                                                        x,
+                                                        floor[chan],
+                                                        ceiling[chan],
+                                                        normalize,
+                                                    ),
+                                                )
+                                            },
+                                        )))
+                                        .color(colors[chan]),
+                                    );
                                 }
-                            });
-                    }
+                            }
+                        });
                 }
             }
         });
@@ -1329,11 +1338,13 @@ impl AppMain {
                             }
 
                             // Find the histogram with closest to 2x the exposure of this one.
+                            const TARGET_RATIO: f32 = 2.0;
                             let mut other_hist_i = i;
                             let mut best_ratio: f32 = -std::f32::INFINITY;
                             for j in (i + 1)..histograms[chan].len() {
                                 let ratio = histograms[chan][j].1 / histograms[chan][i].1;
-                                if (ratio - 2.0).abs() > (best_ratio - 2.0).abs() {
+                                if (ratio - TARGET_RATIO).abs() > (best_ratio - TARGET_RATIO).abs()
+                                {
                                     break;
                                 }
                                 other_hist_i = j;

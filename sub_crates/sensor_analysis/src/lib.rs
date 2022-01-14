@@ -46,11 +46,12 @@ pub fn estimate_transfer_function(
     for chan in 0..histograms.len() {
         for i in 0..histograms[chan].len() {
             // Find the histogram with closest to 2x the exposure of this one.
+            const TARGET_RATIO: f32 = 2.0;
             let mut other_hist_i = i;
             let mut best_ratio: f32 = -std::f32::INFINITY;
             for j in (i + 1)..histograms[chan].len() {
                 let ratio = histograms[chan][j].1 / histograms[chan][i].1;
-                if (ratio - 2.0).abs() > (best_ratio - 2.0).abs() {
+                if (ratio - TARGET_RATIO).abs() > (best_ratio - TARGET_RATIO).abs() {
                     break;
                 }
                 other_hist_i = j;

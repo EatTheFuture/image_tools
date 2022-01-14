@@ -225,8 +225,7 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
                     (lerp_slice(&transfer_curve, n) - inv_floor) * inv_floor_ceil_norm
                 };
 
-                for i in 0..mapping.curve.len() {
-                    let (x, y) = mapping.curve[i];
+                for (x, y) in mapping.curve.iter().copied() {
                     if x.min(y) <= mapping.floor || y.max(x) >= mapping.ceiling {
                         continue;
                     }

@@ -68,10 +68,6 @@ impl ExposureMapping {
             }
         }
 
-        // Remove points that are duplicate in either dimension.
-        curve.dedup_by_key(|n| n.0);
-        curve.dedup_by_key(|n| n.1);
-
         // Create curves optimized for fast eval.
         let res = h1.buckets.len().max(h2.buckets.len()) * 8;
         let mut x_curve = Vec::with_capacity(res);
