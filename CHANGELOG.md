@@ -5,6 +5,7 @@
 
 ### New in LUT Maker
 - Add a "linear" transfer function option, for when you only want to use it for black levels/noise floor.
+- Add a "Bracketed Exposures Plot" view, to vizualize how well a transfer function linearizes colors.
 
 ### New in OCIO Maker
 - Add Blackmagic Design's Wide Gamut Gen4/Gen5 color space chromaticities.
