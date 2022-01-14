@@ -16,7 +16,7 @@ debug-assertions = true
 
 [package]
 name = "image_tools"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2018"
 
 [package.metadata.appimage]
