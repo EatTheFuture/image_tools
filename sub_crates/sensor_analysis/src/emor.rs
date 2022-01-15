@@ -207,7 +207,6 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
             let inv_floor = lerp_slice(&transfer_curve, mapping.floor);
             let inv_ceil = lerp_slice(&transfer_curve, mapping.ceiling);
             let inv_floor_ceil_norm = 1.0 / (inv_ceil - inv_floor);
-            let floor_ceil_norm = 1.0 / (mapping.ceiling - mapping.floor);
 
             // Favor mappings with exposure ratios close to 2.0.
             let mapping_weight = if mapping.exposure_ratio < 2.0 {
@@ -225,15 +224,20 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
                     (lerp_slice(&transfer_curve, n) - inv_floor) * inv_floor_ceil_norm
                 };
 
+                // Compute the linearized points, and their weight.
+                let mut linear_points = Vec::new();
                 for (x, y) in mapping.curve.iter().copied() {
                     if x.min(y) <= mapping.floor || y.max(x) >= mapping.ceiling {
                         continue;
                     }
 
+                    let x_linear = eval(x) * mapping.exposure_ratio;
+                    let y_linear = eval(y);
+
                     // Weight points near the floor and ceiling lower, since they're
                     // more likely to be poor data.
                     let point_weight = {
-                        let n = (y - mapping.floor) * floor_ceil_norm;
+                        let n = y_linear.max(0.0).min(1.0);
                         let mut tmp = (2.0 * n) - 1.0;
                         for _ in 0..4 {
                             tmp = tmp * tmp;
@@ -241,12 +245,45 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
                         1.0 - tmp
                     };
 
+                    let x_xform = (x_linear * 0.5) + (y_linear * -0.5);
+                    let y_xform = (x_linear * 0.5) + (y_linear * 0.5);
+
+                    linear_points.push((x_xform, y_xform, point_weight));
+                }
+
+                if linear_points.len() >= 10 {
+                    // Estimate linear slope.
+                    let estimated_slope = {
+                        let mut slope = 0.0;
+                        let mut total_weight = 0.0;
+                        for pair in linear_points
+                            .windows(2)
+                            .skip(linear_points.len() / 4)
+                            .take(linear_points.len() / 2)
+                        {
+                            let (x1, y1, _) = pair[0];
+                            let (x2, y2, weight2) = pair[1];
+
+                            slope += (x2 - x1) / (y2 - y1) * weight2;
+                            total_weight += weight2;
+                        }
+                        slope / total_weight
+                    };
+
                     // Compute error.
-                    let x_linear = eval(x);
-                    let y_linear = eval(y);
-                    let err = (((x_linear / y_linear) * mapping.exposure_ratio) - 1.0).abs();
-                    mapping_err += err * point_weight * mapping_weight;
-                    mapping_err_weight += point_weight * mapping_weight;
+                    for pair in linear_points.windows(2) {
+                        let (x1, y1, _) = pair[0];
+                        let (x2, y2, weight2) = pair[1];
+
+                        let slope = (x2 - x1) / (y2 - y1);
+
+                        let err_linear = (estimated_slope - slope).abs();
+                        let err_map = x2.abs() / y2;
+                        mapping_err += (err_linear * err_linear + err_map * err_map).sqrt()
+                            * weight2
+                            * mapping_weight;
+                        mapping_err_weight += weight2 * mapping_weight;
+                    }
                 }
             }
 
