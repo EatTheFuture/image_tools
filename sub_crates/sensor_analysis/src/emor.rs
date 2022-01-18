@@ -8,6 +8,7 @@ use crate::utils::lerp_slice;
 include!(concat!(env!("OUT_DIR"), "/emor.inc"));
 
 const EMOR_FACTOR_COUNT: usize = 6;
+const MIN_SLOPE: f32 = 0.005;
 
 pub struct EmorEstimator<'a> {
     mappings: &'a [ExposureMapping],
@@ -167,7 +168,7 @@ pub fn inv_emor_factors_to_curve(
     }
 
     // Ensure monotonicity.
-    let min_diff = 0.005 / curve.len() as f32;
+    let min_diff = MIN_SLOPE / curve.len() as f32;
     for i in 1..curve.len() {
         if (curve[i] - curve[i - 1]) < min_diff {
             curve[i] = curve[i - 1] + min_diff;
@@ -179,22 +180,30 @@ pub fn inv_emor_factors_to_curve(
 
 fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
     // Compute the curve.
-    let transfer_curve: Vec<f32> = (0..INV_EMOR_TABLE[0].len())
+    let mut transfer_curve: Vec<f32> = (0..INV_EMOR_TABLE[0].len())
         .map(|i| inv_emor_at_index(emor_factors, i))
         .collect();
+    let min_diff = MIN_SLOPE / transfer_curve.len() as f32;
 
     // Penalize non-monotonic curves.
     let non_mono_err = {
         let mut err = 0.0;
-        let norm = 1.0 / INV_EMOR_TABLE[0].len() as f32;
+        let norm = 1.0 / (transfer_curve.len() - 1) as f32;
         let mut last_y = 0.0;
         for y in transfer_curve.iter().copied() {
-            let non_mono = (last_y - y).max(0.0);
+            let non_mono = (last_y - y + min_diff).max(0.0);
             last_y = y;
             err += non_mono * norm;
         }
         err
     };
+
+    // Make it monotonic by clamping.
+    for i in 1..transfer_curve.len() {
+        if (transfer_curve[i] - transfer_curve[i - 1]) < min_diff {
+            transfer_curve[i] = transfer_curve[i - 1] + min_diff;
+        }
+    }
 
     // Mapping point errors.
     let (point_err_sum, point_err_weight) = mappings
@@ -293,5 +302,5 @@ fn calc_emor_error(mappings: &[ExposureMapping], emor_factors: &[f32]) -> f32 {
 
     let point_err = point_err_sum / point_err_weight;
 
-    (non_mono_err * 512.0) + point_err
+    (non_mono_err * 8192.0) + point_err
 }
