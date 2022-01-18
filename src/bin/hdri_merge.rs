@@ -859,11 +859,13 @@ impl HDRIMerger {
                 // half a constant 1.0 instead of sloping down to zero.
                 1.0
             } else {
-                (0.5 - (n - 0.5).abs()) * 2.0
+                ((0.5 - (n - 0.5).abs()) * 4.0).min(1.0)
             };
 
             // Triangle -> smooth step weight.
-            tri * tri * (3.0 - 2.0 * tri)
+            let smooth = tri * tri * (3.0 - 2.0 * tri);
+
+            smooth * smooth * smooth
         };
 
         let inv_exposure = 1.0 / exposure;
