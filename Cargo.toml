@@ -21,6 +21,34 @@ edition = "2018"
 
 [package.metadata.appimage]
 auto_link = true
+auto_link_exclude_list = [
+    "ld-linux-*.so.*",
+    "libc.so*",
+    "libdl.so*",
+    "libpthread.so*",
+    "librt.so*",
+    "libresolv.so*",
+    "libm.so*",
+    "libGL.so*",
+    "libEGL.so*",
+    "libGLX.so*",
+    "libGLdispatch.so*",
+    "libwayland*.so.*",
+    "libX11.so*",
+    "libXau.so*",
+    "libXcomposite.so*",
+    "libXcursor.so*",
+    "libXdmcp.so*",
+    "libXext.so*",
+    "libXfixes.so*",
+    "libXinerama.so*",
+    "libXi.so*",
+    "libXrandr.so*",
+    "libXrender.so*",
+    "libxkbcommon.so*",
+    "libxcb.so*",
+    "libxcb-*.so.*",
+]
 
 [lib]
 name = "lib"
