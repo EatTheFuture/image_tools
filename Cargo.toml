@@ -22,6 +22,7 @@ edition = "2018"
 [package.metadata.appimage]
 auto_link = true
 auto_link_exclude_list = [
+    # Core libs.
     "ld-linux-*.so.*",
     "libc.so*",
     "libdl.so*",
@@ -29,6 +30,8 @@ auto_link_exclude_list = [
     "librt.so*",
     "libresolv.so*",
     "libm.so*",
+
+    # X11/Wayland stuff.
     "libGL.so*",
     "libEGL.so*",
     "libGLX.so*",
@@ -42,12 +45,47 @@ auto_link_exclude_list = [
     "libXext.so*",
     "libXfixes.so*",
     "libXinerama.so*",
+    "libXdamage.so*",
     "libXi.so*",
     "libXrandr.so*",
     "libXrender.so*",
     "libxkbcommon.so*",
     "libxcb.so*",
     "libxcb-*.so.*",
+
+    # GTK3/Gnome stuff.
+    "libgtk-*",
+    "libglib-*",
+    "libgdk-*",
+    "libgdk_*",
+    "libgobject-*",
+    "libgmodule-*",
+    "libatk-*",
+    "libgio-*",
+    "libcairo-*",
+    "libpango-*",
+    "libpangocairo-*",
+    "libpangoft2-*",
+
+    # Other stuff that GTK3 pulls in,
+    # and which are especially large.
+    "libepoxy.so*",
+    "libgcrypt.so",
+    "libharfbuzz.so*",
+    "libfreetype.so*",
+    "libsystemd.so*",
+    "libpixman-*",
+    "libpcre*",
+
+    # And yet other stuff that GTK3
+    # pulls in, and which just seems
+    # weird to include.
+    "libgpg-*",
+    "libmount.so*",
+    "libblkid.so*",
+    "libdbus-*",
+    "libatspi.so*",
+    "libselinux.so*",
 ]
 
 [lib]
@@ -56,7 +94,7 @@ path = "src/lib.rs"
 
 [dependencies]
 eframe = "0.16"
-rfd = { git = "https://github.com/PolyMeilex/rfd.git", rev = "83620471a3ce9bae", default-features = false }
+rfd = { git = "https://github.com/PolyMeilex/rfd.git", rev = "83620471a3ce9bae" }
 image = "0.23"
 rawloader = "0.37"
 kamadak-exif = "0.5"
