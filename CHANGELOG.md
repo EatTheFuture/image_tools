@@ -4,6 +4,15 @@
 ## [Unreleased]
 
 
+## [0.3.1] - 2022-01-20
+
+### General improvements
+- Slightly improved transfer function estimation in LUT Maker and HDRI Merge.
+
+### Bug Fixes
+- Appimages crashed on some Linux distributions due to improper library bundling.
+
+
 ## [0.3.0] - 2022-01-14
 
 ### New in LUT Maker
@@ -49,7 +58,8 @@
 First release!  Includes a basic HDRI merging tool.
 
 
-[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/EatTheFuture/image_tools/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/EatTheFuture/image_tools/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/EatTheFuture/image_tools/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/EatTheFuture/image_tools/compare/v0.2.0...v0.2.1

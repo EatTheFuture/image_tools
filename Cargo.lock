@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "egui_custom"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "eframe",
  "job_queue",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "hdr"
-version = "0.3.0"
+version = "0.3.1"
 
 [[package]]
 name = "heck"
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "image_tools"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "colorbox",
@@ -1239,7 +1239,7 @@ checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
 name = "job_queue"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "scheduled-thread-pool",
  "shared_data",
@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "ocio_gen"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "colorbox",
  "lzma-rs",
@@ -2034,7 +2034,7 @@ dependencies = [
 
 [[package]]
 name = "sensor_analysis"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "randomize",
  "rayon",
@@ -2088,7 +2088,7 @@ checksum = "ae1a47186c03a32177042e55dbc5fd5aee900b8e0069a8d70fba96a9375cd012"
 
 [[package]]
 name = "shared_data"
-version = "0.3.0"
+version = "0.3.1"
 
 [[package]]
 name = "shared_library"
