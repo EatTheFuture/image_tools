@@ -41,19 +41,25 @@ pub fn load_image(path: &Path) -> Result<SourceImage, ImageLoadError> {
                 .get_field(exif::Tag::ExposureTime, exif::In::PRIMARY)
                 .map(|n| &n.value)
             {
-                exposure_time = Some(n[0]);
+                if n[0].num != 0 && n[0].denom != 0 {
+                    exposure_time = Some(n[0]);
+                }
             }
             if let Some(&exif::Value::Rational(ref n)) = img_exif
                 .get_field(exif::Tag::FNumber, exif::In::PRIMARY)
                 .map(|n| &n.value)
             {
-                fstop = Some(n[0]);
+                if n[0].num != 0 && n[0].denom != 0 {
+                    fstop = Some(n[0]);
+                }
             }
             if let Some(Some(n)) = img_exif
                 .get_field(exif::Tag::PhotographicSensitivity, exif::In::PRIMARY)
                 .map(|n| n.value.get_uint(0))
             {
-                sensitivity = Some(n);
+                if n != 0 {
+                    sensitivity = Some(n);
+                }
             }
         }
 
@@ -61,12 +67,15 @@ pub fn load_image(path: &Path) -> Result<SourceImage, ImageLoadError> {
     };
 
     // Calculate over-all exposure.
-    let total_exposure =
-        if let (Some(exp), Some(fst), Some(sns)) = (exposure_time, fstop, sensitivity) {
+    let total_exposure = match (exposure_time, fstop, sensitivity) {
+        (Some(exp), Some(fst), Some(sns)) => {
             Some((sns as f64 * exp.to_f64() / (fst.to_f64() * fst.to_f64())) as f32)
-        } else {
-            None
-        };
+        }
+        (Some(exp), None, Some(sns)) => Some((sns as f64 * exp.to_f64()) as f32),
+        (Some(exp), Some(fst), None) => Some((exp.to_f64() / (fst.to_f64() * fst.to_f64())) as f32),
+        (Some(exp), None, None) => Some(exp.to_f64() as f32),
+        _ => None,
+    };
 
     // Fill in image info.
     let image_info = ImageInfo {
