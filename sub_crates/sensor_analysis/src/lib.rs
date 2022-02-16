@@ -114,7 +114,7 @@ pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> Option<
         // Floor.
         let ratio = histograms[i].1 / lowest_exposed.1;
         let tmp_i = ((ratio * LOOSENESS) as usize).min(bucket_count * 3 / 4);
-        if tmp_i > 0 {
+        if ratio >= 8.0 && tmp_i > 0 {
             let target_sum = histograms[i].0.sum_under(tmp_i);
             sensor_floor = sensor_floor.max(lowest_exposed.0.find_sum_lerp(target_sum));
         }
@@ -122,7 +122,7 @@ pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> Option<
         // Ceiling.
         let ratio = histograms[i].1 / highest_exposed.1;
         let tmp_i = ((bucket_count as f32 * ratio.powf(LOOSENESS)) as usize).max(bucket_count / 4);
-        if tmp_i < (bucket_count - 1) {
+        if ratio <= 0.125 && tmp_i < (bucket_count - 1) {
             let target_sum = histograms[i].0.sum_under(tmp_i);
             if target_sum > (total_samples / 2) {
                 sensor_ceiling = sensor_ceiling.min(highest_exposed.0.find_sum_lerp(target_sum));
