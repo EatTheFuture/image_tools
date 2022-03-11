@@ -396,7 +396,7 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 [[package]]
 name = "colorbox"
 version = "0.2.0"
-source = "git+https://github.com/cessen/colorbox?branch=master#f2c380f5b000fee27912a8eddf11dbfbe8900d15"
+source = "git+https://github.com/cessen/colorbox?branch=master#999ae5911790e243e038c929686bac4ab79c4070"
 
 [[package]]
 name = "concurrent-queue"

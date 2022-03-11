@@ -1619,7 +1619,11 @@ enum TransferFunction {
     CanonLog1,
     CanonLog2,
     CanonLog3,
+    DJIDlog,
+    FujifilmFlog,
     HLG,
+    NikonNlog,
+    PanasonicVlog,
     PQ,
     PQ_108,
     PQ_1000,
@@ -1642,6 +1646,10 @@ const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
     TransferFunction::CanonLog1,
     TransferFunction::CanonLog2,
     TransferFunction::CanonLog3,
+    TransferFunction::DJIDlog,
+    TransferFunction::FujifilmFlog,
+    TransferFunction::NikonNlog,
+    TransferFunction::PanasonicVlog,
     TransferFunction::SonySlog1,
     TransferFunction::SonySlog2,
     TransferFunction::SonySlog3,
@@ -1681,10 +1689,15 @@ impl TransferFunction {
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             Linear => n,
+
             CanonLog1 => canon_log1::to_linear(n),
             CanonLog2 => canon_log2::to_linear(n),
             CanonLog3 => canon_log3::to_linear(n),
+            DJIDlog => dji_dlog::to_linear(n),
+            FujifilmFlog => fujifilm_flog::to_linear(n),
             HLG => hlg::to_linear(n),
+            NikonNlog => nikon_nlog::to_linear(n),
+            PanasonicVlog => panasonic_vlog::to_linear(n),
             PQ => pq::to_linear(n),
             PQ_108 => pq::to_linear(n) * (1.0 / 108.0),
             PQ_1000 => pq::to_linear(n) * (1.0 / 1000.0),
@@ -1702,10 +1715,15 @@ impl TransferFunction {
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             Linear => n,
+
             CanonLog1 => canon_log1::from_linear(n),
             CanonLog2 => canon_log2::from_linear(n),
             CanonLog3 => canon_log3::from_linear(n),
+            DJIDlog => dji_dlog::from_linear(n),
+            FujifilmFlog => fujifilm_flog::from_linear(n),
             HLG => hlg::from_linear(n),
+            NikonNlog => nikon_nlog::from_linear(n),
+            PanasonicVlog => panasonic_vlog::from_linear(n),
             PQ => pq::from_linear(n),
             PQ_108 => pq::from_linear(n * 108.0),
             PQ_1000 => pq::from_linear(n * 1000.0),
@@ -1736,6 +1754,7 @@ impl TransferFunction {
         match *self {
             Estimated => panic!("No built-in function for an estimated transfer function."),
             Linear => (0.0, 1.0, 0.0, 1.0, 1.0),
+
             CanonLog1 => {
                 use canon_log1::*;
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
@@ -1748,7 +1767,23 @@ impl TransferFunction {
                 use canon_log3::*;
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
+            DJIDlog => {
+                use dji_dlog::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
+            FujifilmFlog => {
+                use fujifilm_flog::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
             HLG => (0.0, 1.0, 0.0, 1.0, 1.0),
+            NikonNlog => {
+                use nikon_nlog::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
+            PanasonicVlog => {
+                use panasonic_vlog::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
             PQ => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX, pq::LUMINANCE_MAX),
             PQ_108 => (
                 0.0,
@@ -1798,10 +1833,15 @@ impl TransferFunction {
         match *self {
             Estimated => "Estimated",
             Linear => "Linear",
+
             CanonLog1 => "Canon Log",
             CanonLog2 => "Canon Log 2",
             CanonLog3 => "Canon Log 3",
+            DJIDlog => "DJI D-Log",
+            FujifilmFlog => "Fujifilm F-Log",
             HLG => "Rec.2100 - HLG",
+            NikonNlog => "Nikon N-Log",
+            PanasonicVlog => "Panasonic V-Log",
             PQ => "Rec.2100 - PQ",
             PQ_108 => "Rec.2100 - PQ - 108 nits",
             PQ_1000 => "Rec.2100 - PQ - 1000 nits",
