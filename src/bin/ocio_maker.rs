@@ -316,6 +316,16 @@ impl epi::App for AppMain {
                                 );
                                 ui.selectable_value(
                                     &mut space.chroma_space,
+                                    ChromaSpace::DJIDGamut,
+                                    ChromaSpace::DJIDGamut.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
+                                    ChromaSpace::PanasonicVGamut,
+                                    ChromaSpace::PanasonicVGamut.ui_text(),
+                                );
+                                ui.selectable_value(
+                                    &mut space.chroma_space,
                                     ChromaSpace::ProPhoto,
                                     ChromaSpace::ProPhoto.ui_text(),
                                 );
@@ -1119,6 +1129,8 @@ enum ChromaSpace {
     AdobeWideGamutRGB,
     AlexaWideGamutRGB,
     BlackmagicWideGamutGen4,
+    DJIDGamut,
+    PanasonicVGamut,
     ProPhoto,
     RedWideGamutRGB,
     SGamut,
@@ -1144,6 +1156,8 @@ impl ChromaSpace {
             ChromaSpace::BlackmagicWideGamutGen4 => {
                 Some(colorbox::chroma::blackmagic::BMD_WIDE_GAMUT_GEN4)
             }
+            ChromaSpace::DJIDGamut => Some(colorbox::chroma::DJI_D_GAMUT),
+            ChromaSpace::PanasonicVGamut => Some(colorbox::chroma::PANASONIC_V_GAMUT),
             ChromaSpace::ProPhoto => Some(colorbox::chroma::PROPHOTO),
             ChromaSpace::RedWideGamutRGB => Some(colorbox::chroma::RED_WIDE_GAMUT_RGB),
             ChromaSpace::SGamut => Some(colorbox::chroma::sony::S_GAMUT),
@@ -1164,6 +1178,8 @@ impl ChromaSpace {
             ChromaSpace::AdobeWideGamutRGB => "Adobe Wide Gamut RGB",
             ChromaSpace::AlexaWideGamutRGB => "Alexa Wide Gamut RGB",
             ChromaSpace::BlackmagicWideGamutGen4 => "BMD Wide Gamut Gen4/Gen5",
+            ChromaSpace::DJIDGamut => "DJI D-Gamut",
+            ChromaSpace::PanasonicVGamut => "Panasonic V-Gamut",
             ChromaSpace::ProPhoto => "ProPhoto",
             ChromaSpace::RedWideGamutRGB => "RED Wide Gamut RGB",
             ChromaSpace::SGamut => "Sony S-Gamut / S-Gamut3",
@@ -1184,6 +1200,8 @@ impl ChromaSpace {
             ChromaSpace::AdobeWideGamutRGB => "AdobeWideGamutRGB",
             ChromaSpace::AlexaWideGamutRGB => "AlexaWideGamutRGB",
             ChromaSpace::BlackmagicWideGamutGen4 => "BlackmagicWideGamutGen4",
+            ChromaSpace::DJIDGamut => "DJIDGamut",
+            ChromaSpace::PanasonicVGamut => "PanasonicVGamut",
             ChromaSpace::ProPhoto => "ProPhoto",
             ChromaSpace::RedWideGamutRGB => "RedWideGamutRGB",
             ChromaSpace::SGamut => "SGamut",
@@ -1204,6 +1222,8 @@ impl ChromaSpace {
             "AdobeWideGamutRGB" => Some(ChromaSpace::AdobeWideGamutRGB),
             "AlexaWideGamutRGB" => Some(ChromaSpace::AlexaWideGamutRGB),
             "BlackmagicWideGamutGen4" => Some(ChromaSpace::BlackmagicWideGamutGen4),
+            "DJIDGamut" => Some(ChromaSpace::DJIDGamut),
+            "PanasonicVGamut" => Some(ChromaSpace::PanasonicVGamut),
             "ProPhoto" => Some(ChromaSpace::ProPhoto),
             "RedWideGamutRGB" => Some(ChromaSpace::RedWideGamutRGB),
             "SGamut" => Some(ChromaSpace::SGamut),
