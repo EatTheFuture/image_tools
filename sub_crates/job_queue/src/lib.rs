@@ -37,7 +37,7 @@ impl JobQueue {
 
     pub fn add_job<F>(&self, name: &str, job: F)
     where
-        F: FnOnce(&Shared<JobStatus>) + Send + std::panic::UnwindSafe + 'static,
+        F: FnOnce(&Shared<JobStatus>) + Send + 'static,
     {
         let job_name1 = name.to_string();
         let job_name2 = name.to_string();
@@ -54,7 +54,12 @@ impl JobQueue {
                 }
 
                 // Actually run the job.
-                if let Err(_) = std::panic::catch_unwind(|| job(&job_status)) {
+                // TODO: this use of `AssertUndwindSafe` is a workaround
+                // for the way `egui::Context` works, because we pass it
+                // around frequently.
+                if let Err(_) =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&job_status)))
+                {
                     job_status
                         .lock_mut()
                         .log_error(format!("ERROR: job \"{}\" panicked!", job_name1));

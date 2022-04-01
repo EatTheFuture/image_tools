@@ -63,9 +63,9 @@ struct UIData {
     show_image: ShowImage,
 
     // Others.
-    thumbnails: Vec<(egui::TextureId, usize, usize, ImageInfo)>, // (GPU texture, width, height, info)
-    image_preview_tex: Option<(egui::TextureId, usize, usize)>,
-    hdri_preview_tex: Option<(egui::TextureId, usize, usize)>,
+    thumbnails: Vec<(egui::TextureHandle, usize, usize, ImageInfo)>, // (GPU texture, width, height, info)
+    image_preview_tex: Option<(egui::TextureHandle, usize, usize)>,
+    hdri_preview_tex: Option<(egui::TextureHandle, usize, usize)>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -81,10 +81,17 @@ impl epi::App for AppMain {
 
     fn setup(
         &mut self,
-        _ctx: &egui::CtxRef,
+        ctx: &egui::Context,
         frame: &epi::Frame,
         _storage: Option<&dyn epi::Storage>,
     ) {
+        // Dark mode.
+        ctx.set_visuals(egui::style::Visuals {
+            dark_mode: true,
+            ..egui::style::Visuals::default()
+        });
+
+        // Update callback for jobs.
         let frame_clone = frame.clone();
         self.job_queue.set_update_fn(move || {
             frame_clone.request_repaint();
@@ -96,7 +103,7 @@ impl epi::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::CtxRef, frame: &epi::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
         // Some simple queries we use in drawing the UI.
         let image_count = self.ui_data.lock().thumbnails.len();
         let have_hdri = match self.hdri_merger.try_lock() {
@@ -138,7 +145,7 @@ impl epi::App for AppMain {
                         if let Some(paths) = add_images_dialog.clone().pick_files() {
                             self.add_image_files(
                                 paths.iter().map(|pathbuf| pathbuf.as_path()),
-                                frame,
+                                ctx,
                             );
                         }
                     }
@@ -261,7 +268,9 @@ impl epi::App for AppMain {
                         let thumbnails = &ui_data.thumbnails;
                         let selected_image_index = &mut ui_data.selected_image_index;
 
-                        for (img_i, (tex_id, width, height, _)) in thumbnails.iter().enumerate() {
+                        for (img_i, (ref tex_handle, width, height, _)) in
+                            thumbnails.iter().enumerate()
+                        {
                             let display_height = 64.0;
                             let display_width = display_height / *height as f32 * *width as f32;
 
@@ -269,7 +278,7 @@ impl epi::App for AppMain {
                                 if ui
                                     .add(
                                         egui::widgets::ImageButton::new(
-                                            *tex_id,
+                                            tex_handle,
                                             egui::Vec2::new(display_width, display_height),
                                         )
                                         .selected(img_i == *selected_image_index),
@@ -277,7 +286,7 @@ impl epi::App for AppMain {
                                     .clicked()
                                 {
                                     *selected_image_index = img_i;
-                                    self.compute_image_preview(img_i, frame);
+                                    self.compute_image_preview(img_i, ctx);
                                 }
                                 if ui
                                     .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
@@ -290,7 +299,7 @@ impl epi::App for AppMain {
                     });
 
                 if let Some(img_i) = remove_i {
-                    self.remove_image(img_i, frame);
+                    self.remove_image(img_i, ctx);
                 }
             });
 
@@ -303,7 +312,7 @@ impl epi::App for AppMain {
                     .clicked()
                 {
                     if let Some(paths) = add_images_dialog.clone().pick_files() {
-                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()), frame);
+                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()), ctx);
                     }
                 }
 
@@ -317,7 +326,7 @@ impl epi::App for AppMain {
                     )
                     .clicked()
                 {
-                    self.build_hdri(frame);
+                    self.build_hdri(ctx);
                 }
 
                 ui.label(" ➡ ");
@@ -383,7 +392,7 @@ impl epi::App for AppMain {
                         )
                         .changed()
                     {
-                        self.compute_hdri_preview(frame);
+                        self.compute_hdri_preview(ctx);
                     }
                 }
 
@@ -413,10 +422,11 @@ impl epi::App for AppMain {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if show_image == ShowImage::HDRI && have_hdri_preview_tex {
-                        if let Some((tex_id, width, height)) = self.ui_data.lock().hdri_preview_tex
+                        if let Some((ref tex_handle, width, height)) =
+                            self.ui_data.lock().hdri_preview_tex
                         {
                             ui.image(
-                                tex_id,
+                                tex_handle,
                                 egui::Vec2::new(
                                     width as f32 * image_zoom,
                                     height as f32 * image_zoom,
@@ -424,10 +434,11 @@ impl epi::App for AppMain {
                             );
                         }
                     } else if show_image == ShowImage::SelectedImage && image_count > 0 {
-                        if let Some((tex_id, width, height)) = self.ui_data.lock().image_preview_tex
+                        if let Some((ref tex_handle, width, height)) =
+                            self.ui_data.lock().image_preview_tex
                         {
                             ui.image(
-                                tex_id,
+                                tex_handle,
                                 egui::Vec2::new(
                                     width as f32 * image_zoom,
                                     height as f32 * image_zoom,
@@ -449,19 +460,19 @@ impl epi::App for AppMain {
                     .dropped_files
                     .iter()
                     .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
-                frame,
+                ctx,
             );
         }
     }
 }
 
 impl AppMain {
-    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I, frame: &epi::Frame) {
+    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I, ctx: &egui::Context) {
         let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let images = self.images.clone_ref();
         let ui_data = self.ui_data.clone_ref();
-        let frame1 = frame.clone();
-        let frame2 = frame.clone();
+        let ctx1 = ctx.clone();
+        let ctx2 = ctx.clone();
 
         self.job_queue.add_job("Add Image(s)", move |status| {
             let len = image_paths.len() as f32;
@@ -516,14 +527,14 @@ impl AppMain {
                 }
 
                 // Make a thumbnail texture.
-                let (thumbnail_tex_id, thumbnail_width, thumbnail_height) = {
+                let (thumbnail_tex_handle, thumbnail_width, thumbnail_height) = {
                     let (pixels, width, height) = lib::job_helpers::make_image_preview(
                         &img,
                         Some(128),
                         None,
                     );
                     (
-                        make_texture((&pixels, width, height), &frame1),
+                        make_texture((&pixels, width, height), &ctx1),
                         width,
                         height,
                     )
@@ -533,7 +544,7 @@ impl AppMain {
                 {
                     let mut ui_data = ui_data.lock_mut();
                     ui_data.thumbnails
-                        .push((thumbnail_tex_id, thumbnail_width, thumbnail_height, img.info.clone()));
+                        .push((thumbnail_tex_handle, thumbnail_width, thumbnail_height, img.info.clone()));
                     ui_data.thumbnails
                         .sort_unstable_by(|a, b| a.3.exposure.partial_cmp(&b.3.exposure).unwrap());
                 }
@@ -547,14 +558,12 @@ impl AppMain {
         });
 
         let selected_image_index = self.ui_data.lock().selected_image_index;
-        self.compute_image_preview(selected_image_index, &frame2);
+        self.compute_image_preview(selected_image_index, &ctx2);
     }
 
-    fn remove_image(&self, image_index: usize, frame: &epi::Frame) {
+    fn remove_image(&self, image_index: usize, ctx: &egui::Context) {
         let images = self.images.clone_ref();
         let ui_data = self.ui_data.clone_ref();
-        let frame_1 = frame.clone();
-        let frame_2 = frame.clone();
 
         self.job_queue.add_job("Remove Image", move |status| {
             status
@@ -565,22 +574,18 @@ impl AppMain {
                 images.lock_mut().remove(image_index);
 
                 let mut ui_data = ui_data.lock_mut();
-                let tex_id = ui_data.thumbnails[image_index].0;
-                ui_data.thumbnails.remove(image_index);
+                let _ = ui_data.thumbnails.remove(image_index);
                 if ui_data.selected_image_index > image_index {
                     ui_data.selected_image_index -= 1;
                 }
-                drop(ui_data);
-
-                frame_1.free_texture(tex_id);
             }
         });
 
         let selected_image_index = self.ui_data.lock().selected_image_index;
-        self.compute_image_preview(selected_image_index, &frame_2);
+        self.compute_image_preview(selected_image_index, ctx);
     }
 
-    fn build_hdri(&mut self, frame: &epi::Frame) {
+    fn build_hdri(&mut self, ctx: &egui::Context) {
         use sensor_analysis::Histogram;
 
         let images = self.images.clone_ref();
@@ -663,7 +668,7 @@ impl AppMain {
             ui_data.lock_mut().show_image = ShowImage::HDRI;
         });
 
-        self.compute_hdri_preview(frame);
+        self.compute_hdri_preview(ctx);
     }
 
     fn save_hdri(&mut self, path: PathBuf) {
@@ -685,10 +690,10 @@ impl AppMain {
         });
     }
 
-    fn compute_hdri_preview(&mut self, frame: &epi::Frame) {
+    fn compute_hdri_preview(&mut self, ctx: &egui::Context) {
         let hdri = self.hdri_merger.clone_ref();
         let ui_data = self.ui_data.clone_ref();
-        let frame = frame.clone();
+        let ctx = ctx.clone();
 
         self.job_queue
             .cancel_pending_jobs_with_name("Update HDRI preview");
@@ -733,33 +738,27 @@ impl AppMain {
                     // Update the HDRI preview texture.
                     let tex_info = preview.as_ref().map(|(pixels, width, height)| {
                         (
-                            frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
-                                [*width, *height],
-                                pixels,
-                            )),
+                            ctx.load_texture(
+                                "",
+                                egui::ColorImage::from_rgba_unmultiplied([*width, *height], pixels),
+                            ),
                             *width,
                             *height,
                         )
                     });
 
-                    if let Some((tex_id, width, height)) = tex_info {
+                    if let Some((tex_handle, width, height)) = tex_info {
                         let mut ui_data = ui_data.lock_mut();
-                        let old = ui_data.hdri_preview_tex;
-                        ui_data.hdri_preview_tex = Some((tex_id, width, height));
-                        drop(ui_data);
-
-                        if let Some((old_tex_id, _, _)) = old {
-                            frame.free_texture(old_tex_id);
-                        }
+                        ui_data.hdri_preview_tex = Some((tex_handle, width, height));
                     }
                 }
             });
     }
 
-    fn compute_image_preview(&self, image_index: usize, frame: &epi::Frame) {
+    fn compute_image_preview(&self, image_index: usize, ctx: &egui::Context) {
         let images = self.images.clone_ref();
         let ui_data = self.ui_data.clone_ref();
-        let frame = frame.clone();
+        let ctx = ctx.clone();
 
         self.job_queue.cancel_jobs_with_name("Update image preview");
         self.job_queue
@@ -779,19 +778,13 @@ impl AppMain {
 
                 if let Some((pixels, width, height)) = preview {
                     // Update the image preview texture.
-                    let tex_id = frame.alloc_texture(epi::Image::from_rgba_unmultiplied(
-                        [width, height],
-                        &pixels,
-                    ));
+                    let tex_handle = ctx.load_texture(
+                        "",
+                        egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels),
+                    );
 
                     let mut ui_data = ui_data.lock_mut();
-                    let old = ui_data.image_preview_tex;
-                    ui_data.image_preview_tex = Some((tex_id, width, height));
-                    drop(ui_data);
-
-                    if let Some((old_tex_id, _, _)) = old {
-                        frame.free_texture(old_tex_id);
-                    }
+                    ui_data.image_preview_tex = Some((tex_handle, width, height));
                 }
             });
     }
@@ -899,7 +892,10 @@ impl HDRIMerger {
     }
 }
 
-fn make_texture(img: (&[u8], usize, usize), frame: &epi::Frame) -> egui::TextureId {
+fn make_texture(img: (&[u8], usize, usize), ctx: &egui::Context) -> egui::TextureHandle {
     assert_eq!(img.0.len(), img.1 * img.2 * 4);
-    frame.alloc_texture(epi::Image::from_rgba_unmultiplied([img.1, img.2], img.0))
+    ctx.load_texture(
+        "",
+        egui::ColorImage::from_rgba_unmultiplied([img.1, img.2], img.0),
+    )
 }

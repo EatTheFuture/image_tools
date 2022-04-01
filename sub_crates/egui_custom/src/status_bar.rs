@@ -7,7 +7,7 @@ use eframe::egui::{
 };
 use job_queue::{JobQueue, LogLevel};
 
-pub fn status_bar(ctx: &egui::CtxRef, job_queue: &JobQueue) {
+pub fn status_bar(ctx: &egui::Context, job_queue: &JobQueue) {
     egui::containers::panel::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
         let log_count = job_queue.log_count();
 

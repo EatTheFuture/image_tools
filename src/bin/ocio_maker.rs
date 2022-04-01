@@ -63,10 +63,17 @@ impl epi::App for AppMain {
 
     fn setup(
         &mut self,
-        _ctx: &egui::CtxRef,
+        ctx: &egui::Context,
         frame: &epi::Frame,
         _storage: Option<&dyn epi::Storage>,
     ) {
+        // Dark mode.
+        ctx.set_visuals(egui::style::Visuals {
+            dark_mode: true,
+            ..egui::style::Visuals::default()
+        });
+
+        // Update callback for jobs.
         let frame_clone = frame.clone();
         self.job_queue.set_update_fn(move || {
             frame_clone.request_repaint();
@@ -78,7 +85,7 @@ impl epi::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::CtxRef, frame: &epi::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
         let job_count = self.job_queue.job_count();
         let mut working_dir = self
             .last_opened_directory
