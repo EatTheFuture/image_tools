@@ -9,6 +9,12 @@ use shared_data::Shared;
 
 use lib::ImageInfo;
 
+mod advanced;
+mod graph;
+mod image_list;
+mod menu;
+mod simple;
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
@@ -30,7 +36,7 @@ fn main() {
             ui_data: Shared::new(UIData {
                 image_view: ImageViewID::Bracketed,
                 advanced_mode: false,
-                preview_mode: PreviewMode::ToLinear,
+                preview_mode: graph::PreviewMode::ToLinear,
 
                 selected_bracket_image_index: (0, 0),
                 bracket_thumbnail_sets: Vec::new(),
@@ -56,7 +62,7 @@ fn main() {
     );
 }
 
-struct AppMain {
+pub struct AppMain {
     job_queue: job_queue::JobQueue,
     last_opened_directory: Option<PathBuf>,
 
@@ -71,10 +77,10 @@ struct AppMain {
 ///
 /// Nothing other than the UI should lock this data for non-trivial
 /// amounts of time.
-struct UIData {
+pub struct UIData {
     image_view: ImageViewID,
     advanced_mode: bool,
-    preview_mode: PreviewMode,
+    preview_mode: graph::PreviewMode,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
     bracket_thumbnail_sets: Vec<Vec<(egui::TextureHandle, usize, usize, ImageInfo)>>, // (tex_handle, width, height, info)
@@ -145,32 +151,13 @@ impl epi::App for AppMain {
             .iter()
             .map(|s| s.len())
             .sum();
-        let total_lens_cap_images: usize = self.ui_data.lock().lens_cap_thumbnails.len();
+        let total_dark_images: usize = self.ui_data.lock().lens_cap_thumbnails.len();
 
         // File dialogs used in the UI.
         let mut working_dir = self
             .last_opened_directory
             .clone()
             .unwrap_or_else(|| "".into());
-        let add_images_dialog = {
-            let mut d = rfd::FileDialog::new()
-                .set_title("Add Images")
-                .add_filter(
-                    "All Images",
-                    &[
-                        "jpg", "JPG", "jpeg", "JPEG", "tiff", "TIFF", "tif", "TIF", "webp", "WEBP",
-                        "png", "PNG",
-                    ],
-                )
-                .add_filter("jpeg", &["jpg", "JPG", "jpeg", "JPEG"])
-                .add_filter("tiff", &["tiff", "TIFF", "tif", "TIF"])
-                .add_filter("webp", &["webp", "WEBP"])
-                .add_filter("png", &["png", "PNG"]);
-            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
-                d = d.set_directory(&working_dir);
-            }
-            d
-        };
         let save_lut_dialog = {
             let mut d = rfd::FileDialog::new()
                 .set_title("Save LUT")
@@ -185,17 +172,7 @@ impl epi::App for AppMain {
         //----------------
         // GUI.
 
-        // Menu bar.
-        egui::containers::panel::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                egui::menu::menu_button(ui, "File", |ui| {
-                    ui.separator();
-                    if ui.add(egui::widgets::Button::new("Quit")).clicked() {
-                        frame.quit();
-                    }
-                });
-            });
-        });
+        menu::menu_bar(ctx, frame);
 
         // Status bar and log (footer).
         egui_custom::status_bar(ctx, &self.job_queue);
@@ -205,281 +182,12 @@ impl epi::App for AppMain {
             .min_width(200.0)
             .resizable(false)
             .show(ctx, |ui| {
-                // View selector.
-                ui.add_space(4.0);
-                {
-                    let image_view = &mut self.ui_data.lock_mut().image_view;
-                    egui::ComboBox::from_id_source("Image View Selector")
-                        .width(200.0)
-                        .selected_text(format!("{}", image_view.ui_text()))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                image_view,
-                                ImageViewID::Bracketed,
-                                ImageViewID::Bracketed.ui_text(),
-                            );
-                            ui.selectable_value(
-                                image_view,
-                                ImageViewID::LensCap,
-                                ImageViewID::LensCap.ui_text(),
-                            );
-                        });
-                }
-
-                ui.add(egui::widgets::Separator::default().spacing(16.0));
-
-                // // Selected image info.
-                // // (Extra scope to contain ui_data's mutex guard.)
-                // {
-                //     use egui::widgets::Label;
-                //     let ui_data = self.ui_data.lock();
-                //     let spacing = 4.0;
-
-                //     ui.add_space(spacing + 4.0);
-                //     if ui_data.selected_image_index < ui_data.thumbnails.len() {
-                //         let info = &ui_data.thumbnails[ui_data.selected_image_index].2;
-                //         ui.add(Label::new("Filename:").strong());
-                //         ui.indent("", |ui| ui.label(format!("{}", info.filename)));
-
-                //         ui.add_space(spacing);
-                //         ui.add(Label::new("Resolution:").strong());
-                //         ui.indent("", |ui| {
-                //             ui.label(format!("{} x {}", info.width, info.height))
-                //         });
-
-                //         ui.add_space(spacing);
-                //         ui.add(Label::new("Log Exposure:").strong());
-                //         ui.indent("", |ui| {
-                //             ui.label(if let Some(exposure) = info.exposure {
-                //                 format!("{:.1}", exposure.log2())
-                //             } else {
-                //                 "none".into()
-                //             })
-                //         });
-
-                //         ui.add_space(spacing * 1.5);
-                //         ui.collapsing("more", |ui| {
-                //             ui.add(Label::new("Filepath:"));
-                //             ui.indent("", |ui| ui.label(format!("{}", info.full_filepath)));
-
-                //             ui.add_space(spacing);
-                //             ui.add(Label::new("Exif:"));
-                //             ui.indent("", |ui| {
-                //                 ui.label(format!(
-                //                     "Shutter speed: {}",
-                //                     if let Some(e) = info.exposure_time {
-                //                         if e.0 < e.1 {
-                //                             format!("{}/{}", e.0, e.1)
-                //                         } else {
-                //                             format!("{}", e.0 as f64 / e.1 as f64)
-                //                         }
-                //                     } else {
-                //                         "none".into()
-                //                     }
-                //                 ))
-                //             });
-
-                //             ui.indent("", |ui| {
-                //                 ui.label(format!(
-                //                     "F-stop: {}",
-                //                     if let Some(f) = info.fstop {
-                //                         format!("f/{:.1}", f.0 as f64 / f.1 as f64)
-                //                     } else {
-                //                         "none".into()
-                //                     }
-                //                 ))
-                //             });
-
-                //             ui.indent("", |ui| {
-                //                 ui.label(format!(
-                //                     "ISO: {}",
-                //                     if let Some(iso) = info.iso {
-                //                         format!("{}", iso)
-                //                     } else {
-                //                         "none".into()
-                //                     }
-                //                 ))
-                //             });
-                //         });
-                //     } else {
-                //         ui.label("No images loaded.");
-                //     }
-                // }
-
-                // ui.add(egui::widgets::Separator::default().spacing(16.0));
-
-                let image_view = self.ui_data.lock().image_view;
-                match image_view {
-                    // Lens cap images.
-                    ImageViewID::LensCap => {
-                        // Image add button.
-                        if ui
-                            .add_enabled(
-                                job_count == 0,
-                                egui::widgets::Button::new("Add Lens Cap Image..."),
-                            )
-                            .clicked()
-                        {
-                            if let Some(paths) = add_images_dialog.clone().pick_files() {
-                                self.add_lens_cap_image_files(
-                                    paths.iter().map(|pathbuf| pathbuf.as_path()),
-                                    ctx,
-                                );
-                                if let Some(parent) =
-                                    paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
-                                {
-                                    working_dir = parent;
-                                }
-                            }
-                        }
-
-                        // Image thumbnails.
-                        let mut remove_i = None;
-                        egui::containers::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                let ui_data = &mut *self.ui_data.lock_mut();
-                                let thumbnails = &ui_data.lens_cap_thumbnails;
-                                let selected_image_index =
-                                    &mut ui_data.selected_lens_cap_image_index;
-
-                                for (img_i, (ref tex_handle, width, height, _)) in
-                                    thumbnails.iter().enumerate()
-                                {
-                                    let display_height = 64.0;
-                                    let display_width =
-                                        display_height / *height as f32 * *width as f32;
-
-                                    ui.horizontal(|ui| {
-                                        if ui
-                                            .add(
-                                                egui::widgets::ImageButton::new(
-                                                    tex_handle,
-                                                    egui::Vec2::new(display_width, display_height),
-                                                )
-                                                .selected(img_i == *selected_image_index),
-                                            )
-                                            .clicked()
-                                        {
-                                            *selected_image_index = img_i;
-                                        }
-                                        if ui
-                                            .add_enabled(
-                                                job_count == 0,
-                                                egui::widgets::Button::new("🗙"),
-                                            )
-                                            .clicked()
-                                        {
-                                            remove_i = Some(img_i);
-                                        }
-                                    });
-                                }
-                            });
-                        if let Some(img_i) = remove_i {
-                            self.remove_lens_cap_image(img_i);
-                        }
-                    }
-
-                    // Bracketed exposure image sets.
-                    ImageViewID::Bracketed => {
-                        // Image set add button.
-                        if ui
-                            .add_enabled(
-                                job_count == 0,
-                                egui::widgets::Button::new("Add Image Set..."),
-                            )
-                            .clicked()
-                        {
-                            if let Some(paths) = add_images_dialog.clone().pick_files() {
-                                self.add_bracket_image_files(
-                                    paths.iter().map(|pathbuf| pathbuf.as_path()),
-                                    ctx,
-                                );
-                                if let Some(parent) =
-                                    paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten()
-                                {
-                                    working_dir = parent;
-                                }
-                            }
-                        }
-
-                        // Image thumbnails.
-                        let mut remove_i = (None, None); // (set index, image index)
-                        egui::containers::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                let ui_data = &mut *self.ui_data.lock_mut();
-                                let bracket_thumbnail_sets = &ui_data.bracket_thumbnail_sets;
-                                let (ref mut set_index, ref mut image_index) =
-                                    &mut ui_data.selected_bracket_image_index;
-
-                                for set_i in 0..bracket_thumbnail_sets.len() {
-                                    ui.add_space(16.0);
-                                    ui.horizontal(|ui| {
-                                        ui.label(format!("Image Set {}", set_i + 1));
-                                        if ui
-                                            .add_enabled(
-                                                job_count == 0,
-                                                egui::widgets::Button::new("🗙"),
-                                            )
-                                            .clicked()
-                                        {
-                                            remove_i = (Some(set_i), None);
-                                        }
-                                    });
-                                    ui.add_space(4.0);
-                                    let set = &bracket_thumbnail_sets[set_i];
-                                    for (img_i, (ref tex_handle, width, height, _)) in
-                                        set.iter().enumerate()
-                                    {
-                                        let display_height = 64.0;
-                                        let display_width =
-                                            display_height / *height as f32 * *width as f32;
-
-                                        ui.horizontal(|ui| {
-                                            if ui
-                                                .add(
-                                                    egui::widgets::ImageButton::new(
-                                                        tex_handle,
-                                                        egui::Vec2::new(
-                                                            display_width,
-                                                            display_height,
-                                                        ),
-                                                    )
-                                                    .selected(
-                                                        set_i == *set_index
-                                                            && img_i == *image_index,
-                                                    ),
-                                                )
-                                                .clicked()
-                                            {
-                                                *set_index = set_i;
-                                                *image_index = img_i;
-                                            }
-                                            if ui
-                                                .add_enabled(
-                                                    job_count == 0,
-                                                    egui::widgets::Button::new("🗙"),
-                                                )
-                                                .clicked()
-                                            {
-                                                remove_i = (Some(set_i), Some(img_i));
-                                            }
-                                        });
-                                    }
-                                }
-                            });
-                        match remove_i {
-                            (Some(set_i), Some(img_i)) => self.remove_bracket_image(set_i, img_i),
-                            (Some(set_i), None) => self.remove_bracket_image_set(set_i),
-                            _ => {}
-                        }
-                    }
-                }
+                image_list::image_list(ctx, ui, self, job_count, &mut working_dir);
             });
 
         // Main area.
         egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
+            // Export UI.
             ui.horizontal_top(|ui| {
                 if ui
                     .add_enabled(
@@ -524,406 +232,28 @@ impl epi::App for AppMain {
                 ui.radio_value(&mut self.ui_data.lock_mut().advanced_mode, false, "Simple");
                 ui.radio_value(&mut self.ui_data.lock_mut().advanced_mode, true, "Advanced");
             });
-            let advanced_mode = self.ui_data.lock().advanced_mode;
 
             ui.add_space(16.0);
 
-            // Transfer function controls.
-            if !advanced_mode {
-                // Simple mode.
-                ui.horizontal(|ui| {
-                    // Rounds slider.
-                    ui.add_enabled(
-                        job_count == 0,
-                        egui::widgets::DragValue::new(&mut self.ui_data.lock_mut().rounds)
-                            .clamp_range(100..=200000)
-                            .max_decimals(0)
-                            .prefix("Estimation rounds: "),
-                    );
-
-                    // Estimate transfer function button.
-                    if ui
-                        .add_enabled(
-                            job_count == 0 && total_bracket_images > 0,
-                            egui::widgets::Button::new("Estimate Everything"),
-                        )
-                        .clicked()
-                    {
-                        self.estimate_everything();
-                    }
-                });
+            // Main UI.
+            if !self.ui_data.lock().advanced_mode {
+                simple::simple_mode_ui(ui, self, job_count, total_bracket_images);
             } else {
-                let area_width = ui.available_width();
-                let sub_area_width = (area_width / 3.0).min(230.0);
-
-                // Advanced mode.
-                ui.horizontal(|ui| {
-                    // Sensor floor controls.
-                    ui.vertical(|ui| {
-                        ui.set_width(sub_area_width);
-
-                        ui.horizontal(|ui| {
-                            ui.label("Sensor Noise Floor");
-                            ui.add_space(4.0);
-                            if ui
-                                .add_enabled(
-                                    job_count == 0
-                                        && (total_bracket_images > 0 || total_lens_cap_images > 0),
-                                    egui::widgets::Button::new("Estimate"),
-                                )
-                                .clicked()
-                            {
-                                self.estimate_sensor_floor();
-                            }
-                        });
-                        ui.add_space(4.0);
-                        for (label, value) in ["R: ", "G: ", "B: "]
-                            .iter()
-                            .zip(self.ui_data.lock_mut().sensor_floor.iter_mut())
-                        {
-                            ui.horizontal(|ui| {
-                                ui.label(*label);
-                                ui.add_enabled(
-                                    job_count == 0,
-                                    egui::widgets::Slider::new(value, 0.0..=1.0)
-                                        .max_decimals(5)
-                                        .min_decimals(5),
-                                );
-                            });
-                        }
-                    });
-
-                    ui.add_space(16.0);
-
-                    // Sensor ceiling controls.
-                    ui.vertical(|ui| {
-                        ui.set_width(sub_area_width);
-
-                        ui.horizontal(|ui| {
-                            ui.label("Sensor Ceiling");
-                            ui.add_space(4.0);
-                            if ui
-                                .add_enabled(
-                                    job_count == 0 && total_bracket_images > 0,
-                                    egui::widgets::Button::new("Estimate"),
-                                )
-                                .clicked()
-                            {
-                                self.estimate_sensor_ceiling();
-                            }
-                        });
-                        ui.add_space(4.0);
-                        for (label, value) in ["R: ", "G: ", "B: "]
-                            .iter()
-                            .zip(self.ui_data.lock_mut().sensor_ceiling.iter_mut())
-                        {
-                            ui.horizontal(|ui| {
-                                ui.label(*label);
-                                ui.add_enabled(
-                                    job_count == 0,
-                                    egui::widgets::Slider::new(value, 0.0..=1.0)
-                                        .max_decimals(5)
-                                        .min_decimals(5),
-                                );
-                            });
-                        }
-                    });
-
-                    ui.add_space(16.0);
-
-                    // Transfer curve controls.
-                    ui.vertical(|ui| {
-                        let mut ui_data = self.ui_data.lock_mut();
-
-                        ui.label("Transfer Curve");
-                        ui.add_space(4.0);
-                        ui.add_enabled_ui(job_count == 0, |ui| {
-                            egui::ComboBox::from_id_source("Transfer Function Type")
-                                .width(180.0)
-                                .selected_text(format!(
-                                    "{}",
-                                    ui_data.transfer_function_type.ui_text()
-                                ))
-                                .show_ui(ui, |ui| {
-                                    for tf in TRANSFER_FUNCTIONS.iter() {
-                                        ui.selectable_value(
-                                            &mut ui_data.transfer_function_type,
-                                            *tf,
-                                            tf.ui_text(),
-                                        );
-                                    }
-                                })
-                        });
-                        ui.add_space(4.0);
-
-                        if ui_data.transfer_function_type == TransferFunction::Estimated {
-                            // Estimated curve.
-                            // Rounds slider.
-                            ui.add_enabled(
-                                job_count == 0,
-                                egui::widgets::DragValue::new(&mut ui_data.rounds)
-                                    .clamp_range(100..=200000)
-                                    .max_decimals(0)
-                                    .prefix("Rounds: "),
-                            );
-
-                            // Estimate transfer function button.
-                            if ui
-                                .add_enabled(
-                                    job_count == 0 && total_bracket_images > 0,
-                                    egui::widgets::Button::new("Estimate"),
-                                )
-                                .clicked()
-                            {
-                                self.estimate_transfer_curve();
-                            }
-                        } else {
-                            // Fixed curve.
-                            ui.add_enabled(
-                                job_count == 0,
-                                egui::widgets::DragValue::new(
-                                    &mut ui_data.transfer_function_resolution,
-                                )
-                                .clamp_range(2..=(1 << 16))
-                                .max_decimals(0)
-                                .prefix("LUT resolution: "),
-                            );
-                            ui.add_enabled(
-                                job_count == 0,
-                                egui::widgets::Checkbox::new(
-                                    &mut ui_data.normalize_transfer_function,
-                                    "Normalize",
-                                ),
-                            );
-                        }
-                    });
-                });
+                advanced::advanced_mode_ui(
+                    ui,
+                    self,
+                    job_count,
+                    total_bracket_images,
+                    total_dark_images,
+                );
             }
 
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
 
-            // "To linear" / "From linear" / "Exposures Plot" view switch.
-            ui.horizontal(|ui| {
-                ui.label("View: ");
-                ui.radio_value(
-                    &mut self.ui_data.lock_mut().preview_mode,
-                    PreviewMode::ToLinear,
-                    "To Linear",
-                );
-                ui.radio_value(
-                    &mut self.ui_data.lock_mut().preview_mode,
-                    PreviewMode::FromLinear,
-                    "From Linear",
-                );
-                ui.radio_value(
-                    &mut self.ui_data.lock_mut().preview_mode,
-                    PreviewMode::ExposureMappings,
-                    "Bracketed Exposures Plot",
-                );
-            });
-
-            // Transfer function/exposures graph.
-            {
-                use egui::widgets::plot::{Line, Plot, Points, Value, Values};
-                let ui_data = self.ui_data.lock();
-
-                let floor = ui_data.sensor_floor;
-                let ceiling = ui_data.sensor_ceiling;
-                let show_from_linear_graph = ui_data.preview_mode == PreviewMode::FromLinear;
-                let colors = &[lib::colors::RED, lib::colors::GREEN, lib::colors::BLUE];
-
-
-                // Exposure mappings plot view.
-                if ui_data.preview_mode == PreviewMode::ExposureMappings {
-                    // Normalized to-linear luts.
-                    let luts: Vec<Vec<f32>> = if ui_data.transfer_function_type == TransferFunction::Estimated {
-                        let simple = [
-                            vec![0.0, 1.0],
-                            vec![0.0, 1.0],
-                            vec![0.0, 1.0],
-                        ];
-                        let luts = if let Some((luts, _)) = &ui_data.transfer_function_preview {
-                            luts
-                        } else {
-                            &simple
-                        };
-
-                        (0..3).map(|chan| {
-                            let out_floor = lerp_slice(&luts[chan], floor[chan]);
-                            let out_ceil = lerp_slice(&luts[chan], ceiling[chan]);
-                            let out_norm = 1.0 / (out_ceil - out_floor);
-                            luts[chan].iter().map(|y| {
-                                (y - out_floor) * out_norm
-                            }).collect()
-                        }).collect()
-                    } else {
-                        let res = ui_data.transfer_function_resolution;
-                        let res_norm = 1.0 / (res - 1) as f32;
-                        (0..3).map(|chan|
-                            (0..res).map(|i| {
-                                let x = i as f32 * res_norm;
-                                ui_data.transfer_function_type.to_linear_fc(
-                                    x,
-                                    floor[chan],
-                                    ceiling[chan],
-                                    true,
-                                )
-                            }).collect()
-                        ).collect()
-                    };
-                    let luts = &luts;
-
-                    // The graph plot.
-                    Plot::new("Exposure mappings Graph")
-                        .data_aspect(1.0)
-                        .show(ui, |plot| {
-                            if ui_data.exposure_mappings[0].is_empty() {
-                                plot.text(egui::widgets::plot::Text::new(
-                                    egui::widgets::plot::Value { x: 0.5, y: 0.5 },
-                                    "Two or more bracketed exposure images needed to generate data.",
-                                ));
-                            } else {
-                                plot.line(
-                                    Line::new(Values::from_values_iter(
-                                        [Value::new(0.0, 0.0), Value::new(1.0, 1.0)]
-                                            .iter()
-                                            .copied(),
-                                    ))
-                                    .color(lib::colors::GRAY),
-                                );
-                                for chan in 0..3 {
-                                    plot.points(Points::new(Values::from_values_iter(
-                                        ui_data.exposure_mappings[chan]
-                                            .iter()
-                                            .map(|m| {
-                                                let norm = m.exposure_ratio;
-                                                m.curve.iter().map(move |(x, y)| {
-                                                    Value::new(
-                                                        lerp_slice(&luts[chan], *x) * norm,
-                                                        lerp_slice(&luts[chan], *y),
-                                                    )
-                                                })
-                                            })
-                                            .flatten(),
-                                    )));
-                                }
-                            }
-                        });
-                }
-                // Estimated transfer function view.
-                else if ui_data.transfer_function_type == TransferFunction::Estimated {
-                    if let Some((luts, err)) = &ui_data.transfer_function_preview {
-                        Plot::new("Transfer Function Graph")
-                            .data_aspect(1.0)
-                            .show(ui, |plot| {
-                                plot.text(egui::widgets::plot::Text::new(
-                                    egui::widgets::plot::Value { x: 0.5, y: -0.05 },
-                                    format!("Average error: {}", err),
-                                ));
-
-                                for chan in 0..3 {
-                                    let out_floor = lerp_slice(&luts[chan], floor[chan]);
-                                    let out_ceil = lerp_slice(&luts[chan], ceiling[chan]);
-                                    let out_norm = 1.0 / (out_ceil - out_floor);
-                                    let x_norm = 1.0 / (luts[chan].len() - 1) as f32;
-                                    plot.line(
-                                        Line::new(Values::from_values_iter(luts[chan].iter().enumerate().map(
-                                            |(idx, y)| {
-                                                let x = idx as f32 * x_norm;
-                                                let y = (y - out_floor) * out_norm;
-                                                if show_from_linear_graph {
-                                                    Value::new(y, x)
-                                                } else {
-                                                    Value::new(x, y)
-                                                }
-                                            },
-                                        )))
-                                        .color(colors[chan]),
-                                    );
-                                }
-                            });
-                    } else {
-                        Plot::new("Transfer Function Graph")
-                            .data_aspect(1.0)
-                            .show(ui, |plot| {
-                                plot.text(egui::widgets::plot::Text::new(
-                                    egui::widgets::plot::Value { x: 0.5, y: 0.5 },
-                                    "No estimated or selected transfer function.",
-                                ));
-                            });
-                    }
-                }
-                // Fixed transfer function view.
-                else {
-                    let normalize = ui_data.normalize_transfer_function;
-                    let res = ui_data.transfer_function_resolution;
-                    let res_norm = 1.0 / (res - 1) as f32;
-                    let function = ui_data.transfer_function_type;
-
-                    Plot::new("Transfer Function Graph")
-                        .data_aspect(1.0)
-                        .show(ui, |plot| {
-                            for chan in 0..3 {
-                                if show_from_linear_graph {
-                                    let range_min =
-                                        (0..3).fold(std::f32::INFINITY, |a, i| {
-                                            a.min(function.to_linear_fc(
-                                                0.0, floor[i], ceiling[i], normalize,
-                                            ))
-                                        });
-                                    let range_max =
-                                        (0..3).fold(-std::f32::INFINITY, |a, i| {
-                                            a.max(function.to_linear_fc(
-                                                1.0, floor[i], ceiling[i], normalize,
-                                            ))
-                                        });
-                                    let extent = range_max - range_min;
-                                    plot.line(
-                                        Line::new(Values::from_values_iter((0..res).map(
-                                            |i| {
-                                                let x =
-                                                    range_min + (i as f32 * res_norm * extent);
-                                                Value::new(
-                                                    x,
-                                                    function
-                                                        .from_linear_fc(
-                                                            x,
-                                                            floor[chan],
-                                                            ceiling[chan],
-                                                            normalize,
-                                                        )
-                                                        .max(0.0)
-                                                        .min(1.0),
-                                                )
-                                            },
-                                        )))
-                                        .color(colors[chan]),
-                                    );
-                                } else {
-                                    plot.line(
-                                        Line::new(Values::from_values_iter((0..res).map(
-                                            |i| {
-                                                let x = i as f32 * res_norm;
-                                                Value::new(
-                                                    x,
-                                                    function.to_linear_fc(
-                                                        x,
-                                                        floor[chan],
-                                                        ceiling[chan],
-                                                        normalize,
-                                                    ),
-                                                )
-                                            },
-                                        )))
-                                        .color(colors[chan]),
-                                    );
-                                }
-                            }
-                        });
-                }
-            }
+            // Graph view.
+            graph::graph_ui(ui, self);
         });
 
         self.last_opened_directory = Some(working_dir);
@@ -1601,14 +931,6 @@ fn bracket_images_to_histogram_sets(
 }
 
 //-------------------------------------------------------------
-
-#[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum PreviewMode {
-    ToLinear,
-    FromLinear,
-    ExposureMappings,
-}
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

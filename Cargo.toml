@@ -1,3 +1,8 @@
+[package]
+name = "image_tools"
+version = "0.3.1"
+edition = "2018"
+
 [workspace]
 members = [
     "sub_crates/egui_custom",
@@ -8,17 +13,26 @@ members = [
     "sub_crates/shared_data",
 ]
 
+# Define our binary source locations.
+[[bin]]
+name="lut_maker"
+path="src/bin/lut_maker/main.rs"
+
+[[bin]]
+name="ocio_maker"
+path="src/bin/ocio_maker/main.rs"
+
+[[bin]]
+name="hdri_merge"
+path="src/bin/hdri_merge/main.rs"
+
 # Builds a release executable, but with debug info.
 [profile.release-debug]
 inherits = "release"
 debug = true
 debug-assertions = true
 
-[package]
-name = "image_tools"
-version = "0.3.1"
-edition = "2018"
-
+# Appimage config.
 [package.metadata.appimage]
 auto_link = true
 auto_link_exclude_list = [
