@@ -1,5 +1,11 @@
 #![windows_subsystem = "windows"] // Don't go through console on Windows.
 
+mod colorspace_editor;
+mod colorspace_list;
+mod gamut_graph;
+mod menu;
+mod transfer_function_graph;
+
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
@@ -7,7 +13,6 @@ use std::{
 };
 
 use eframe::{egui, epi};
-use egui::Color32;
 
 use colorbox::{formats, lut::Lut1D};
 use shared_data::Shared;
@@ -39,7 +44,7 @@ fn main() {
     );
 }
 
-struct AppMain {
+pub struct AppMain {
     job_queue: job_queue::JobQueue,
     last_opened_directory: Option<PathBuf>,
 
@@ -50,7 +55,7 @@ struct AppMain {
 ///
 /// Nothing other than the UI should lock this data for non-trivial
 /// amounts of time.
-struct UIData {
+pub struct UIData {
     color_spaces: Vec<ColorSpaceSpec>,
     selected_space_index: usize,
     export_path: String,
@@ -93,26 +98,6 @@ impl epi::App for AppMain {
             .unwrap_or_else(|| "".into());
 
         // File dialogs used in the UI.
-        let load_1d_lut_dialog = {
-            let mut d = rfd::FileDialog::new()
-                .set_title("Load 1D LUT")
-                .add_filter("All Supported LUTs", &["spi1d", "cube"])
-                .add_filter("cube", &["cube"])
-                .add_filter("spi1d", &["spi1d"]);
-            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
-                d = d.set_directory(&working_dir);
-            }
-            d
-        };
-        let load_config_dialog = {
-            let mut d = rfd::FileDialog::new()
-                .set_title("Load Config")
-                .add_filter("OCIO Maker config", &["ocio"]);
-            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
-                d = d.set_directory(&working_dir);
-            }
-            d
-        };
         let select_export_directory_dialog = {
             let mut d = rfd::FileDialog::new().set_title("Select Export Directory");
             let export_path: PathBuf = self.ui_data.lock().export_path.clone().into();
@@ -128,27 +113,7 @@ impl epi::App for AppMain {
         // GUI.
 
         // Menu bar.
-        egui::containers::panel::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                egui::menu::menu_button(ui, "File", |ui| {
-                    if ui
-                        .add(egui::widgets::Button::new("Load Config..."))
-                        .clicked()
-                    {
-                        if let Some(path) = load_config_dialog.clone().pick_file() {
-                            self.load_config(&path);
-                            if let Some(parent) = path.parent().map(|p| p.into()) {
-                                working_dir = parent;
-                            }
-                        }
-                    }
-                    ui.separator();
-                    if ui.add(egui::widgets::Button::new("Quit")).clicked() {
-                        frame.quit();
-                    }
-                });
-            });
-        });
+        menu::menu_bar(ctx, frame, self, &mut working_dir);
 
         // Status bar and log (footer).
         egui_custom::status_bar(ctx, &self.job_queue);
@@ -157,59 +122,12 @@ impl epi::App for AppMain {
         egui::containers::panel::SidePanel::left("color_space_list")
             .resizable(false)
             .show(ctx, |ui| {
-                let mut remove_i = None;
-                let mut add_input_space = false;
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.strong("Custom Color Spaces");
-                    add_input_space |= ui.button("Add").clicked();
-                });
-                ui.add_space(4.0);
-
-                egui::containers::ScrollArea::vertical()
-                    .auto_shrink([true, false])
-                    .show(ui, |ui| {
-                        let ui_data = &mut *self.ui_data.lock_mut();
-
-                        let mut space_i = 0;
-                        let mut selected_i = ui_data.selected_space_index;
-
-                        for input_space in ui_data.color_spaces.iter() {
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
-                                    .clicked()
-                                {
-                                    remove_i = Some(space_i);
-                                }
-                                if ui
-                                    .add(egui::widgets::SelectableLabel::new(
-                                        space_i == ui_data.selected_space_index,
-                                        &input_space.name,
-                                    ))
-                                    .clicked()
-                                {
-                                    selected_i = space_i;
-                                }
-                            });
-
-                            space_i += 1;
-                        }
-
-                        ui_data.selected_space_index = selected_i;
-                    });
-
-                if add_input_space {
-                    self.add_input_color_space();
-                }
-                if let Some(space_i) = remove_i {
-                    self.remove_color_space(space_i);
-                }
+                colorspace_list::list(ui, self, job_count);
             });
 
         // Main area.
         egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
+            // Config exporting.
             ui.horizontal_top(|ui| {
                 let mut ui_data = self.ui_data.lock_mut();
                 ui.label("Config Directory: ");
@@ -234,372 +152,13 @@ impl epi::App for AppMain {
             ui.add(egui::widgets::Separator::default().spacing(12.0));
 
             // Main UI area.
-            {
-                let ui_data = &mut *self.ui_data.lock_mut();
-                let selected_space_index = ui_data.selected_space_index;
+            if self.ui_data.lock().selected_space_index < self.ui_data.lock().color_spaces.len() {
+                colorspace_editor::editor(ui, self, job_count, &mut working_dir);
 
-                if selected_space_index < ui_data.color_spaces.len() {
-                    let space = &mut ui_data.color_spaces[selected_space_index];
+                ui.add_space(8.0);
 
-                    // Name and Misc.
-                    ui.horizontal(|ui| {
-                        ui.label("Name: ");
-                        ui.add(
-                            egui::widgets::TextEdit::singleline(&mut space.name)
-                                .id(egui::Id::new(format!("csname{}", selected_space_index))),
-                        );
-
-                        ui.add_space(16.0);
-
-                        ui.checkbox(&mut space.include_as_display, "Include as Display");
-                    });
-
-                    ui.add_space(8.0);
-
-                    // Graphing colors.
-                    use lib::colors::*;
-
-                    // Chromaticity space.
-                    ui.horizontal(|ui| {
-                        ui.label("Chromaticities / Gamut: ");
-                        egui::ComboBox::from_id_source("Chromaticity Space")
-                            .width(256.0)
-                            .selected_text(format!("{}", space.chroma_space.ui_text()))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::None,
-                                    ChromaSpace::None.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::Custom,
-                                    ChromaSpace::Custom.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::Rec709,
-                                    ChromaSpace::Rec709.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::Rec2020,
-                                    ChromaSpace::Rec2020.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::DciP3,
-                                    ChromaSpace::DciP3.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::AcesAP0,
-                                    ChromaSpace::AcesAP0.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::AcesAP1,
-                                    ChromaSpace::AcesAP1.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::AdobeRGB,
-                                    ChromaSpace::AdobeRGB.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::AdobeWideGamutRGB,
-                                    ChromaSpace::AdobeWideGamutRGB.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::AlexaWideGamutRGB,
-                                    ChromaSpace::AlexaWideGamutRGB.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::BlackmagicWideGamutGen4,
-                                    ChromaSpace::BlackmagicWideGamutGen4.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::DJIDGamut,
-                                    ChromaSpace::DJIDGamut.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::PanasonicVGamut,
-                                    ChromaSpace::PanasonicVGamut.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::ProPhoto,
-                                    ChromaSpace::ProPhoto.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::RedWideGamutRGB,
-                                    ChromaSpace::RedWideGamutRGB.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::SGamut,
-                                    ChromaSpace::SGamut.ui_text(),
-                                );
-                                ui.selectable_value(
-                                    &mut space.chroma_space,
-                                    ChromaSpace::SGamut3Cine,
-                                    ChromaSpace::SGamut3Cine.ui_text(),
-                                );
-                            });
-                    });
-
-                    // Custom chromaticity coordinates.
-                    if space.chroma_space == ChromaSpace::Custom {
-                        ui.indent("custom_chroma_container", |ui| {
-                            egui::Grid::new("custom_chroma")
-                                .min_col_width(4.0)
-                                .show(ui, |ui| {
-                                    let precision = 0.0001;
-
-                                    ui.label("");
-                                    ui.label("x");
-                                    ui.label("y");
-                                    ui.end_row();
-
-                                    ui.label("R");
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.r.0)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.r.1)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.end_row();
-
-                                    ui.label("G");
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.g.0)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.g.1)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.end_row();
-
-                                    ui.label("B");
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.b.0)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.b.1)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.end_row();
-
-                                    ui.label("W");
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.w.0)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.add(
-                                        egui::widgets::DragValue::new(&mut space.custom_chroma.w.1)
-                                            .clamp_range(-1.0..=2.0)
-                                            .speed(precision),
-                                    );
-                                    ui.end_row();
-                                });
-                        });
-                        ui.add_space(8.0);
-                    }
-
-                    ui.add_space(8.0);
-
-                    // Transfer function.
-                    let transfer_lut_label = "Transfer Function (to linear): ";
-                    if let Some((_, ref filepath, ref mut inverse)) = space.transfer_lut {
-                        ui.horizontal(|ui| {
-                            ui.label(transfer_lut_label);
-                            ui.strong(if let Some(name) = filepath.file_name() {
-                                let tmp: String = name.to_string_lossy().into();
-                                tmp
-                            } else {
-                                "Unnamed LUT".into()
-                            });
-                            if ui
-                                .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
-                                .clicked()
-                            {
-                                self.remove_transfer_function(selected_space_index);
-                            }
-                        });
-                        ui.indent(0, |ui| {
-                            ui.checkbox(
-                                inverse,
-                                "Invert Transfer Function (should curve to the lower right)",
-                            )
-                        });
-                    } else {
-                        ui.horizontal(|ui| {
-                            ui.label(transfer_lut_label);
-                            if ui
-                                .add_enabled(
-                                    job_count == 0,
-                                    egui::widgets::Button::new("Load 1D LUT..."),
-                                )
-                                .clicked()
-                            {
-                                if let Some(path) = load_1d_lut_dialog.clone().pick_file() {
-                                    self.load_transfer_function(&path, selected_space_index);
-                                    if let Some(parent) = path.parent().map(|p| p.into()) {
-                                        working_dir = parent;
-                                    }
-                                }
-                            }
-                        });
-                    }
-
-                    ui.add_space(8.0);
-
-                    // Visualize chromaticities / gamut.
-                    if let Some(chroma) = space.chroma_space.chromaticities(space.custom_chroma) {
-                        use egui::widgets::plot::{
-                            HLine, Line, LineStyle, Plot, VLine, Value, Values,
-                        };
-                        let wp_style = LineStyle::Dashed { length: 10.0 };
-                        let r = Value {
-                            x: chroma.r.0,
-                            y: chroma.r.1,
-                        };
-                        let g = Value {
-                            x: chroma.g.0,
-                            y: chroma.g.1,
-                        };
-                        let b = Value {
-                            x: chroma.b.0,
-                            y: chroma.b.1,
-                        };
-                        let w = Value {
-                            x: chroma.w.0,
-                            y: chroma.w.1,
-                        };
-
-                        Plot::new("chromaticities_plot")
-                            .data_aspect(1.0)
-                            .height(250.0)
-                            .allow_drag(false)
-                            .allow_zoom(false)
-                            .show_x(false)
-                            .show_y(false)
-                            .show_axes([false, false])
-                            .show(ui, |plot| {
-                                // Spectral locus and boundary lines.
-                                plot.line(
-                                    Line::new(Values::from_values_iter({
-                                        use colorbox::tables::cie_1931_xyz::{X, Y, Z};
-                                        (0..X.len()).chain(0..1).map(|i| Value {
-                                            x: (X[i] / (X[i] + Y[i] + Z[i])) as f64,
-                                            y: (Y[i] / (X[i] + Y[i] + Z[i])) as f64,
-                                        })
-                                    }))
-                                    .color(GRAY),
-                                );
-                                plot.hline(HLine::new(0.0).color(Color32::from_rgb(50, 50, 50)));
-                                plot.vline(VLine::new(0.0).color(Color32::from_rgb(50, 50, 50)));
-
-                                // Color space
-                                plot.line(
-                                    Line::new(Values::from_values_iter([r, g].iter().copied()))
-                                        .color(YELLOW),
-                                );
-                                plot.line(
-                                    Line::new(Values::from_values_iter([g, b].iter().copied()))
-                                        .color(CYAN),
-                                );
-                                plot.line(
-                                    Line::new(Values::from_values_iter([b, r].iter().copied()))
-                                        .color(MAGENTA),
-                                );
-                                plot.line(
-                                    Line::new(Values::from_values_iter([r, w].iter().copied()))
-                                        .color(RED)
-                                        .style(wp_style),
-                                );
-                                plot.line(
-                                    Line::new(Values::from_values_iter([g, w].iter().copied()))
-                                        .color(GREEN)
-                                        .style(wp_style),
-                                );
-                                plot.line(
-                                    Line::new(Values::from_values_iter([b, w].iter().copied()))
-                                        .color(BLUE)
-                                        .style(wp_style),
-                                );
-                            });
-
-                        ui.add_space(8.0);
-                    }
-
-                    // Visualize transfer function.
-                    if let Some((ref lut, _, inverse)) = space.transfer_lut {
-                        use egui::widgets::plot::{Line, Plot, Value, Values};
-                        let aspect = {
-                            let range_x = lut
-                                .ranges
-                                .iter()
-                                .fold((0.0f32, 1.0f32), |(a, b), (c, d)| (a.min(*c), b.max(*d)));
-                            let range_y =
-                                lut.tables.iter().fold((0.0f32, 1.0f32), |(a, b), table| {
-                                    (a.min(table[0]), b.max(*table.last().unwrap()))
-                                });
-                            let extent_x = range_x.1 - range_x.0;
-                            let extent_y = range_y.1 - range_y.0;
-                            if inverse {
-                                extent_y / extent_x
-                            } else {
-                                extent_x / extent_y
-                            }
-                        };
-                        let colors: &[_] = if lut.tables.len() == 1 {
-                            &[WHITE]
-                        } else if lut.tables.len() <= 4 {
-                            &[RED, GREEN, BLUE, WHITE]
-                        } else {
-                            unreachable!()
-                        };
-                        Plot::new("transfer function plot")
-                            .data_aspect(aspect)
-                            .show(ui, |plot| {
-                                for (component, table) in lut.tables.iter().enumerate() {
-                                    let range = lut.ranges[component.min(lut.ranges.len() - 1)];
-                                    plot.line(
-                                        Line::new(Values::from_values_iter(
-                                            table.iter().copied().enumerate().map(|(i, y)| {
-                                                let a = i as f32 / (table.len() - 1).max(1) as f32;
-                                                let x = range.0 + (a * (range.1 - range.0));
-                                                if inverse {
-                                                    Value::new(y, x)
-                                                } else {
-                                                    Value::new(x, y)
-                                                }
-                                            }),
-                                        ))
-                                        .color(colors[component]),
-                                    );
-                                }
-                            });
-                    }
-                }
+                gamut_graph::graph(ui, self);
+                transfer_function_graph::graph(ui, self);
             }
         });
 
