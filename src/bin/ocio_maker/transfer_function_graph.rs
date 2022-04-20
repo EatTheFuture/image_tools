@@ -11,14 +11,14 @@ pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
     // Visualize transfer function.
     if let Some((ref lut, _, inverse)) = space.transfer_lut {
         use egui::widgets::plot::{Line, Plot, Value, Values};
+        let range_x = lut
+            .ranges
+            .iter()
+            .fold((0.0f32, 1.0f32), |(a, b), (c, d)| (a.min(*c), b.max(*d)));
+        let range_y = lut.tables.iter().fold((0.0f32, 1.0f32), |(a, b), table| {
+            (a.min(table[0]), b.max(*table.last().unwrap()))
+        });
         let aspect = {
-            let range_x = lut
-                .ranges
-                .iter()
-                .fold((0.0f32, 1.0f32), |(a, b), (c, d)| (a.min(*c), b.max(*d)));
-            let range_y = lut.tables.iter().fold((0.0f32, 1.0f32), |(a, b), table| {
-                (a.min(table[0]), b.max(*table.last().unwrap()))
-            });
             let extent_x = range_x.1 - range_x.0;
             let extent_y = range_y.1 - range_y.0;
             if inverse {
@@ -36,6 +36,10 @@ pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
         };
         Plot::new("transfer function plot")
             .data_aspect(aspect)
+            .include_x(range_x.0)
+            .include_x(range_x.1)
+            .include_y(range_y.0)
+            .include_y(range_y.1)
             .show(ui, |plot| {
                 for (component, table) in lut.tables.iter().enumerate() {
                     let range = lut.ranges[component.min(lut.ranges.len() - 1)];
