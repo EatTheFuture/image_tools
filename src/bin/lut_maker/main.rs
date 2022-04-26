@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use eframe::{egui, epi};
+use egui::containers::Frame;
 
 use sensor_analysis::{utils::lerp_slice, ExposureMapping, Histogram};
 use shared_data::Shared;
@@ -14,6 +15,7 @@ mod graph;
 mod image_list;
 mod menu;
 mod simple;
+mod tab_bar;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -35,7 +37,7 @@ fn main() {
 
             ui_data: Shared::new(UIData {
                 image_view: ImageViewID::Bracketed,
-                advanced_mode: false,
+                mode: AppMode::Generate,
                 preview_mode: graph::PreviewMode::ToLinear,
 
                 selected_bracket_image_index: (0, 0),
@@ -79,7 +81,7 @@ pub struct AppMain {
 /// amounts of time.
 pub struct UIData {
     image_view: ImageViewID,
-    advanced_mode: bool,
+    mode: AppMode,
     preview_mode: graph::PreviewMode,
 
     selected_bracket_image_index: (usize, usize), // (set index, image index)
@@ -153,21 +155,10 @@ impl epi::App for AppMain {
             .sum();
         let total_dark_images: usize = self.ui_data.lock().lens_cap_thumbnails.len();
 
-        // File dialogs used in the UI.
         let mut working_dir = self
             .last_opened_directory
             .clone()
             .unwrap_or_else(|| "".into());
-        let save_lut_dialog = {
-            let mut d = rfd::FileDialog::new()
-                .set_title("Save LUT")
-                .add_filter(".spi1d", &["spi1d", "SPI1D"])
-                .add_filter(".cube", &["cube", "CUBE"]);
-            if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
-                d = d.set_directory(&working_dir);
-            }
-            d
-        };
 
         //----------------
         // GUI.
@@ -185,76 +176,43 @@ impl epi::App for AppMain {
                 image_list::image_list(ctx, ui, self, job_count, &mut working_dir);
             });
 
-        // Main area.
-        egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
-            // Export UI.
-            ui.horizontal_top(|ui| {
-                if ui
-                    .add_enabled(
-                        job_count == 0
-                            && (self.transfer_function_tables.lock().is_some()
-                                || self.ui_data.lock().transfer_function_type
-                                    != TransferFunction::Estimated),
-                        egui::widgets::Button::new("Export 'to linear' LUT..."),
-                    )
-                    .clicked()
-                {
-                    if let Some(path) = save_lut_dialog.clone().save_file() {
-                        self.save_lut(&path, true);
-                        if let Some(parent) = path.parent().map(|p| p.into()) {
-                            working_dir = parent;
-                        }
-                    }
-                }
-                if ui
-                    .add_enabled(
-                        job_count == 0
-                            && (self.transfer_function_tables.lock().is_some()
-                                || self.ui_data.lock().transfer_function_type
-                                    != TransferFunction::Estimated),
-                        egui::widgets::Button::new("Export 'from linear' LUT..."),
-                    )
-                    .clicked()
-                {
-                    if let Some(path) = save_lut_dialog.clone().save_file() {
-                        self.save_lut(&path, false);
-                        if let Some(parent) = path.parent().map(|p| p.into()) {
-                            working_dir = parent;
-                        }
-                    }
-                }
-            });
-
-            ui.add(egui::widgets::Separator::default().spacing(12.0));
-
-            // Advanced/simple mode switch.
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut self.ui_data.lock_mut().advanced_mode, false, "Simple");
-                ui.radio_value(&mut self.ui_data.lock_mut().advanced_mode, true, "Advanced");
-            });
-
-            ui.add_space(16.0);
-
-            // Main UI.
-            if !self.ui_data.lock().advanced_mode {
-                simple::simple_mode_ui(ui, self, job_count, total_bracket_images);
-            } else {
-                advanced::advanced_mode_ui(
-                    ui,
-                    self,
-                    job_count,
-                    total_bracket_images,
-                    total_dark_images,
-                );
-            }
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            // Graph view.
-            graph::graph_ui(ui, self);
+        // Tabs and export buttons.
+        egui::containers::panel::TopBottomPanel::top("mode_tabs").show(ctx, |ui| {
+            tab_bar::tab_bar(ui, self, job_count, &mut working_dir);
         });
+
+        // Main area.
+        egui::containers::panel::CentralPanel::default()
+            .frame(
+                Frame::none()
+                    .stroke(ctx.style().visuals.window_stroke())
+                    .margin(egui::style::Margin::same(10.0))
+                    .fill(ctx.style().visuals.window_fill()),
+            )
+            .show(ctx, |ui| {
+                // Main UI.
+                let mode = self.ui_data.lock().mode;
+                match mode {
+                    AppMode::Generate => {
+                        advanced::advanced_mode_ui(
+                            ui,
+                            self,
+                            job_count,
+                            total_bracket_images,
+                            total_dark_images,
+                        );
+                    }
+                    AppMode::Estimate => {
+                        simple::simple_mode_ui(ui, self, job_count, total_bracket_images);
+                    }
+                    AppMode::Modify => {}
+                }
+
+                ui.add_space(18.0);
+
+                // Graph view.
+                graph::graph_ui(ui, self);
+            });
 
         self.last_opened_directory = Some(working_dir);
 
@@ -931,6 +889,13 @@ fn bracket_images_to_histogram_sets(
 }
 
 //-------------------------------------------------------------
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum AppMode {
+    Generate,
+    Estimate,
+    Modify,
+}
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

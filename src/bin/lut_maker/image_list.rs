@@ -33,7 +33,7 @@ pub fn image_list(
     };
 
     // View selector.
-    ui.add_space(4.0);
+    ui.add_space(8.0);
     {
         let image_view = &mut app.ui_data.lock_mut().image_view;
         egui::ComboBox::from_id_source("Image View Selector")

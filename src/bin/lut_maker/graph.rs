@@ -15,19 +15,13 @@ pub enum PreviewMode {
 pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
     // "To linear" / "From linear" / "Exposures Plot" view switch.
     ui.horizontal(|ui| {
-        ui.label("View: ");
+        ui.label("Preview: ");
+
+        let mode = &mut app.ui_data.lock_mut().preview_mode;
+        ui.radio_value(mode, PreviewMode::ToLinear, "To Linear");
+        ui.radio_value(mode, PreviewMode::FromLinear, "From Linear");
         ui.radio_value(
-            &mut app.ui_data.lock_mut().preview_mode,
-            PreviewMode::ToLinear,
-            "To Linear",
-        );
-        ui.radio_value(
-            &mut app.ui_data.lock_mut().preview_mode,
-            PreviewMode::FromLinear,
-            "From Linear",
-        );
-        ui.radio_value(
-            &mut app.ui_data.lock_mut().preview_mode,
+            mode,
             PreviewMode::ExposureMappings,
             "Bracketed Exposures Plot",
         );
