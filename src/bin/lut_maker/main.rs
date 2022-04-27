@@ -1,6 +1,6 @@
 #![windows_subsystem = "windows"] // Don't go through console on Windows.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use eframe::{egui, epi};
 use egui::containers::Frame;
@@ -31,20 +31,14 @@ fn main() {
             job_queue: job_queue::JobQueue::new(),
             last_opened_directory: None,
 
-            bracket_image_sets: Shared::new(Vec::new()),
-            lens_cap_images: Shared::new(Vec::new()),
+            bracket_image_sets: image_list::ImageList::new(true),
+            lens_cap_images: image_list::ImageList::new(false),
             transfer_function_tables: Shared::new(None),
 
             ui_data: Shared::new(UIData {
                 image_view: ImageViewID::Bracketed,
                 mode: AppMode::Generate,
                 preview_mode: graph::PreviewMode::ToLinear,
-
-                selected_bracket_image_index: (0, 0),
-                bracket_thumbnail_sets: Vec::new(),
-
-                selected_lens_cap_image_index: 0,
-                lens_cap_thumbnails: Vec::new(),
 
                 sensor_floor: [0.0; 3],
                 sensor_ceiling: [1.0; 3],
@@ -68,8 +62,8 @@ pub struct AppMain {
     job_queue: job_queue::JobQueue,
     last_opened_directory: Option<PathBuf>,
 
-    bracket_image_sets: Shared<Vec<Vec<([Histogram; 3], ImageInfo)>>>,
-    lens_cap_images: Shared<Vec<[Histogram; 3]>>,
+    bracket_image_sets: image_list::ImageList,
+    lens_cap_images: image_list::ImageList,
     transfer_function_tables: Shared<Option<([Vec<f32>; 3], f32, f32)>>, // (table, x_min, x_max)
 
     ui_data: Shared<UIData>,
@@ -84,11 +78,6 @@ pub struct UIData {
     mode: AppMode,
     preview_mode: graph::PreviewMode,
 
-    selected_bracket_image_index: (usize, usize), // (set index, image index)
-    bracket_thumbnail_sets: Vec<Vec<(egui::TextureHandle, usize, usize, ImageInfo)>>, // (tex_handle, width, height, info)
-
-    selected_lens_cap_image_index: usize,
-    lens_cap_thumbnails: Vec<(egui::TextureHandle, usize, usize, ImageInfo)>, // (tex_handle, width, height, info)
     sensor_floor: [f32; 3],
     sensor_ceiling: [f32; 3],
     exposure_mappings: [Vec<ExposureMapping>; 3],
@@ -146,14 +135,8 @@ impl epi::App for AppMain {
 
     fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
         let job_count = self.job_queue.job_count();
-        let total_bracket_images: usize = self
-            .ui_data
-            .lock()
-            .bracket_thumbnail_sets
-            .iter()
-            .map(|s| s.len())
-            .sum();
-        let total_dark_images: usize = self.ui_data.lock().lens_cap_thumbnails.len();
+        let total_bracket_images = self.bracket_image_sets.total_image_count();
+        let total_dark_images = self.lens_cap_images.total_image_count();
 
         let mut working_dir = self
             .last_opened_directory
@@ -173,7 +156,53 @@ impl epi::App for AppMain {
             .min_width(200.0)
             .resizable(false)
             .show(ctx, |ui| {
-                image_list::image_list(ctx, ui, self, job_count, &mut working_dir);
+                // View selector.
+                ui.add_space(8.0);
+                {
+                    let image_view = &mut self.ui_data.lock_mut().image_view;
+                    egui::ComboBox::from_id_source("Image View Selector")
+                        .width(200.0)
+                        .selected_text(format!("{}", image_view.ui_text()))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                image_view,
+                                ImageViewID::Bracketed,
+                                ImageViewID::Bracketed.ui_text(),
+                            );
+                            ui.selectable_value(
+                                image_view,
+                                ImageViewID::LensCap,
+                                ImageViewID::LensCap.ui_text(),
+                            );
+                        });
+                }
+
+                ui.add(egui::widgets::Separator::default().spacing(16.0));
+
+                let image_view = self.ui_data.lock().image_view;
+                match image_view {
+                    // Lens cap images.
+                    ImageViewID::LensCap => {
+                        self.lens_cap_images.draw(
+                            ctx,
+                            ui,
+                            &self.job_queue,
+                            job_count == 0,
+                            &mut working_dir,
+                        );
+                    }
+                    ImageViewID::Bracketed => {
+                        if self.bracket_image_sets.draw(
+                            ctx,
+                            ui,
+                            &self.job_queue,
+                            job_count == 0,
+                            &mut working_dir,
+                        ) {
+                            self.compute_exposure_mappings();
+                        }
+                    }
+                }
             });
 
         // Tabs and export buttons.
@@ -223,288 +252,36 @@ impl epi::App for AppMain {
         if !ctx.input().raw.dropped_files.is_empty() {
             let image_view = self.ui_data.lock().image_view;
             match image_view {
-                ImageViewID::Bracketed => self.add_bracket_image_files(
+                ImageViewID::Bracketed => self.bracket_image_sets.add_image_files(
                     ctx.input()
                         .raw
                         .dropped_files
                         .iter()
                         .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
                     ctx,
+                    &self.job_queue,
                 ),
-                ImageViewID::LensCap => self.add_lens_cap_image_files(
+                ImageViewID::LensCap => self.lens_cap_images.add_image_files(
                     ctx.input()
                         .raw
                         .dropped_files
                         .iter()
                         .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
                     ctx,
+                    &self.job_queue,
                 ),
             }
+            self.compute_exposure_mappings();
         }
     }
 }
 
 impl AppMain {
-    fn add_bracket_image_files<'a, I: Iterator<Item = &'a Path>>(
-        &mut self,
-        paths: I,
-        ctx: &egui::Context,
-    ) {
-        let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
-        let bracket_image_sets = self.bracket_image_sets.clone_ref();
-        let ui_data = self.ui_data.clone_ref();
-        let ctx = ctx.clone();
-
-        self.job_queue.add_job("Add Image(s)", move |status| {
-            let len = image_paths.len() as f32;
-
-            // Create a new image and thumbnail set.
-            bracket_image_sets.lock_mut().push(Vec::new());
-            ui_data.lock_mut().bracket_thumbnail_sets.push(Vec::new());
-
-            // Load and add images.
-            for (img_i, path) in image_paths.drain(..).enumerate() {
-                if status.lock().is_canceled() {
-                    break;
-                }
-
-                status.lock_mut().set_progress(
-                    format!("Loading: {}", path.to_string_lossy()),
-                    (img_i + 1) as f32 / len,
-                );
-
-                // Load image.
-                let img = match lib::job_helpers::load_image(&path) {
-                    Ok(img) => img,
-                    Err(lib::job_helpers::ImageLoadError::NoAccess) => {
-                        status.lock_mut().log_error(format!(
-                            "Unable to access file \"{}\".",
-                            path.to_string_lossy()
-                        ));
-                        return;
-                    },
-                    Err(lib::job_helpers::ImageLoadError::UnknownFormat) => {
-                        status.lock_mut().log_error(format!(
-                            "Unrecognized image file format: \"{}\".",
-                            path.to_string_lossy()
-                        ));
-                        return;
-                    }
-                };
-
-                // Ensure it has the same resolution as the other images.
-                if !bracket_image_sets.lock().last().unwrap().is_empty() {
-                    let needed_width = bracket_image_sets.lock().last().unwrap()[0].1.width as u32;
-                    let needed_height = bracket_image_sets.lock().last().unwrap()[0].1.height as u32;
-                    if img.image.width() != needed_width || img.image.height() != needed_height {
-                        status.lock_mut().log_error(format!(
-                            "Image has a different resolution that the others in the set: \"{}\".  Not loading.  Note: all images in a set must have the same resolution.",
-                            path.to_string_lossy()
-                        ));
-                        continue;
-                    }
-                }
-
-                // Check if we got exposure data from it.
-                if img.info.exposure.is_none() {
-                    status.lock_mut().log_warning(format!(
-                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  Transfer function estimation will not work correctly.",
-                        path.to_string_lossy()
-                    ));
-                }
-
-                // Make a thumbnail texture.
-                let (thumbnail_tex_handle, thumbnail_width, thumbnail_height) = {
-                    let (pixels, width, height) = lib::job_helpers::make_image_preview(&img, Some(128), None);
-                    let tex_handle = ctx.load_texture("",
-                            egui::ColorImage::from_rgba_unmultiplied(
-                                [width, height],
-                                &pixels,
-                            ),
-                        );
-                    (tex_handle, width, height)
-                };
-
-                // Compute histograms.
-                let histograms = lib::job_helpers::compute_image_histograms(&img, 256);
-
-                // Add image and thumbnail to our lists.
-                {
-                    let mut ui_data = ui_data.lock_mut();
-                    let set = ui_data.bracket_thumbnail_sets.last_mut().unwrap();
-                    set.push((thumbnail_tex_handle, thumbnail_width, thumbnail_height, img.info.clone()));
-                    set.sort_unstable_by(|a, b| a.3.exposure.partial_cmp(&b.3.exposure).unwrap());
-                }
-                {
-                    let mut bracket_image_sets = bracket_image_sets.lock_mut();
-                    let set = bracket_image_sets.last_mut().unwrap();
-                    set.push((histograms, img.info.clone()));
-                    set.sort_unstable_by(|a, b| a.1.exposure.partial_cmp(&b.1.exposure).unwrap());
-                }
-            }
-        });
-
-        // Update the exposure mappings.
-        self.compute_exposure_mappings();
-    }
-
-    fn remove_bracket_image(&mut self, set_index: usize, image_index: usize) {
-        if set_index >= self.bracket_image_sets.lock().len() {
-            return;
-        }
-        let image_count = self.bracket_image_sets.lock()[set_index].len();
-        if image_index >= image_count {
-            return;
-        }
-
-        // If there won't be any images after this, just remove the
-        // whole set.
-        if image_count <= 1 {
-            self.remove_bracket_image_set(set_index);
-            return;
-        }
-
-        // Remove the image.
-        self.bracket_image_sets.lock_mut()[set_index].remove(image_index);
-
-        // Remove the thumbnail.
-        let mut ui_data = self.ui_data.lock_mut();
-        let thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
-        if set_index < thumbnail_sets.len() && image_index < thumbnail_sets[set_index].len() {
-            let _ = thumbnail_sets[set_index].remove(image_index);
-        }
-
-        // Adjust the selected image index appropriately.
-        if ui_data.selected_bracket_image_index.0 == set_index
-            && ui_data.selected_bracket_image_index.1 > image_index
-        {
-            ui_data.selected_bracket_image_index.1 -= 1;
-        }
-
-        // Update the exposure mappings.
-        self.compute_exposure_mappings();
-    }
-
-    fn remove_bracket_image_set(&mut self, set_index: usize) {
-        {
-            // Remove the image set.
-            let mut image_sets = self.bracket_image_sets.lock_mut();
-            if set_index < image_sets.len() {
-                image_sets.remove(set_index);
-            }
-        }
-        {
-            // Remove the thumbnail set.
-            let mut ui_data = self.ui_data.lock_mut();
-            let thumbnail_sets = &mut ui_data.bracket_thumbnail_sets;
-            if set_index < thumbnail_sets.len() {
-                thumbnail_sets.remove(set_index);
-            }
-
-            // Adjust the selected image index appropriately.
-            if set_index > thumbnail_sets.len() {
-                let new_set_index = thumbnail_sets.len().saturating_sub(1);
-                let new_image_index = thumbnail_sets
-                    .get(new_set_index)
-                    .map(|s| s.len().saturating_sub(1))
-                    .unwrap_or(0);
-                ui_data.selected_bracket_image_index = (new_set_index, new_image_index);
-            } else if set_index == ui_data.selected_bracket_image_index.0 {
-                ui_data.selected_bracket_image_index.1 = 0;
-            } else if set_index < ui_data.selected_bracket_image_index.0 {
-                ui_data.selected_bracket_image_index.0 -= 1;
-            }
-        }
-
-        // Update the exposure mappings.
-        self.compute_exposure_mappings();
-    }
-
-    fn add_lens_cap_image_files<'a, I: Iterator<Item = &'a Path>>(
-        &mut self,
-        paths: I,
-        ctx: &egui::Context,
-    ) {
-        let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
-        let lens_cap_images = self.lens_cap_images.clone_ref();
-        let ui_data = self.ui_data.clone_ref();
-        let ctx = ctx.clone();
-
-        self.job_queue.add_job("Add Image(s)", move |status| {
-            let len = image_paths.len() as f32;
-
-            // Load and add images.
-            for (img_i, path) in image_paths.drain(..).enumerate() {
-                if status.lock().is_canceled() {
-                    break;
-                }
-
-                status.lock_mut().set_progress(
-                    format!("Loading: {}", path.to_string_lossy()),
-                    (img_i + 1) as f32 / len,
-                );
-
-                // Load image.
-                let img = match lib::job_helpers::load_image(&path) {
-                    Ok(img) => img,
-                    Err(lib::job_helpers::ImageLoadError::NoAccess) => {
-                        status.lock_mut().log_error(format!(
-                            "Unable to access file \"{}\".",
-                            path.to_string_lossy()
-                        ));
-                        return;
-                    }
-                    Err(lib::job_helpers::ImageLoadError::UnknownFormat) => {
-                        status.lock_mut().log_error(format!(
-                            "Unrecognized image file format: \"{}\".",
-                            path.to_string_lossy()
-                        ));
-                        return;
-                    }
-                };
-
-                // Make a thumbnail texture.
-                let (thumbnail_tex_handle, thumbnail_width, thumbnail_height) = {
-                    let (pixels, width, height) =
-                        lib::job_helpers::make_image_preview(&img, Some(128), None);
-                    let tex_handle = ctx.load_texture(
-                        "",
-                        egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels),
-                    );
-                    (tex_handle, width, height)
-                };
-
-                // Compute histograms.
-                let histograms = lib::job_helpers::compute_image_histograms(&img, 256);
-
-                // Add image and thumbnail to our lists.
-                ui_data.lock_mut().lens_cap_thumbnails.push((
-                    thumbnail_tex_handle,
-                    thumbnail_width,
-                    thumbnail_height,
-                    img.info.clone(),
-                ));
-                lens_cap_images.lock_mut().push(histograms);
-            }
-        });
-    }
-
-    fn remove_lens_cap_image(&self, image_index: usize) {
-        self.lens_cap_images.lock_mut().remove(image_index);
-
-        let mut ui_data = self.ui_data.lock_mut();
-        let _ = ui_data.lens_cap_thumbnails.remove(image_index);
-        if ui_data.selected_lens_cap_image_index > image_index {
-            ui_data.selected_lens_cap_image_index =
-                ui_data.selected_lens_cap_image_index.saturating_sub(1);
-        }
-    }
-
     fn estimate_sensor_floor(&self) {
         use sensor_analysis::estimate_sensor_floor_ceiling;
 
-        let bracket_image_sets = self.bracket_image_sets.clone_ref();
-        let lens_cap_images = self.lens_cap_images.clone_ref();
+        let bracket_image_sets = self.bracket_image_sets.histogram_sets.clone_ref();
+        let lens_cap_images = self.lens_cap_images.histogram_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
@@ -517,15 +294,17 @@ impl AppMain {
                     // Collect stats.
                     let mut sum = [0.0f64; 3];
                     let mut sample_count = [0usize; 3];
-                    for histograms in lens_cap_images.lock().iter() {
-                        for chan in 0..3 {
-                            let norm = 1.0 / (histograms[chan].buckets.len() - 1) as f64;
-                            for (i, bucket_population) in
-                                histograms[chan].buckets.iter().enumerate()
-                            {
-                                let v = i as f64 * norm;
-                                sum[chan] += v * (*bucket_population as f64);
-                                sample_count[chan] += *bucket_population;
+                    if let Some(set) = lens_cap_images.lock().get(0) {
+                        for (histograms, _) in set.iter() {
+                            for chan in 0..3 {
+                                let norm = 1.0 / (histograms[chan].buckets.len() - 1) as f64;
+                                for (i, bucket_population) in
+                                    histograms[chan].buckets.iter().enumerate()
+                                {
+                                    let v = i as f64 * norm;
+                                    sum[chan] += v * (*bucket_population as f64);
+                                    sample_count[chan] += *bucket_population;
+                                }
                             }
                         }
                     }
@@ -567,7 +346,7 @@ impl AppMain {
     fn estimate_sensor_ceiling(&self) {
         use sensor_analysis::estimate_sensor_floor_ceiling;
 
-        let bracket_image_sets = self.bracket_image_sets.clone_ref();
+        let bracket_image_sets = self.bracket_image_sets.histogram_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
@@ -603,7 +382,7 @@ impl AppMain {
     }
 
     fn compute_exposure_mappings(&self) {
-        let bracket_image_sets = self.bracket_image_sets.clone_ref();
+        let bracket_image_sets = self.bracket_image_sets.histogram_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
