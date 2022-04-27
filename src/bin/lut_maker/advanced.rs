@@ -1,6 +1,6 @@
 use crate::egui::{self, Ui};
 
-use crate::{TransferFunction, TRANSFER_FUNCTIONS};
+use crate::TRANSFER_FUNCTIONS;
 
 pub fn advanced_mode_ui(
     ui: &mut Ui,

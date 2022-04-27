@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::egui::{self, Ui};
 
-use crate::{AppMode, TransferFunction};
+use crate::AppMode;
 
 /// Mode tabs and export buttons.
 pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir: &mut PathBuf) {
