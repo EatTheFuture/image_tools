@@ -107,44 +107,18 @@ pub fn advanced_mode_ui(
             });
             ui.add_space(4.0);
 
-            if ui_data.transfer_function_type == TransferFunction::Estimated {
-                // Estimated curve.
-                // Rounds slider.
-                ui.add_enabled(
-                    job_count == 0,
-                    egui::widgets::DragValue::new(&mut ui_data.rounds)
-                        .clamp_range(100..=200000)
-                        .max_decimals(0)
-                        .prefix("Rounds: "),
-                );
-
-                // Estimate transfer function button.
-                if ui
-                    .add_enabled(
-                        job_count == 0 && total_bracket_images > 0,
-                        egui::widgets::Button::new("Estimate"),
-                    )
-                    .clicked()
-                {
-                    app.estimate_transfer_curve();
-                }
-            } else {
-                // Fixed curve.
-                ui.add_enabled(
-                    job_count == 0,
-                    egui::widgets::DragValue::new(&mut ui_data.transfer_function_resolution)
-                        .clamp_range(2..=(1 << 16))
-                        .max_decimals(0)
-                        .prefix("LUT resolution: "),
-                );
-                ui.add_enabled(
-                    job_count == 0,
-                    egui::widgets::Checkbox::new(
-                        &mut ui_data.normalize_transfer_function,
-                        "Normalize",
-                    ),
-                );
-            }
+            // Fixed curve.
+            ui.add_enabled(
+                job_count == 0,
+                egui::widgets::DragValue::new(&mut ui_data.transfer_function_resolution)
+                    .clamp_range(2..=(1 << 16))
+                    .max_decimals(0)
+                    .prefix("LUT resolution: "),
+            );
+            ui.add_enabled(
+                job_count == 0,
+                egui::widgets::Checkbox::new(&mut ui_data.normalize_transfer_function, "Normalize"),
+            );
         });
     });
 }

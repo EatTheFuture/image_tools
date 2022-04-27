@@ -44,7 +44,7 @@ fn main() {
                 sensor_ceiling: [1.0; 3],
                 exposure_mappings: [Vec::new(), Vec::new(), Vec::new()],
 
-                transfer_function_type: TransferFunction::Estimated,
+                transfer_function_type: TransferFunction::sRGB,
                 transfer_function_resolution: 4096,
                 normalize_transfer_function: false,
                 rounds: 4000,
@@ -447,7 +447,6 @@ impl AppMain {
 
         self.job_queue
             .add_job("Estimate Transfer Function", move |status| {
-                ui_data.lock_mut().transfer_function_type = TransferFunction::Estimated;
                 let total_rounds = ui_data.lock().rounds;
 
                 let mappings: Vec<ExposureMapping> = ui_data
@@ -504,6 +503,7 @@ impl AppMain {
         let transfer_function_tables = self.transfer_function_tables.clone_ref();
         let ui_data = self.ui_data.clone_ref();
         let path = path.to_path_buf();
+        let mode = ui_data.lock().mode;
 
         self.job_queue.add_job("Save LUT", move |status| {
             status
@@ -531,84 +531,92 @@ impl AppMain {
             }
 
             // Compute the LUT.
-            let lut = if function == TransferFunction::Estimated {
-                // Estimated function.
-                let (tables, _, _) = transfer_function_tables.lock().clone().unwrap();
+            let lut = match mode {
+                AppMode::Estimate => {
+                    // Estimated function.
+                    let (tables, _, _) = transfer_function_tables.lock().clone().unwrap();
 
-                // Build LUT.
-                let mut to_linear_lut = colorbox::lut::Lut1D {
-                    ranges: vec![(0.0, 1.0)],
-                    tables: tables.to_vec(),
-                };
+                    // Build LUT.
+                    let mut to_linear_lut = colorbox::lut::Lut1D {
+                        ranges: vec![(0.0, 1.0)],
+                        tables: tables.to_vec(),
+                    };
 
-                // Apply the floor and ceiling.
-                for i in 0..3 {
-                    let floor = lerp_slice(&to_linear_lut.tables[i], floor[i]);
-                    let ceil = lerp_slice(&to_linear_lut.tables[i], ceiling[i]);
-                    let norm = 1.0 / (ceil - floor);
-                    for n in to_linear_lut.tables[i].iter_mut() {
-                        *n = (*n - floor) * norm;
+                    // Apply the floor and ceiling.
+                    for i in 0..3 {
+                        let floor = lerp_slice(&to_linear_lut.tables[i], floor[i]);
+                        let ceil = lerp_slice(&to_linear_lut.tables[i], ceiling[i]);
+                        let norm = 1.0 / (ceil - floor);
+                        for n in to_linear_lut.tables[i].iter_mut() {
+                            *n = (*n - floor) * norm;
+                        }
+                    }
+
+                    // Invert if needed.
+                    if to_linear {
+                        to_linear_lut
+                    } else {
+                        to_linear_lut.resample_inverted(4096)
                     }
                 }
 
-                // Invert if needed.
-                if to_linear {
-                    to_linear_lut
-                } else {
-                    to_linear_lut.resample_inverted(4096)
-                }
-            } else if to_linear {
-                // Fixed function, to linear.
-                let norm = 1.0 / (resolution - 1) as f32;
-                colorbox::lut::Lut1D {
-                    ranges: vec![(0.0, 1.0)],
-                    tables: (0..3)
-                        .map(|chan| {
-                            (0..resolution)
-                                .map(|i| {
-                                    function.to_linear_fc(
-                                        i as f32 * norm,
-                                        floor[chan],
-                                        ceiling[chan],
-                                        normalize,
-                                    )
+                AppMode::Generate => {
+                    if to_linear {
+                        // Fixed function, to linear.
+                        let norm = 1.0 / (resolution - 1) as f32;
+                        colorbox::lut::Lut1D {
+                            ranges: vec![(0.0, 1.0)],
+                            tables: (0..3)
+                                .map(|chan| {
+                                    (0..resolution)
+                                        .map(|i| {
+                                            function.to_linear_fc(
+                                                i as f32 * norm,
+                                                floor[chan],
+                                                ceiling[chan],
+                                                normalize,
+                                            )
+                                        })
+                                        .collect()
                                 })
-                                .collect()
-                        })
-                        .collect(),
-                }
-            } else {
-                // Fixed function, from linear.
-                let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
-                    a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
-                });
-                let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
-                    a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], normalize))
-                });
-                let norm = (range_max - range_min) / (resolution - 1) as f32;
+                                .collect(),
+                        }
+                    } else {
+                        // Fixed function, from linear.
+                        let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
+                            a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
+                        });
+                        let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
+                            a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], normalize))
+                        });
+                        let norm = (range_max - range_min) / (resolution - 1) as f32;
 
-                let tables: Vec<Vec<_>> = (0..3)
-                    .map(|chan| {
-                        (0..resolution)
-                            .map(|i| {
-                                function
-                                    .from_linear_fc(
-                                        range_min + (i as f32 * norm),
-                                        floor[chan],
-                                        ceiling[chan],
-                                        normalize,
-                                    )
-                                    .max(0.0)
-                                    .min(1.0)
+                        let tables: Vec<Vec<_>> = (0..3)
+                            .map(|chan| {
+                                (0..resolution)
+                                    .map(|i| {
+                                        function
+                                            .from_linear_fc(
+                                                range_min + (i as f32 * norm),
+                                                floor[chan],
+                                                ceiling[chan],
+                                                normalize,
+                                            )
+                                            .max(0.0)
+                                            .min(1.0)
+                                    })
+                                    .collect()
                             })
-                            .collect()
-                    })
-                    .collect();
+                            .collect();
 
-                colorbox::lut::Lut1D {
-                    ranges: vec![(range_min, range_max)],
-                    tables: tables,
+                        colorbox::lut::Lut1D {
+                            ranges: vec![(range_min, range_max)],
+                            tables: tables,
+                        }
+                    }
                 }
+
+                AppMode::Modify => todo!(),
             };
 
             // Write out the LUT.
@@ -679,7 +687,6 @@ enum AppMode {
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum TransferFunction {
-    Estimated,
     Linear,
     CanonLog1,
     CanonLog2,
@@ -700,7 +707,6 @@ enum TransferFunction {
 }
 
 const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
-    TransferFunction::Estimated,
     TransferFunction::Linear,
     TransferFunction::sRGB,
     TransferFunction::Rec709,
@@ -752,7 +758,6 @@ impl TransferFunction {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
         match *self {
-            Estimated => panic!("No built-in function for an estimated transfer function."),
             Linear => n,
 
             CanonLog1 => canon_log1::to_linear(n),
@@ -778,7 +783,6 @@ impl TransferFunction {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
         match *self {
-            Estimated => panic!("No built-in function for an estimated transfer function."),
             Linear => n,
 
             CanonLog1 => canon_log1::from_linear(n),
@@ -817,7 +821,6 @@ impl TransferFunction {
         use colorbox::transfer_functions::*;
         use TransferFunction::*;
         match *self {
-            Estimated => panic!("No built-in function for an estimated transfer function."),
             Linear => (0.0, 1.0, 0.0, 1.0, 1.0),
 
             CanonLog1 => {
@@ -896,7 +899,6 @@ impl TransferFunction {
     fn ui_text(&self) -> &'static str {
         use TransferFunction::*;
         match *self {
-            Estimated => "Estimated",
             Linear => "Linear",
 
             CanonLog1 => "Canon Log",

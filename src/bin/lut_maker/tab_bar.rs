@@ -24,8 +24,7 @@ pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_
             .add_enabled(
                 job_count == 0
                     && (app.transfer_function_tables.lock().is_some()
-                        || app.ui_data.lock().transfer_function_type
-                            != TransferFunction::Estimated),
+                        || app.ui_data.lock().mode != AppMode::Estimate),
                 egui::widgets::Button::new("Export 'from linear' LUT..."),
             )
             .clicked()
@@ -41,8 +40,7 @@ pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_
             .add_enabled(
                 job_count == 0
                     && (app.transfer_function_tables.lock().is_some()
-                        || app.ui_data.lock().transfer_function_type
-                            != TransferFunction::Estimated),
+                        || app.ui_data.lock().mode != AppMode::Estimate),
                 egui::widgets::Button::new("Export 'to linear' LUT..."),
             )
             .clicked()
