@@ -261,7 +261,13 @@ impl epi::App for AppMain {
                         );
                     }
                     AppMode::Estimate => {
-                        estimated_tf::estimated_mode_ui(ui, self, job_count, total_bracket_images);
+                        estimated_tf::estimated_mode_ui(
+                            ui,
+                            self,
+                            job_count,
+                            total_bracket_images,
+                            total_dark_images,
+                        );
                     }
                     AppMode::Modify => {}
                 }

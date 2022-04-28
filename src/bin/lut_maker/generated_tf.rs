@@ -13,11 +13,11 @@ pub fn generated_mode_ui(
     let area_width = ui.available_width();
     let sub_area_width = (area_width / 3.0).min(230.0);
     ui.horizontal(|ui| {
-        // Transfer curve controls.
+        // Transfer function controls.
         ui.vertical(|ui| {
             let mut ui_data = app.ui_data.lock_mut();
 
-            ui.label("Transfer Curve");
+            ui.label("Transfer Function");
             ui.add_space(4.0);
             ui.add_enabled_ui(job_count == 0, |ui| {
                 egui::ComboBox::from_id_source("Transfer Function Type")
@@ -37,8 +37,6 @@ pub fn generated_mode_ui(
                     })
             });
             ui.add_space(4.0);
-
-            // Fixed curve.
             ui.add_enabled(
                 job_count == 0,
                 egui::widgets::DragValue::new(&mut ui_data.generated.transfer_function_resolution)
