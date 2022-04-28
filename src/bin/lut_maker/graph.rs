@@ -1,4 +1,4 @@
-use sensor_analysis::utils::lerp_slice;
+use sensor_analysis::{utils::lerp_slice, ExposureMapping};
 
 use crate::egui::{
     self,
@@ -33,21 +33,21 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
 
     let ui_data = app.ui_data.lock();
 
-    let floor = ui_data.sensor_floor;
-    let ceiling = ui_data.sensor_ceiling;
-
     match (ui_data.preview_mode, ui_data.mode) {
         (PreviewMode::ExposureMappings, AppMode::Generate) => {
+            let floor = ui_data.generated.sensor_floor;
+            let ceiling = ui_data.generated.sensor_ceiling;
+
             // Normalized to-linear luts.
             let luts: Vec<Vec<f32>> = {
-                let res = ui_data.transfer_function_resolution;
+                let res = ui_data.generated.transfer_function_resolution;
                 let res_norm = 1.0 / (res - 1) as f32;
                 (0..3)
                     .map(|chan| {
                         (0..res)
                             .map(|i| {
                                 let x = i as f32 * res_norm;
-                                ui_data.transfer_function_type.to_linear_fc(
+                                ui_data.generated.transfer_function_type.to_linear_fc(
                                     x,
                                     floor[chan],
                                     ceiling[chan],
@@ -59,14 +59,17 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     .collect()
             };
 
-            exposure_mappings_graph(ui, &ui_data, &luts);
+            exposure_mappings_graph(ui, &ui_data.generated.exposure_mappings, &luts);
         }
 
         (PreviewMode::ExposureMappings, AppMode::Estimate) => {
+            let floor = ui_data.estimated.sensor_floor;
+            let ceiling = ui_data.estimated.sensor_ceiling;
+
             // Normalized to-linear luts.
             let luts: Vec<Vec<f32>> = {
                 let simple = [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]];
-                let luts = if let Some((luts, _)) = &ui_data.transfer_function_preview {
+                let luts = if let Some((luts, _)) = &ui_data.estimated.transfer_function_preview {
                     luts
                 } else {
                     &simple
@@ -85,12 +88,15 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     .collect()
             };
 
-            exposure_mappings_graph(ui, &ui_data, &luts);
+            exposure_mappings_graph(ui, &ui_data.estimated.exposure_mappings, &luts);
         }
 
         (PreviewMode::FromLinear, AppMode::Estimate)
         | (PreviewMode::ToLinear, AppMode::Estimate) => {
-            if let Some((luts, err)) = &ui_data.transfer_function_preview {
+            let floor = ui_data.estimated.sensor_floor;
+            let ceiling = ui_data.estimated.sensor_ceiling;
+
+            if let Some((luts, err)) = &ui_data.estimated.transfer_function_preview {
                 let show_from_linear_graph = ui_data.preview_mode == PreviewMode::FromLinear;
                 transfer_function_graph(ui, Some(&format!("Average error: {}", err)), |chan| {
                     let out_floor = lerp_slice(&luts[chan], floor[chan]);
@@ -119,10 +125,13 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
         }
 
         (PreviewMode::FromLinear, AppMode::Generate) => {
-            let normalize = ui_data.normalize_transfer_function;
-            let res = ui_data.transfer_function_resolution;
+            let floor = ui_data.generated.sensor_floor;
+            let ceiling = ui_data.generated.sensor_ceiling;
+
+            let normalize = ui_data.generated.normalize_transfer_function;
+            let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
-            let function = ui_data.transfer_function_type;
+            let function = ui_data.generated.transfer_function_type;
 
             let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
                 a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
@@ -146,10 +155,13 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
         }
 
         (PreviewMode::ToLinear, AppMode::Generate) => {
-            let normalize = ui_data.normalize_transfer_function;
-            let res = ui_data.transfer_function_resolution;
+            let floor = ui_data.generated.sensor_floor;
+            let ceiling = ui_data.generated.sensor_ceiling;
+
+            let normalize = ui_data.generated.normalize_transfer_function;
+            let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
-            let function = ui_data.transfer_function_type;
+            let function = ui_data.generated.transfer_function_type;
 
             transfer_function_graph(ui, None, |chan| {
                 (0..res).map(move |i| {
@@ -166,12 +178,16 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
     }
 }
 
-fn exposure_mappings_graph(ui: &mut Ui, ui_data: &crate::UIData, luts: &Vec<Vec<f32>>) {
+fn exposure_mappings_graph(
+    ui: &mut Ui,
+    exposure_mappings: &[Vec<ExposureMapping>; 3],
+    luts: &Vec<Vec<f32>>,
+) {
     // The graph plot.
     Plot::new("Exposure mappings Graph")
         .data_aspect(1.0)
         .show(ui, |plot| {
-            if ui_data.exposure_mappings[0].is_empty() {
+            if exposure_mappings[0].is_empty() {
                 plot.text(egui::widgets::plot::Text::new(
                     egui::widgets::plot::Value { x: 0.5, y: 0.5 },
                     "Two or more bracketed exposure images needed to generate data.",
@@ -185,7 +201,7 @@ fn exposure_mappings_graph(ui: &mut Ui, ui_data: &crate::UIData, luts: &Vec<Vec<
                 );
                 for chan in 0..3 {
                     plot.points(Points::new(Values::from_values_iter(
-                        ui_data.exposure_mappings[chan]
+                        exposure_mappings[chan]
                             .iter()
                             .map(|m| {
                                 let norm = m.exposure_ratio;

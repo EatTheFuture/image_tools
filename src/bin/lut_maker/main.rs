@@ -10,11 +10,11 @@ use shared_data::Shared;
 
 use lib::ImageInfo;
 
-mod advanced;
+mod estimated_tf;
+mod generated_tf;
 mod graph;
 mod image_list;
 mod menu;
-mod simple;
 mod tab_bar;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -40,15 +40,8 @@ fn main() {
                 mode: AppMode::Generate,
                 preview_mode: graph::PreviewMode::ToLinear,
 
-                sensor_floor: [0.0; 3],
-                sensor_ceiling: [1.0; 3],
-                exposure_mappings: [Vec::new(), Vec::new(), Vec::new()],
-
-                transfer_function_type: TransferFunction::sRGB,
-                transfer_function_resolution: 4096,
-                normalize_transfer_function: false,
-                rounds: 4000,
-                transfer_function_preview: None,
+                generated: GeneratedTF::new(),
+                estimated: EstimatedTF::new(),
             }),
         }),
         eframe::NativeOptions {
@@ -78,15 +71,51 @@ pub struct UIData {
     mode: AppMode,
     preview_mode: graph::PreviewMode,
 
-    sensor_floor: [f32; 3],
-    sensor_ceiling: [f32; 3],
-    exposure_mappings: [Vec<ExposureMapping>; 3],
+    // Mode-specific data.
+    generated: GeneratedTF,
+    estimated: EstimatedTF,
+}
 
+pub struct GeneratedTF {
     transfer_function_type: TransferFunction,
     transfer_function_resolution: usize,
     normalize_transfer_function: bool,
+    sensor_floor: [f32; 3],
+    sensor_ceiling: [f32; 3],
+    exposure_mappings: [Vec<ExposureMapping>; 3],
+}
+
+impl GeneratedTF {
+    pub fn new() -> GeneratedTF {
+        GeneratedTF {
+            transfer_function_type: TransferFunction::sRGB,
+            transfer_function_resolution: 4096,
+            normalize_transfer_function: false,
+            sensor_floor: [0.0; 3],
+            sensor_ceiling: [1.0; 3],
+            exposure_mappings: [Vec::new(), Vec::new(), Vec::new()],
+        }
+    }
+}
+
+pub struct EstimatedTF {
     rounds: usize,
     transfer_function_preview: Option<([Vec<f32>; 3], f32)>, // (lut, error)
+    sensor_floor: [f32; 3],
+    sensor_ceiling: [f32; 3],
+    exposure_mappings: [Vec<ExposureMapping>; 3],
+}
+
+impl EstimatedTF {
+    pub fn new() -> EstimatedTF {
+        EstimatedTF {
+            rounds: 4000,
+            transfer_function_preview: None,
+            sensor_floor: [0.0; 3],
+            sensor_ceiling: [1.0; 3],
+            exposure_mappings: [Vec::new(), Vec::new(), Vec::new()],
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -223,7 +252,7 @@ impl epi::App for AppMain {
                 let mode = self.ui_data.lock().mode;
                 match mode {
                     AppMode::Generate => {
-                        advanced::advanced_mode_ui(
+                        generated_tf::generated_mode_ui(
                             ui,
                             self,
                             job_count,
@@ -232,7 +261,7 @@ impl epi::App for AppMain {
                         );
                     }
                     AppMode::Estimate => {
-                        simple::simple_mode_ui(ui, self, job_count, total_bracket_images);
+                        estimated_tf::estimated_mode_ui(ui, self, job_count, total_bracket_images);
                     }
                     AppMode::Modify => {}
                 }
@@ -290,7 +319,7 @@ impl AppMain {
                     .lock_mut()
                     .set_progress(format!("Estimating sensor noise floor"), 0.0);
 
-                if !lens_cap_images.lock().is_empty() {
+                let floor = if !lens_cap_images.lock().is_empty() {
                     // Collect stats.
                     let mut sum = [0.0f64; 3];
                     let mut sample_count = [0usize; 3];
@@ -310,10 +339,12 @@ impl AppMain {
                     }
 
                     // Compute floor.
+                    let mut floor = [0.0f32; 3];
                     for chan in 0..3 {
                         let n = sum[chan] / sample_count[chan].max(1) as f64;
-                        ui_data.lock_mut().sensor_floor[chan] = n.max(0.0).min(1.0) as f32;
+                        floor[chan] = n.max(0.0).min(1.0) as f32;
                     }
+                    floor
                 } else {
                     let histogram_sets =
                         bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
@@ -336,8 +367,25 @@ impl AppMain {
                         }
                     }
 
+                    let mut floor_2 = [0.0f32; 3];
                     for i in 0..3 {
-                        ui_data.lock_mut().sensor_floor[i] = floor[i].unwrap_or(0.0);
+                        floor_2[i] = floor[i].unwrap_or(0.0);
+                    }
+                    floor_2
+                };
+
+                let mut ui_data = ui_data.lock_mut();
+                match ui_data.mode {
+                    AppMode::Generate => {
+                        ui_data.generated.sensor_floor = floor;
+                    }
+
+                    AppMode::Estimate => {
+                        ui_data.estimated.sensor_floor = floor;
+                    }
+
+                    AppMode::Modify => {
+                        todo!();
                     }
                 }
             });
@@ -375,8 +423,23 @@ impl AppMain {
                     }
                 }
 
-                for i in 0..3 {
-                    ui_data.lock_mut().sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
+                let mut ui_data = ui_data.lock_mut();
+                match ui_data.mode {
+                    AppMode::Generate => {
+                        for i in 0..3 {
+                            ui_data.generated.sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
+                        }
+                    }
+
+                    AppMode::Estimate => {
+                        for i in 0..3 {
+                            ui_data.estimated.sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
+                        }
+                    }
+
+                    AppMode::Modify => {
+                        todo!();
+                    }
                 }
             });
     }
@@ -387,52 +450,27 @@ impl AppMain {
 
         self.job_queue
             .add_job("Compute Exposure Mappings", move |status| {
-                let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
-                let floor = ui_data.lock().sensor_floor;
-                let ceiling = ui_data.lock().sensor_ceiling;
-
-                // Compute exposure mappings.
                 status
                     .lock_mut()
-                    .set_progress(format!("Computing exposure mappings"), 0.0);
-                let mut mappings = [Vec::new(), Vec::new(), Vec::new()];
-                for histograms in histogram_sets.iter() {
-                    for chan in 0..histograms.len() {
-                        for i in 0..histograms[chan].len() {
-                            if status.lock().is_canceled() {
-                                return;
-                            }
+                    .set_progress("Computing exposure mappings".into(), 0.0);
 
-                            // Find the histogram with closest to 2x the exposure of this one.
-                            const TARGET_RATIO: f32 = 2.0;
-                            let mut other_hist_i = i;
-                            let mut best_ratio: f32 = -std::f32::INFINITY;
-                            for j in (i + 1)..histograms[chan].len() {
-                                let ratio = histograms[chan][j].1 / histograms[chan][i].1;
-                                if (ratio - TARGET_RATIO).abs() > (best_ratio - TARGET_RATIO).abs()
-                                {
-                                    break;
-                                }
-                                other_hist_i = j;
-                                best_ratio = ratio;
-                            }
-
-                            // Compute and add the exposure mapping.
-                            if other_hist_i > i {
-                                mappings[chan].push(ExposureMapping::from_histograms(
-                                    &histograms[chan][i].0,
-                                    &histograms[chan][other_hist_i].0,
-                                    histograms[chan][i].1,
-                                    histograms[chan][other_hist_i].1,
-                                    floor[chan],
-                                    ceiling[chan],
-                                ));
-                            }
-                        }
+                let mode = ui_data.lock().mode;
+                let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
+                match mode {
+                    AppMode::Generate => {
+                        let floor = ui_data.lock().generated.sensor_floor;
+                        let ceiling = ui_data.lock().generated.sensor_ceiling;
+                        let mappings = exposure_mappings(&histogram_sets, floor, ceiling);
+                        ui_data.lock_mut().generated.exposure_mappings = mappings;
                     }
-                }
-
-                ui_data.lock_mut().exposure_mappings = mappings;
+                    AppMode::Estimate => {
+                        let floor = ui_data.lock().estimated.sensor_floor;
+                        let ceiling = ui_data.lock().estimated.sensor_ceiling;
+                        let mappings = exposure_mappings(&histogram_sets, floor, ceiling);
+                        ui_data.lock_mut().estimated.exposure_mappings = mappings;
+                    }
+                    AppMode::Modify => todo!(),
+                };
             });
     }
 
@@ -447,10 +485,11 @@ impl AppMain {
 
         self.job_queue
             .add_job("Estimate Transfer Function", move |status| {
-                let total_rounds = ui_data.lock().rounds;
+                let total_rounds = ui_data.lock().estimated.rounds;
 
                 let mappings: Vec<ExposureMapping> = ui_data
                     .lock()
+                    .estimated
                     .exposure_mappings
                     .clone()
                     .iter()
@@ -488,7 +527,7 @@ impl AppMain {
 
                     // Store the curve and the preview.
                     *transfer_function_tables.lock_mut() = Some((curves.clone(), 0.0, 1.0));
-                    ui_data.lock_mut().transfer_function_preview = Some((curves, err));
+                    ui_data.lock_mut().estimated.transfer_function_preview = Some((curves, err));
                 }
             });
     }
@@ -510,29 +549,21 @@ impl AppMain {
                 .lock_mut()
                 .set_progress(format!("Saving LUT: {}", path.to_string_lossy(),), 0.0);
 
-            let (function, floor, ceiling, resolution, normalize) = {
-                let ui_data = ui_data.lock();
-                (
-                    ui_data.transfer_function_type,
-                    ui_data.sensor_floor,
-                    ui_data.sensor_ceiling,
-                    ui_data.transfer_function_resolution,
-                    ui_data.normalize_transfer_function,
-                )
-            };
-
-            if floor.iter().zip(ceiling.iter()).any(|(a, b)| *a >= *b) {
-                status.lock_mut().log_error(
-                    "cannot write a valid LUT file when the sensor floor \
-                     has equal or greater values than the ceiling."
-                        .into(),
-                );
-                return;
-            }
-
             // Compute the LUT.
             let lut = match mode {
                 AppMode::Estimate => {
+                    let floor = ui_data.lock().estimated.sensor_floor;
+                    let ceiling = ui_data.lock().estimated.sensor_ceiling;
+
+                    if floor.iter().zip(ceiling.iter()).any(|(a, b)| *a >= *b) {
+                        status.lock_mut().log_error(
+                            "cannot write a valid LUT file when the sensor floor \
+                             has equal or greater values than the ceiling."
+                                .into(),
+                        );
+                        return;
+                    }
+
                     // Estimated function.
                     let (tables, _, _) = transfer_function_tables.lock().clone().unwrap();
 
@@ -561,6 +592,26 @@ impl AppMain {
                 }
 
                 AppMode::Generate => {
+                    let (function, floor, ceiling, resolution, normalize) = {
+                        let ui_data = ui_data.lock();
+                        (
+                            ui_data.generated.transfer_function_type,
+                            ui_data.generated.sensor_floor,
+                            ui_data.generated.sensor_ceiling,
+                            ui_data.generated.transfer_function_resolution,
+                            ui_data.generated.normalize_transfer_function,
+                        )
+                    };
+
+                    if floor.iter().zip(ceiling.iter()).any(|(a, b)| *a >= *b) {
+                        status.lock_mut().log_error(
+                            "cannot write a valid LUT file when the sensor floor \
+                             has equal or greater values than the ceiling."
+                                .into(),
+                        );
+                        return;
+                    }
+
                     if to_linear {
                         // Fixed function, to linear.
                         let norm = 1.0 / (resolution - 1) as f32;
@@ -673,6 +724,47 @@ fn bracket_images_to_histogram_sets(
         histogram_sets.push(histograms);
     }
     histogram_sets
+}
+
+fn exposure_mappings(
+    histogram_sets: &[[Vec<(Histogram, f32)>; 3]],
+    floor: [f32; 3],
+    ceiling: [f32; 3],
+) -> [Vec<ExposureMapping>; 3] {
+    let mut mappings = [Vec::new(), Vec::new(), Vec::new()];
+
+    for histograms in histogram_sets.iter() {
+        for chan in 0..histograms.len() {
+            for i in 0..histograms[chan].len() {
+                // Find the histogram with closest to 2x the exposure of this one.
+                const TARGET_RATIO: f32 = 2.0;
+                let mut other_hist_i = i;
+                let mut best_ratio: f32 = -std::f32::INFINITY;
+                for j in (i + 1)..histograms[chan].len() {
+                    let ratio = histograms[chan][j].1 / histograms[chan][i].1;
+                    if (ratio - TARGET_RATIO).abs() > (best_ratio - TARGET_RATIO).abs() {
+                        break;
+                    }
+                    other_hist_i = j;
+                    best_ratio = ratio;
+                }
+
+                // Compute and add the exposure mapping.
+                if other_hist_i > i {
+                    mappings[chan].push(ExposureMapping::from_histograms(
+                        &histograms[chan][i].0,
+                        &histograms[chan][other_hist_i].0,
+                        histograms[chan][i].1,
+                        histograms[chan][other_hist_i].1,
+                        floor[chan],
+                        ceiling[chan],
+                    ));
+                }
+            }
+        }
+    }
+
+    mappings
 }
 
 //-------------------------------------------------------------

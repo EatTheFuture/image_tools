@@ -2,7 +2,7 @@ use crate::egui::{self, Ui};
 
 use crate::TRANSFER_FUNCTIONS;
 
-pub fn advanced_mode_ui(
+pub fn generated_mode_ui(
     ui: &mut Ui,
     app: &mut crate::AppMain,
     job_count: usize,
@@ -22,11 +22,14 @@ pub fn advanced_mode_ui(
             ui.add_enabled_ui(job_count == 0, |ui| {
                 egui::ComboBox::from_id_source("Transfer Function Type")
                     .width(180.0)
-                    .selected_text(format!("{}", ui_data.transfer_function_type.ui_text()))
+                    .selected_text(format!(
+                        "{}",
+                        ui_data.generated.transfer_function_type.ui_text()
+                    ))
                     .show_ui(ui, |ui| {
                         for tf in TRANSFER_FUNCTIONS.iter() {
                             ui.selectable_value(
-                                &mut ui_data.transfer_function_type,
+                                &mut ui_data.generated.transfer_function_type,
                                 *tf,
                                 tf.ui_text(),
                             );
@@ -38,14 +41,17 @@ pub fn advanced_mode_ui(
             // Fixed curve.
             ui.add_enabled(
                 job_count == 0,
-                egui::widgets::DragValue::new(&mut ui_data.transfer_function_resolution)
+                egui::widgets::DragValue::new(&mut ui_data.generated.transfer_function_resolution)
                     .clamp_range(2..=(1 << 16))
                     .max_decimals(0)
                     .prefix("LUT resolution: "),
             );
             ui.add_enabled(
                 job_count == 0,
-                egui::widgets::Checkbox::new(&mut ui_data.normalize_transfer_function, "Normalize"),
+                egui::widgets::Checkbox::new(
+                    &mut ui_data.generated.normalize_transfer_function,
+                    "Normalize",
+                ),
             );
         });
 
@@ -71,7 +77,7 @@ pub fn advanced_mode_ui(
             ui.add_space(4.0);
             for (label, value) in ["R: ", "G: ", "B: "]
                 .iter()
-                .zip(app.ui_data.lock_mut().sensor_floor.iter_mut())
+                .zip(app.ui_data.lock_mut().generated.sensor_floor.iter_mut())
             {
                 ui.horizontal(|ui| {
                     ui.label(*label);
@@ -107,7 +113,7 @@ pub fn advanced_mode_ui(
             ui.add_space(4.0);
             for (label, value) in ["R: ", "G: ", "B: "]
                 .iter()
-                .zip(app.ui_data.lock_mut().sensor_ceiling.iter_mut())
+                .zip(app.ui_data.lock_mut().generated.sensor_ceiling.iter_mut())
             {
                 ui.horizontal(|ui| {
                     ui.label(*label);
