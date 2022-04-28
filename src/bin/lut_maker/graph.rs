@@ -174,7 +174,9 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
             });
         }
 
-        (_, AppMode::Modify) => todo!(),
+        (_, AppMode::Modify) => {
+            // TODO
+        }
     }
 }
 
