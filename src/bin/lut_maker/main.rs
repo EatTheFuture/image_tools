@@ -44,6 +44,8 @@ fn main() {
                 generated: generated_tf::GeneratedTF::new(),
                 estimated: estimated_tf::EstimatedTF::new(),
                 modified: modified_tf::ModifiedTF::new(),
+
+                exposure_mappings: [Vec::new(), Vec::new(), Vec::new()],
             }),
         }),
         eframe::NativeOptions {
@@ -77,6 +79,9 @@ pub struct UIData {
     generated: generated_tf::GeneratedTF,
     estimated: estimated_tf::EstimatedTF,
     modified: modified_tf::ModifiedTF,
+
+    // Data that's shared between the modes.
+    pub exposure_mappings: [Vec<ExposureMapping>; 3],
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -361,7 +366,7 @@ impl AppMain {
                     }
 
                     AppMode::Modify => {
-                        todo!();
+                        ui_data.modified.sensor_floor = floor;
                     }
                 }
             });
@@ -414,7 +419,9 @@ impl AppMain {
                     }
 
                     AppMode::Modify => {
-                        todo!();
+                        for i in 0..3 {
+                            ui_data.modified.sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
+                        }
                     }
                 }
             });
@@ -430,23 +437,15 @@ impl AppMain {
                     .lock_mut()
                     .set_progress("Computing exposure mappings".into(), 0.0);
 
-                let mode = ui_data.lock().mode;
                 let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
-                match mode {
-                    AppMode::Generate => {
-                        let floor = ui_data.lock().generated.sensor_floor;
-                        let ceiling = ui_data.lock().generated.sensor_ceiling;
-                        let mappings = exposure_mappings(&histogram_sets, floor, ceiling);
-                        ui_data.lock_mut().generated.exposure_mappings = mappings;
-                    }
-                    AppMode::Estimate => {
-                        let floor = ui_data.lock().estimated.sensor_floor;
-                        let ceiling = ui_data.lock().estimated.sensor_ceiling;
-                        let mappings = exposure_mappings(&histogram_sets, floor, ceiling);
-                        ui_data.lock_mut().estimated.exposure_mappings = mappings;
-                    }
-                    AppMode::Modify => todo!(),
-                };
+
+                // We use the estimated curve's floor and ceiling because
+                // that data is only used for estimation, and doesn't actually
+                // affect the points of the exposure mappings.
+                let floor = ui_data.lock().estimated.sensor_floor;
+                let ceiling = ui_data.lock().estimated.sensor_ceiling;
+                let mappings = exposure_mappings(&histogram_sets, floor, ceiling);
+                ui_data.lock_mut().exposure_mappings = mappings;
             });
     }
 
@@ -465,7 +464,6 @@ impl AppMain {
 
                 let mappings: Vec<ExposureMapping> = ui_data
                     .lock()
-                    .estimated
                     .exposure_mappings
                     .clone()
                     .iter()
@@ -514,16 +512,16 @@ impl AppMain {
         self.estimate_transfer_curve();
     }
 
-    fn save_lut(&self, path: &std::path::Path, to_linear: bool) {
+    fn export_lut(&self, path: &std::path::Path, to_linear: bool) {
         let transfer_function_tables = self.transfer_function_tables.clone_ref();
         let ui_data = self.ui_data.clone_ref();
         let path = path.to_path_buf();
         let mode = ui_data.lock().mode;
 
-        self.job_queue.add_job("Save LUT", move |status| {
+        self.job_queue.add_job("Export LUT", move |status| {
             status
                 .lock_mut()
-                .set_progress(format!("Saving LUT: {}", path.to_string_lossy(),), 0.0);
+                .set_progress(format!("Exporting LUT: {}", path.to_string_lossy(),), 0.0);
 
             // Compute the LUT.
             let lut = match mode {
@@ -678,6 +676,47 @@ impl AppMain {
                     path.to_string_lossy()
                 ));
             }
+        });
+    }
+
+    /// Load a LUT for subsequent modification by the user.
+    fn load_lut(&self, lut_path: &std::path::Path) {
+        let ui_data = self.ui_data.clone_ref();
+        let path = lut_path.to_path_buf();
+
+        self.job_queue.add_job("Load LUT", move |status| {
+            status
+                .lock_mut()
+                .set_progress(format!("Loading LUT: {}", path.to_string_lossy(),), 0.0);
+
+            // Load lut.
+            let lut = match lib::job_helpers::load_1d_lut(&path) {
+                Ok(lut) => lut,
+                Err(colorbox::formats::ReadError::IoErr(_)) => {
+                    status.lock_mut().log_error(format!(
+                        "Unable to access file \"{}\".",
+                        path.to_string_lossy()
+                    ));
+                    return;
+                }
+                Err(colorbox::formats::ReadError::FormatErr) => {
+                    status.lock_mut().log_error(format!(
+                        "Not a 1D LUT file: \"{}\".",
+                        path.to_string_lossy()
+                    ));
+                    return;
+                }
+            };
+
+            let res = lut
+                .tables
+                .get(0)
+                .map(|t| (t.len() * 4).min(1 << 14))
+                .unwrap_or(4096);
+            let reversed_lut = lut.resample_inverted(res);
+
+            // Set this as the lut for the passed color space index.
+            ui_data.lock_mut().modified.loaded_lut = Some((lut, reversed_lut, path));
         });
     }
 }

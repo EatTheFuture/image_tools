@@ -39,27 +39,31 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
             let ceiling = ui_data.generated.sensor_ceiling;
 
             // Normalized to-linear luts.
-            let luts: Vec<Vec<f32>> = {
+            let luts: Vec<(Vec<f32>, f32, f32)> = {
                 let res = ui_data.generated.transfer_function_resolution;
                 let res_norm = 1.0 / (res - 1) as f32;
                 (0..3)
                     .map(|chan| {
-                        (0..res)
-                            .map(|i| {
-                                let x = i as f32 * res_norm;
-                                ui_data.generated.transfer_function_type.to_linear_fc(
-                                    x,
-                                    floor[chan],
-                                    ceiling[chan],
-                                    true,
-                                )
-                            })
-                            .collect()
+                        (
+                            (0..res)
+                                .map(|i| {
+                                    let x = i as f32 * res_norm;
+                                    ui_data.generated.transfer_function_type.to_linear_fc(
+                                        x,
+                                        floor[chan],
+                                        ceiling[chan],
+                                        true,
+                                    )
+                                })
+                                .collect(),
+                            0.0,
+                            1.0,
+                        )
                     })
                     .collect()
             };
 
-            exposure_mappings_graph(ui, &ui_data.generated.exposure_mappings, &luts);
+            exposure_mappings_graph(ui, &ui_data.exposure_mappings, &luts[..]);
         }
 
         (PreviewMode::ExposureMappings, AppMode::Estimate) => {
@@ -67,7 +71,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
             let ceiling = ui_data.estimated.sensor_ceiling;
 
             // Normalized to-linear luts.
-            let luts: Vec<Vec<f32>> = {
+            let luts: Vec<(Vec<f32>, f32, f32)> = {
                 let simple = [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]];
                 let luts = if let Some((luts, _)) = &ui_data.estimated.transfer_function_preview {
                     luts
@@ -80,15 +84,33 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                         let out_floor = lerp_slice(&luts[chan], floor[chan]);
                         let out_ceil = lerp_slice(&luts[chan], ceiling[chan]);
                         let out_norm = 1.0 / (out_ceil - out_floor);
-                        luts[chan]
-                            .iter()
-                            .map(|y| (y - out_floor) * out_norm)
-                            .collect()
+                        (
+                            luts[chan]
+                                .iter()
+                                .map(|y| (y - out_floor) * out_norm)
+                                .collect(),
+                            0.0,
+                            1.0,
+                        )
                     })
                     .collect()
             };
 
-            exposure_mappings_graph(ui, &ui_data.estimated.exposure_mappings, &luts);
+            exposure_mappings_graph(ui, &ui_data.exposure_mappings, &luts[..]);
+        }
+
+        (PreviewMode::ExposureMappings, AppMode::Modify) => {
+            let luts = if let Some(luts) = ui_data.modified.adjusted_lut(true) {
+                luts
+            } else {
+                [
+                    (vec![0.0, 1.0], 0.0, 1.0),
+                    (vec![0.0, 1.0], 0.0, 1.0),
+                    (vec![0.0, 1.0], 0.0, 1.0),
+                ]
+            };
+
+            exposure_mappings_graph(ui, &ui_data.exposure_mappings, &luts);
         }
 
         (PreviewMode::FromLinear, AppMode::Estimate)
@@ -174,8 +196,30 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
             });
         }
 
-        (_, AppMode::Modify) => {
-            // TODO
+        (PreviewMode::FromLinear, AppMode::Modify) | (PreviewMode::ToLinear, AppMode::Modify) => {
+            if let Some(luts) = ui_data
+                .modified
+                .adjusted_lut(ui_data.preview_mode == PreviewMode::ToLinear)
+            {
+                transfer_function_graph(ui, None, |chan| {
+                    let range = (luts[chan].1, luts[chan].2);
+                    let range_norm = range.1 - range.0;
+                    let res_norm = 1.0 / (luts[chan].0.len() - 1) as f32;
+                    luts[chan].0.iter().enumerate().map(move |(i, y)| {
+                        let x = (i as f32 * res_norm * range_norm) + range.0;
+                        (x, *y)
+                    })
+                });
+            } else {
+                Plot::new("Transfer Function Graph")
+                    .data_aspect(1.0)
+                    .show(ui, |plot| {
+                        plot.text(egui::widgets::plot::Text::new(
+                            egui::widgets::plot::Value { x: 0.5, y: 0.5 },
+                            "No transfer function LUT.",
+                        ));
+                    });
+            }
         }
     }
 }
@@ -183,7 +227,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
 fn exposure_mappings_graph(
     ui: &mut Ui,
     exposure_mappings: &[Vec<ExposureMapping>; 3],
-    luts: &Vec<Vec<f32>>,
+    luts: &[(Vec<f32>, f32, f32)], // (lut, input range)
 ) {
     // The graph plot.
     Plot::new("Exposure mappings Graph")
@@ -202,15 +246,19 @@ fn exposure_mappings_graph(
                     .color(lib::colors::GRAY),
                 );
                 for chan in 0..3 {
+                    let lut_range = (luts[chan].1, luts[chan].2);
+                    let lut_norm = 1.0 / (lut_range.1 - lut_range.0);
                     plot.points(Points::new(Values::from_values_iter(
                         exposure_mappings[chan]
                             .iter()
                             .map(|m| {
                                 let norm = m.exposure_ratio;
                                 m.curve.iter().map(move |(x, y)| {
+                                    let x = (*x - lut_range.0) * lut_norm;
+                                    let y = (*y - lut_range.0) * lut_norm;
                                     Value::new(
-                                        lerp_slice(&luts[chan], *x) * norm,
-                                        lerp_slice(&luts[chan], *y),
+                                        lerp_slice(&luts[chan].0, x) * norm,
+                                        lerp_slice(&luts[chan].0, y),
                                     )
                                 })
                             })

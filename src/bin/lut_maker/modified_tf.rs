@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use sensor_analysis::ExposureMapping;
+use sensor_analysis::utils::lerp_slice;
 
 use crate::egui::{self, Ui};
 
@@ -8,7 +8,6 @@ pub struct ModifiedTF {
     pub loaded_lut: Option<(colorbox::lut::Lut1D, colorbox::lut::Lut1D, PathBuf)>, // (to linear, from linear, path)
     pub sensor_floor: [f32; 3],
     pub sensor_ceiling: [f32; 3],
-    pub exposure_mappings: [Vec<ExposureMapping>; 3],
 }
 
 impl ModifiedTF {
@@ -17,8 +16,67 @@ impl ModifiedTF {
             loaded_lut: None,
             sensor_floor: [0.0; 3],
             sensor_ceiling: [1.0; 3],
-            exposure_mappings: [Vec::new(), Vec::new(), Vec::new()],
         }
+    }
+
+    /// Returns the LUT with the adjustments made from the modified settings.
+    ///
+    /// The returned value is an array of (lut, range start, range end) tuples,
+    /// one for each channel.
+    pub fn adjusted_lut(&self, to_linear: bool) -> Option<[(Vec<f32>, f32, f32); 3]> {
+        let floor = self.sensor_floor;
+        let ceiling = self.sensor_ceiling;
+
+        let (luts, ranges) = if let Some((ref lut1, ref lut2, _)) = self.loaded_lut {
+            if to_linear {
+                (&lut1.tables[..], &lut1.ranges[..])
+            } else {
+                (&lut2.tables[..], &lut2.ranges[..])
+            }
+        } else {
+            return None;
+        };
+
+        let mut adjusted_luts = [
+            (Vec::new(), 0.0, 1.0),
+            (Vec::new(), 0.0, 1.0),
+            (Vec::new(), 0.0, 1.0),
+        ];
+        for chan in 0..3 {
+            let lut = if luts.len() >= 3 {
+                &luts[chan]
+            } else {
+                &luts[0]
+            };
+            let range = if ranges.len() >= luts.len() {
+                ranges[chan]
+            } else {
+                ranges[0]
+            };
+
+            if to_linear {
+                let floor = (floor[chan] - range.0) / (range.1 - range.0);
+                let ceil = (ceiling[chan] - range.0) / (range.1 - range.0);
+                let out_floor = lerp_slice(lut, floor);
+                let out_ceil = lerp_slice(lut, ceil);
+                let out_norm = 1.0 / (out_ceil - out_floor);
+
+                adjusted_luts[chan] = (
+                    lut.iter().map(|y| (y - out_floor) * out_norm).collect(),
+                    range.0,
+                    range.1,
+                );
+            } else {
+                let norm = 1.0 / (ceiling[chan] - floor[chan]);
+                adjusted_luts[chan] = (
+                    lut.clone(),
+                    (range.0 - floor[chan]) * norm,
+                    (range.1 - floor[chan]) * norm,
+                );
+            }
+        }
+
+        Some(adjusted_luts)
     }
 }
 
@@ -48,23 +106,41 @@ pub fn modified_mode_ui(
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label("LUT");
-            if let Some((_, _, ref filepath)) = app.ui_data.lock().modified.loaded_lut {
+            if app.ui_data.lock().modified.loaded_lut.is_some() {
                 ui.horizontal(|ui| {
-                    ui.strong(if let Some(name) = filepath.file_name() {
-                        let tmp: String = name.to_string_lossy().into();
-                        tmp
-                    } else {
-                        "Unnamed LUT".into()
-                    });
+                    ui.strong(
+                        if let Some(name) = app
+                            .ui_data
+                            .lock()
+                            .modified
+                            .loaded_lut
+                            .as_ref()
+                            .unwrap()
+                            .2
+                            .file_name()
+                        {
+                            let tmp: String = name.to_string_lossy().into();
+                            tmp
+                        } else {
+                            "Unnamed LUT".into()
+                        },
+                    );
                     if ui
                         .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
                         .clicked()
                     {
-                        // app.remove_loaded_lut();
+                        app.ui_data.lock_mut().modified.loaded_lut = None;
                     }
                 });
-                if ui.button("Flip").clicked() {
-                    // app.flip_loaded_lut();
+                if ui
+                    .add_enabled(job_count == 0, egui::widgets::Button::new("Flip LUT"))
+                    .clicked()
+                {
+                    if let Some((ref mut lut1, ref mut lut2, _)) =
+                        app.ui_data.lock_mut().modified.loaded_lut
+                    {
+                        std::mem::swap(lut1, lut2);
+                    }
                 }
             } else {
                 ui.horizontal(|ui| {
@@ -73,7 +149,7 @@ pub fn modified_mode_ui(
                         .clicked()
                     {
                         if let Some(path) = load_1d_lut_dialog.clone().pick_file() {
-                            // app.load_lut(&path);
+                            app.load_lut(&path);
                             if let Some(parent) = path.parent().map(|p| p.into()) {
                                 *working_dir = parent;
                             }

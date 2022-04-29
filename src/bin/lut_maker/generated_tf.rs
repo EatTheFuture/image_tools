@@ -1,14 +1,11 @@
 use crate::egui::{self, Ui};
 
-use sensor_analysis::ExposureMapping;
-
 pub struct GeneratedTF {
     pub transfer_function_type: TransferFunction,
     pub transfer_function_resolution: usize,
     pub normalize_transfer_function: bool,
     pub sensor_floor: [f32; 3],
     pub sensor_ceiling: [f32; 3],
-    pub exposure_mappings: [Vec<ExposureMapping>; 3],
 }
 
 impl GeneratedTF {
@@ -19,7 +16,6 @@ impl GeneratedTF {
             normalize_transfer_function: false,
             sensor_floor: [0.0; 3],
             sensor_ceiling: [1.0; 3],
-            exposure_mappings: [Vec::new(), Vec::new(), Vec::new()],
         }
     }
 }

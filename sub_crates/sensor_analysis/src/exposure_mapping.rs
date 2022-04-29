@@ -15,7 +15,11 @@ pub struct ExposureMapping {
 }
 
 impl ExposureMapping {
-    /// Generates an exposure mapping from two histograms and accompanying exposure values.
+    /// Generates an exposure mapping from two histograms and
+    /// accompanying exposure values.
+    ///
+    /// Note: the floor and ceiling are just stored for convenience, and
+    /// don't affect the points of the exposure mapping.
     pub fn from_histograms(
         h1: &Histogram,
         h2: &Histogram,

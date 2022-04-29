@@ -6,7 +6,7 @@ use crate::AppMode;
 
 /// Mode tabs and export buttons.
 pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir: &mut PathBuf) {
-    let save_lut_dialog = {
+    let export_lut_dialog = {
         let mut d = rfd::FileDialog::new()
             .set_title("Save LUT")
             .add_filter(".spi1d", &["spi1d", "SPI1D"])
@@ -29,8 +29,8 @@ pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_
             )
             .clicked()
         {
-            if let Some(path) = save_lut_dialog.clone().save_file() {
-                app.save_lut(&path, false);
+            if let Some(path) = export_lut_dialog.clone().save_file() {
+                app.export_lut(&path, false);
                 if let Some(parent) = path.parent().map(|p| p.into()) {
                     *working_dir = parent;
                 }
@@ -45,8 +45,8 @@ pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_
             )
             .clicked()
         {
-            if let Some(path) = save_lut_dialog.clone().save_file() {
-                app.save_lut(&path, true);
+            if let Some(path) = export_lut_dialog.clone().save_file() {
+                app.export_lut(&path, true);
                 if let Some(parent) = path.parent().map(|p| p.into()) {
                     *working_dir = parent;
                 }
