@@ -1,9 +1,13 @@
 use std::path::PathBuf;
 
 use crate::egui::{self, Context};
-use crate::epi::Frame;
 
-pub fn menu_bar(ctx: &Context, frame: &Frame, app: &mut crate::AppMain, working_dir: &mut PathBuf) {
+pub fn menu_bar(
+    ctx: &Context,
+    frame: &mut eframe::Frame,
+    app: &mut crate::AppMain,
+    working_dir: &mut PathBuf,
+) {
     let load_config_dialog = {
         let mut d = rfd::FileDialog::new()
             .set_title("Load Config")

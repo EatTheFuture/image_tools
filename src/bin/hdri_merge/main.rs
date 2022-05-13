@@ -6,7 +6,7 @@ mod menu;
 
 use std::path::{Path, PathBuf};
 
-use eframe::{egui, epi};
+use eframe::egui;
 use rayon::prelude::*;
 
 use sensor_analysis::eval_transfer_function_lut;
@@ -24,8 +24,41 @@ pub fn main() {
         .get_matches();
 
     eframe::run_native(
-        Box::new(AppMain {
-            job_queue: job_queue::JobQueue::new(),
+        "HDRI Merge",
+        eframe::NativeOptions {
+            drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
+            ..eframe::NativeOptions::default()
+        },
+        Box::new(|cc| Box::new(AppMain::new(cc))),
+    );
+}
+
+pub struct AppMain {
+    job_queue: job_queue::JobQueue,
+
+    images: Shared<Vec<SourceImage>>,
+    hdri_merger: Shared<Option<HDRIMerger>>,
+
+    ui_data: Shared<UIData>,
+}
+
+impl AppMain {
+    fn new(cc: &eframe::CreationContext) -> AppMain {
+        // Dark mode.
+        cc.egui_ctx.set_visuals(egui::style::Visuals {
+            dark_mode: true,
+            ..egui::style::Visuals::default()
+        });
+
+        // Update callback for jobs.
+        let mut job_queue = job_queue::JobQueue::new();
+        let ctx_clone = cc.egui_ctx.clone();
+        job_queue.set_update_fn(move || {
+            ctx_clone.request_repaint();
+        });
+
+        AppMain {
+            job_queue: job_queue,
 
             images: Shared::new(Vec::new()),
             hdri_merger: Shared::new(None),
@@ -40,21 +73,8 @@ pub fn main() {
                 image_preview_tex: None,
                 hdri_preview_tex: None,
             }),
-        }),
-        eframe::NativeOptions {
-            drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
-            ..eframe::NativeOptions::default()
-        },
-    );
-}
-
-pub struct AppMain {
-    job_queue: job_queue::JobQueue,
-
-    images: Shared<Vec<SourceImage>>,
-    hdri_merger: Shared<Option<HDRIMerger>>,
-
-    ui_data: Shared<UIData>,
+        }
+    }
 }
 
 /// The data that the UI needs realtime access to for responsiveness.
@@ -77,36 +97,13 @@ pub enum ShowImage {
     HDRI,
 }
 
-impl epi::App for AppMain {
-    fn name(&self) -> &str {
-        "HDRI Merge"
-    }
-
-    fn setup(
-        &mut self,
-        ctx: &egui::Context,
-        frame: &epi::Frame,
-        _storage: Option<&dyn epi::Storage>,
-    ) {
-        // Dark mode.
-        ctx.set_visuals(egui::style::Visuals {
-            dark_mode: true,
-            ..egui::style::Visuals::default()
-        });
-
-        // Update callback for jobs.
-        let frame_clone = frame.clone();
-        self.job_queue.set_update_fn(move || {
-            frame_clone.request_repaint();
-        });
-    }
-
+impl eframe::App for AppMain {
     // Called before shutdown.
-    fn save(&mut self, _storage: &mut dyn epi::Storage) {
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Some simple queries we use in drawing the UI.
         let image_count = self.ui_data.lock().thumbnails.len();
         let have_hdri = match self.hdri_merger.try_lock() {
