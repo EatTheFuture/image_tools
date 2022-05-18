@@ -5,7 +5,7 @@ use crate::egui::{self, Ui};
 use crate::AppMode;
 
 /// Mode tabs and export buttons.
-pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir: &mut PathBuf) {
+pub fn bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir: &mut PathBuf) {
     let export_lut_dialog = {
         let mut d = rfd::FileDialog::new()
             .set_title("Save LUT")
@@ -19,12 +19,18 @@ pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_
 
     ui.with_layout(egui::Layout::right_to_left(), |ui| {
         // Export buttons.
+        let export_enabled = {
+            let mode = app.ui_data.lock().mode;
+            job_count == 0
+                && ((mode == AppMode::Estimate && app.transfer_function_tables.lock().is_some())
+                    || (mode == AppMode::Modify
+                        && app.ui_data.lock().modified.loaded_lut.is_some())
+                    || mode == AppMode::Generate)
+        };
         ui.add_space(8.0);
         if ui
             .add_enabled(
-                job_count == 0
-                    && (app.transfer_function_tables.lock().is_some()
-                        || app.ui_data.lock().mode != AppMode::Estimate),
+                export_enabled,
                 egui::widgets::Button::new("Export 'from linear' LUT..."),
             )
             .clicked()
@@ -38,9 +44,7 @@ pub fn tab_bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_
         }
         if ui
             .add_enabled(
-                job_count == 0
-                    && (app.transfer_function_tables.lock().is_some()
-                        || app.ui_data.lock().mode != AppMode::Estimate),
+                export_enabled,
                 egui::widgets::Button::new("Export 'to linear' LUT..."),
             )
             .clicked()

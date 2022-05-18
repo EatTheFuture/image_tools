@@ -15,8 +15,8 @@ mod generated_tf;
 mod graph;
 mod image_list;
 mod menu;
+mod mode_and_export_bar;
 mod modified_tf;
-mod tab_bar;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -199,7 +199,7 @@ impl eframe::App for AppMain {
 
         // Tabs and export buttons.
         egui::containers::panel::TopBottomPanel::top("mode_tabs").show(ctx, |ui| {
-            tab_bar::tab_bar(ui, self, job_count, &mut working_dir);
+            mode_and_export_bar::bar(ui, self, job_count, &mut working_dir);
         });
 
         // Main area.
@@ -363,7 +363,7 @@ impl AppMain {
                     }
 
                     AppMode::Modify => {
-                        ui_data.modified.sensor_floor = floor;
+                        ui_data.modified.sensor_floor.1 = floor;
                     }
                 }
             });
@@ -417,7 +417,7 @@ impl AppMain {
 
                     AppMode::Modify => {
                         for i in 0..3 {
-                            ui_data.modified.sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
+                            ui_data.modified.sensor_ceiling.1[i] = ceiling[i].unwrap_or(1.0);
                         }
                     }
                 }
@@ -638,7 +638,19 @@ impl AppMain {
                     }
                 }
 
-                AppMode::Modify => todo!(),
+                AppMode::Modify => {
+                    if let Some([r, g, b]) = ui_data.lock().modified.adjusted_lut(to_linear) {
+                        colorbox::lut::Lut1D {
+                            ranges: vec![(r.1, r.2), (g.1, g.2), (b.1, b.2)],
+                            tables: vec![r.0, g.0, b.0],
+                        }
+                    } else {
+                        status
+                            .lock_mut()
+                            .log_error("no loaded LUT to export.".into());
+                        return;
+                    }
+                }
             };
 
             // Write out the LUT.
