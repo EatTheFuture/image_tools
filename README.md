@@ -29,7 +29,7 @@ Currently this is only capable of generating transfer function LUTs.
 
 ### To-do:
 
-- [ ] Allow loading LUTs to be used as the basis for generating a new LUT (useful for e.g. correcting the black levels of a manufacturer-provided LUT).
+- [x] Allow loading LUTs to be used as the basis for generating a new LUT (useful for e.g. correcting the black levels of a manufacturer-provided LUT).
 - [ ] Export transfer function LUTs with a bit of buffer outside the normal range of the LUT (useful for e.g. preserving negative values throughout a pipeline).
 - [ ] Generate 3D LUTs for chroma, based on color checker images.
 - [ ] Generate 3D LUTs for chroma, based on camera sensor spectral sensitivity data.
