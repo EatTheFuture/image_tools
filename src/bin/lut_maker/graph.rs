@@ -276,8 +276,38 @@ fn transfer_function_graph<I: Iterator<Item = (f32, f32)>, F: Fn(usize) -> I>(
 ) {
     let colors = &[lib::colors::RED, lib::colors::GREEN, lib::colors::BLUE];
 
+    // Hack to work around egui bug:
+    // https://github.com/emilk/egui/issues/1649
+    let (min_co, max_co) = {
+        let mut min_co = (std::f32::INFINITY, std::f32::INFINITY);
+        let mut max_co = (-std::f32::INFINITY, -std::f32::INFINITY);
+        for i in 0..3 {
+            for co in channel_points(i) {
+                min_co.0 = min_co.0.min(co.0);
+                min_co.1 = min_co.1.min(co.1);
+                max_co.0 = max_co.0.max(co.0);
+                max_co.1 = max_co.1.max(co.1);
+            }
+        }
+        let extent_co = (max_co.0 - min_co.0, max_co.1 - min_co.1);
+        let needed_x_extent = {
+            let extent_ui = (ui.available_width(), ui.available_height());
+            let aspect_ui = extent_ui.0 / extent_ui.1;
+            extent_co.1 * aspect_ui
+        };
+        if needed_x_extent > extent_co.0 {
+            let pad = (needed_x_extent - extent_co.0) * 0.5;
+            min_co.0 -= pad;
+            max_co.0 += pad;
+        }
+        (min_co, max_co)
+    };
+
+    // Draw the graph.
     Plot::new("Transfer Function Graph")
         .data_aspect(1.0)
+        .include_x(min_co.0)
+        .include_x(max_co.0)
         .show(ui, |plot| {
             if let Some(text) = label {
                 plot.text(egui::widgets::plot::Text::new(

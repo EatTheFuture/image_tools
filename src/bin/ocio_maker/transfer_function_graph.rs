@@ -18,15 +18,26 @@ pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
         let range_y = lut.tables.iter().fold((0.0f32, 1.0f32), |(a, b), table| {
             (a.min(table[0]), b.max(*table.last().unwrap()))
         });
-        let aspect = {
-            let extent_x = range_x.1 - range_x.0;
-            let extent_y = range_y.1 - range_y.0;
-            if inverse {
-                extent_y / extent_x
-            } else {
-                extent_x / extent_y
+
+        // Hack to work around egui bug:
+        // https://github.com/emilk/egui/issues/1649
+        let (min_co, max_co) = {
+            let mut min_co = (range_x.0, range_y.0);
+            let mut max_co = (range_x.1, range_y.1);
+            let extent_co = (max_co.0 - min_co.0, max_co.1 - min_co.1);
+            let needed_x_extent = {
+                let extent_ui = (ui.available_width(), ui.available_height());
+                let aspect_ui = extent_ui.0 / extent_ui.1;
+                extent_co.1 * aspect_ui
+            };
+            if needed_x_extent > extent_co.0 {
+                let pad = (needed_x_extent - extent_co.0) * 0.5;
+                min_co.0 -= pad;
+                max_co.0 += pad;
             }
+            (min_co, max_co)
         };
+
         let colors: &[_] = if lut.tables.len() == 1 {
             &[WHITE]
         } else if lut.tables.len() <= 4 {
@@ -35,11 +46,11 @@ pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
             unreachable!()
         };
         Plot::new("transfer function plot")
-            .data_aspect(aspect)
-            .include_x(range_x.0)
-            .include_x(range_x.1)
-            .include_y(range_y.0)
-            .include_y(range_y.1)
+            .data_aspect(1.0)
+            .include_x(min_co.0)
+            .include_x(max_co.0)
+            .include_y(min_co.1)
+            .include_y(max_co.1)
             .show(ui, |plot| {
                 for (component, table) in lut.tables.iter().enumerate() {
                     let range = lut.ranges[component.min(lut.ranges.len() - 1)];
