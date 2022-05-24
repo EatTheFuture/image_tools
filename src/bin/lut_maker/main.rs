@@ -74,6 +74,7 @@ impl AppMain {
             ui_data: Shared::new(UIData {
                 image_view: ImageViewID::Bracketed,
                 mode: AppMode::Generate,
+                export_format: ExportFormat::Cube,
                 preview_mode: graph::PreviewMode::ToLinear,
 
                 generated: generated_tf::GeneratedTF::new(),
@@ -93,6 +94,7 @@ impl AppMain {
 pub struct UIData {
     image_view: ImageViewID,
     mode: AppMode,
+    export_format: ExportFormat,
     preview_mode: graph::PreviewMode,
 
     // Mode-specific data.
@@ -512,6 +514,7 @@ impl AppMain {
     fn export_lut(&self, path: &std::path::Path, to_linear: bool) {
         let transfer_function_tables = self.transfer_function_tables.clone_ref();
         let ui_data = self.ui_data.clone_ref();
+        let exp_fmt = ui_data.lock().export_format;
         let path = path.to_path_buf();
         let mode = ui_data.lock().mode;
 
@@ -654,27 +657,55 @@ impl AppMain {
             };
 
             // Write out the LUT.
-            let path_ref = &path;
+            let adjusted_path: PathBuf =
+                if path.extension().map(|e| e.to_str()).flatten() == Some(exp_fmt.ext()) {
+                    path.clone()
+                } else {
+                    // Some annoying gymnastics because the Path APIs don't
+                    // have a way to append without an implied path
+                    // separator.
+                    let mut p = path.as_os_str().to_os_string();
+                    p.push(&format!(".{}", exp_fmt.ext()));
+                    p.into()
+                };
             let write_result = (|| -> std::io::Result<()> {
-                match path_ref
-                    .extension()
-                    .map(|e| e.to_str())
-                    .flatten()
-                    .unwrap_or_else(|| "")
-                {
-                    "cube" | "CUBE" => colorbox::formats::cube::write_1d(
-                        &mut std::io::BufWriter::new(std::fs::File::create(path_ref)?),
-                        [(lut.ranges[0].0, lut.ranges[0].1); 3],
+                match exp_fmt {
+                    ExportFormat::Cube => colorbox::formats::cube::write_1d(
+                        &mut std::io::BufWriter::new(std::fs::File::create(&adjusted_path)?),
+                        if lut.ranges.len() < 3 {
+                            [(lut.ranges[0].0, lut.ranges[0].1); 3]
+                        } else {
+                            [
+                                (lut.ranges[0].0, lut.ranges[0].1),
+                                (lut.ranges[1].0, lut.ranges[1].1),
+                                (lut.ranges[2].0, lut.ranges[2].1),
+                            ]
+                        },
                         [&lut.tables[0], &lut.tables[1], &lut.tables[2]],
                     )?,
 
-                    // Default to spi1d in absence of a known extension.
-                    "spi1d" | "SPI1D" | _ => colorbox::formats::spi1d::write(
-                        &mut std::io::BufWriter::new(std::fs::File::create(path_ref)?),
-                        lut.ranges[0].0,
-                        lut.ranges[0].1,
-                        &[&lut.tables[0], &lut.tables[1], &lut.tables[2]],
-                    )?,
+                    ExportFormat::Spi1D => {
+                        let ranges_are_equal = lut
+                            .ranges
+                            .iter()
+                            .fold((lut.ranges[0], true), |a, b| (a.0, a.1 && a.0 == *b))
+                            .1;
+                        let lut = if ranges_are_equal {
+                            lut
+                        } else {
+                            lut.resample_to_single_range(
+                                lut.tables[0]
+                                    .len()
+                                    .max((lut.tables[0].len() * 4).min(1 << 12)),
+                            )
+                        };
+                        colorbox::formats::spi1d::write(
+                            &mut std::io::BufWriter::new(std::fs::File::create(&adjusted_path)?),
+                            lut.ranges[0].0,
+                            lut.ranges[0].1,
+                            &[&lut.tables[0], &lut.tables[1], &lut.tables[2]],
+                        )?
+                    }
                 }
                 Ok(())
             })();
@@ -798,4 +829,28 @@ enum AppMode {
     Generate,
     Estimate,
     Modify,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ExportFormat {
+    Cube,
+    Spi1D,
+}
+
+impl ExportFormat {
+    fn ui_text(&self) -> &'static str {
+        use ExportFormat::*;
+        match *self {
+            Cube => ".cube",
+            Spi1D => ".spi1d",
+        }
+    }
+
+    fn ext(&self) -> &'static str {
+        use ExportFormat::*;
+        match *self {
+            Cube => "cube",
+            Spi1D => "spi1d",
+        }
+    }
 }

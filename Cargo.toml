@@ -108,7 +108,7 @@ path = "src/lib.rs"
 
 [dependencies]
 eframe = "0.18"
-rfd = { git = "https://github.com/PolyMeilex/rfd.git", rev = "83620471a3ce9bae" }
+rfd = "0.7.0"
 image = "0.23"
 rawloader = "0.37"
 kamadak-exif = "0.5"

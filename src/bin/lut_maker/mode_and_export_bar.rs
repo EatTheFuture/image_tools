@@ -2,15 +2,19 @@ use std::path::PathBuf;
 
 use crate::egui::{self, Ui};
 
-use crate::AppMode;
+use crate::{AppMode, ExportFormat};
 
 /// Mode tabs and export buttons.
 pub fn bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir: &mut PathBuf) {
     let export_lut_dialog = {
+        let exp_fmt = app.ui_data.lock().export_format;
         let mut d = rfd::FileDialog::new()
             .set_title("Save LUT")
-            .add_filter(".spi1d", &["spi1d", "SPI1D"])
-            .add_filter(".cube", &["cube", "CUBE"]);
+            .set_file_name(&format!(".{}", exp_fmt.ext()))
+            .add_filter(
+                exp_fmt.ui_text(),
+                &[exp_fmt.ext(), &exp_fmt.ext().to_uppercase()],
+            );
         if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
             d = d.set_directory(&working_dir);
         }
@@ -55,6 +59,20 @@ pub fn bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir:
                     *working_dir = parent;
                 }
             }
+        }
+        ui.add_space(8.0);
+        {
+            let exp_fmt = &mut app.ui_data.lock_mut().export_format;
+            egui::ComboBox::from_label("Export format:")
+                .selected_text(exp_fmt.ui_text())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(exp_fmt, ExportFormat::Cube, ExportFormat::Cube.ui_text());
+                    ui.selectable_value(
+                        exp_fmt,
+                        ExportFormat::Spi1D,
+                        ExportFormat::Spi1D.ui_text(),
+                    );
+                });
         }
 
         // Mode tabs.
