@@ -657,21 +657,10 @@ impl AppMain {
             };
 
             // Write out the LUT.
-            let adjusted_path: PathBuf =
-                if path.extension().map(|e| e.to_str()).flatten() == Some(exp_fmt.ext()) {
-                    path.clone()
-                } else {
-                    // Some annoying gymnastics because the Path APIs don't
-                    // have a way to append without an implied path
-                    // separator.
-                    let mut p = path.as_os_str().to_os_string();
-                    p.push(&format!(".{}", exp_fmt.ext()));
-                    p.into()
-                };
             let write_result = (|| -> std::io::Result<()> {
                 match exp_fmt {
                     ExportFormat::Cube => colorbox::formats::cube::write_1d(
-                        &mut std::io::BufWriter::new(std::fs::File::create(&adjusted_path)?),
+                        &mut std::io::BufWriter::new(std::fs::File::create(&path)?),
                         if lut.ranges.len() < 3 {
                             [(lut.ranges[0].0, lut.ranges[0].1); 3]
                         } else {
@@ -700,7 +689,7 @@ impl AppMain {
                             )
                         };
                         colorbox::formats::spi1d::write(
-                            &mut std::io::BufWriter::new(std::fs::File::create(&adjusted_path)?),
+                            &mut std::io::BufWriter::new(std::fs::File::create(&path)?),
                             lut.ranges[0].0,
                             lut.ranges[0].1,
                             &[&lut.tables[0], &lut.tables[1], &lut.tables[2]],
