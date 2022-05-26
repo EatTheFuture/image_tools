@@ -48,15 +48,17 @@ impl ModifiedTF {
         ];
         for chan in 0..3 {
             let (out_floor, out_norm) = {
-                let lut = if to_linear_luts.len() >= 3 {
-                    &to_linear_luts[chan]
+                let (lut, range) = if to_linear_luts.len() >= 3 {
+                    (
+                        &to_linear_luts[chan],
+                        if to_linear_ranges.len() >= 3 {
+                            to_linear_ranges[chan]
+                        } else {
+                            to_linear_ranges[0]
+                        },
+                    )
                 } else {
-                    &to_linear_luts[0]
-                };
-                let range = if to_linear_ranges.len() >= to_linear_luts.len() {
-                    to_linear_ranges[chan]
-                } else {
-                    to_linear_ranges[0]
+                    (&to_linear_luts[0], to_linear_ranges[0])
                 };
 
                 let out_floor = if self.sensor_floor.0 {
@@ -85,15 +87,17 @@ impl ModifiedTF {
             };
 
             if to_linear {
-                let lut = if to_linear_luts.len() >= 3 {
-                    &to_linear_luts[chan]
+                let (lut, range) = if to_linear_luts.len() >= 3 {
+                    (
+                        &to_linear_luts[chan],
+                        if to_linear_ranges.len() >= 3 {
+                            to_linear_ranges[chan]
+                        } else {
+                            to_linear_ranges[0]
+                        },
+                    )
                 } else {
-                    &to_linear_luts[0]
-                };
-                let range = if to_linear_ranges.len() >= to_linear_luts.len() {
-                    to_linear_ranges[chan]
-                } else {
-                    to_linear_ranges[0]
+                    (&to_linear_luts[0], to_linear_ranges[0])
                 };
 
                 adjusted_luts[chan] = (
@@ -102,15 +106,17 @@ impl ModifiedTF {
                     range.1,
                 );
             } else {
-                let lut = if from_linear_luts.len() >= 3 {
-                    &from_linear_luts[chan]
+                let (lut, range) = if from_linear_luts.len() >= 3 {
+                    (
+                        &from_linear_luts[chan],
+                        if from_linear_ranges.len() >= 3 {
+                            from_linear_ranges[chan]
+                        } else {
+                            from_linear_ranges[0]
+                        },
+                    )
                 } else {
-                    &from_linear_luts[0]
-                };
-                let range = if from_linear_ranges.len() >= from_linear_luts.len() {
-                    from_linear_ranges[chan]
-                } else {
-                    from_linear_ranges[0]
+                    (&from_linear_luts[0], from_linear_ranges[0])
                 };
 
                 adjusted_luts[chan] = (
