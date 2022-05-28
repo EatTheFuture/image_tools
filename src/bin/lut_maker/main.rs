@@ -659,7 +659,7 @@ impl AppMain {
             // Write out the LUT.
             let write_result = (|| -> std::io::Result<()> {
                 match exp_fmt {
-                    ExportFormat::Cube => colorbox::formats::cube::write_1d(
+                    ExportFormat::Cube => colorbox::formats::cube_iridas::write_1d(
                         &mut std::io::BufWriter::new(std::fs::File::create(&path)?),
                         if lut.ranges.len() < 3 {
                             [(lut.ranges[0].0, lut.ranges[0].1); 3]

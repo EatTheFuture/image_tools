@@ -109,7 +109,7 @@ impl OCIOConfig {
                                 2 => [&lut.tables[0][..], &lut.tables[1][..], &lut.tables[1][..]],
                                 _ => [&lut.tables[0][..], &lut.tables[1][..], &lut.tables[2][..]],
                             };
-                            colorbox::formats::cube::write_1d(&mut f, ranges, tables)?;
+                            colorbox::formats::cube_iridas::write_1d(&mut f, ranges, tables)?;
                         }
 
                         _ => {

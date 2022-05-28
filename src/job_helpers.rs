@@ -188,12 +188,28 @@ pub fn compute_image_histograms(src_img: &SourceImage, bucket_count: usize) -> [
 }
 
 pub fn load_1d_lut<P: AsRef<Path>>(path: P) -> Result<Lut1D, formats::ReadError> {
+    use std::io::Seek;
+
     let path: &Path = path.as_ref();
-    let file = std::io::BufReader::new(std::fs::File::open(path)?);
+    let mut file = std::io::BufReader::new(std::fs::File::open(path)?);
 
     match path.extension().map(|e| e.to_str()) {
-        Some(Some("cube")) => Ok(formats::cube::read_1d(file)?),
-        Some(Some("spi1d")) => Ok(formats::spi1d::read(file)?),
+        Some(Some("cube")) => {
+            // There are actually two different .cube formats, so we try both.
+            if let Ok(lut) = formats::cube_iridas::read_1d(&mut file) {
+                Ok(lut)
+            } else {
+                file.rewind()?;
+                if let (Some(lut), None) = formats::cube_resolve::read(&mut file)? {
+                    Ok(lut)
+                } else {
+                    Err(formats::ReadError::FormatErr)
+                }
+            }
+        }
+
+        Some(Some("spi1d")) => Ok(formats::spi1d::read(&mut file)?),
+
         _ => Err(formats::ReadError::FormatErr),
     }
 }
