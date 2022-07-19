@@ -255,7 +255,7 @@ impl ImageList {
                 };
 
                 // Compute histograms.
-                let histograms = lib::job_helpers::compute_image_histograms(&img, 256);
+                let histograms = lib::job_helpers::compute_image_histograms(&img);
 
                 // Add image and thumbnail to our lists.
                 {

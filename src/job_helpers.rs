@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use sensor_analysis::Histogram;
 
-use crate::{ImageInfo, SourceImage};
+use crate::{ImageBuf, ImageInfo, SourceImage};
 
 #[derive(Debug, Copy, Clone)]
 pub enum ImageLoadError {
@@ -15,19 +15,28 @@ pub enum ImageLoadError {
 
 pub fn load_image(path: &Path) -> Result<SourceImage, ImageLoadError> {
     // Load image.
-    let img = if let Ok(f) = image::io::Reader::open(&path) {
-        if let Some(Some(img)) = f
-            .with_guessed_format()
-            .ok()
-            .map(|f| f.decode().ok().map(|f| f.to_rgb8()))
-        {
-            img
-        } else {
-            return Err(ImageLoadError::UnknownFormat);
-        }
-    } else {
-        return Err(ImageLoadError::NoAccess);
-    };
+    let img =
+        match image::io::Reader::open(&path).map(|f| f.with_guessed_format().map(|f| f.decode())) {
+            Err(_) => return Err(ImageLoadError::NoAccess),
+
+            Ok(Err(_)) | Ok(Ok(Err(_))) => {
+                return Err(ImageLoadError::UnknownFormat);
+            }
+
+            Ok(Ok(Ok(img))) => match img.color() {
+                image::ColorType::L8
+                | image::ColorType::La8
+                | image::ColorType::Rgb8
+                | image::ColorType::Rgba8 => ImageBuf::Rgb8(img.to_rgb8()),
+
+                image::ColorType::L16
+                | image::ColorType::La16
+                | image::ColorType::Rgb16
+                | image::ColorType::Rgba16 => ImageBuf::Rgb16(img.to_rgb16()),
+
+                _ => ImageBuf::Rgb16(img.to_rgb16()),
+            },
+        };
 
     // Get exposure metadata from EXIF data.
     let (exposure_time, fstop, sensitivity) = {
@@ -138,52 +147,50 @@ pub fn make_image_preview(
         }
     };
 
-    if new_dim == old_dim {
-        (
-            img.image
-                .as_raw()
-                .par_chunks(3)
-                .map(|pix| [pix[0], pix[1], pix[2], 255])
-                .flatten_iter()
-                .collect(),
-            img.image.width() as usize,
-            img.image.height() as usize,
-        )
-    } else {
-        let resized_image = image::imageops::resize(
-            &img.image,
-            new_dim.0 as u32,
-            new_dim.1 as u32,
-            image::imageops::FilterType::Triangle,
-        );
-        (
-            resized_image
-                .as_raw()
-                .par_chunks(3)
-                .map(|pix| [pix[0], pix[1], pix[2], 255])
-                .flatten_iter()
-                .collect(),
-            resized_image.width() as usize,
-            resized_image.height() as usize,
-        )
-    }
+    (
+        img.image
+            .resized(new_dim.0 as u32, new_dim.1 as u32)
+            .as_raw()
+            .par_chunks(3)
+            .map(|pix| [pix[0], pix[1], pix[2], 255])
+            .flatten_iter()
+            .collect(),
+        new_dim.0,
+        new_dim.1,
+    )
 }
 
-pub fn compute_image_histograms(src_img: &SourceImage, bucket_count: usize) -> [Histogram; 3] {
+pub fn compute_image_histograms(src_img: &SourceImage) -> [Histogram; 3] {
     let mut histograms = [
         Histogram::default(),
         Histogram::default(),
         Histogram::default(),
     ];
-    for chan in 0..3 {
-        histograms[chan] = Histogram::from_iter(
-            src_img
-                .image
-                .enumerate_pixels()
-                .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
-            bucket_count,
-        );
+
+    match src_img.image {
+        ImageBuf::Rgb8(ref img) => {
+            let bucket_count = 1 << 8;
+            for chan in 0..3 {
+                histograms[chan] = Histogram::from_iter(
+                    img.enumerate_pixels()
+                        .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
+                    bucket_count,
+                );
+            }
+        }
+
+        ImageBuf::Rgb16(ref img) => {
+            let bucket_count = 1 << 16;
+            for chan in 0..3 {
+                histograms[chan] = Histogram::from_iter(
+                    img.enumerate_pixels()
+                        .map(|p: (u32, u32, &image::Rgb<u16>)| p.2[chan]),
+                    bucket_count,
+                );
+            }
+        }
     }
+
     histograms
 }
 

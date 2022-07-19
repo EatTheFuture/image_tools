@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use sensor_analysis::eval_transfer_function_lut;
 use shared_data::Shared;
 
-use lib::{ImageInfo, SourceImage};
+use lib::{ImageBuf, ImageInfo, SourceImage};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -341,8 +341,6 @@ impl AppMain {
     }
 
     fn build_hdri(&mut self, ctx: &egui::Context) {
-        use sensor_analysis::Histogram;
-
         let images = self.images.clone_ref();
         let hdri = self.hdri_merger.clone_ref();
         let ui_data = self.ui_data.clone_ref();
@@ -359,22 +357,14 @@ impl AppMain {
             // Calculate histograms.
             let mut histograms = [Vec::new(), Vec::new(), Vec::new()];
             for img_i in 0..img_len {
-                for chan in 0..3 {
-                    if status.lock().is_canceled() {
-                        return;
-                    }
-                    let src_img = &images.lock()[img_i];
-                    if let Some(exposure) = src_img.info.exposure {
-                        histograms[chan].push((
-                            Histogram::from_iter(
-                                src_img
-                                    .image
-                                    .enumerate_pixels()
-                                    .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
-                                256,
-                            ),
-                            exposure,
-                        ));
+                if status.lock().is_canceled() {
+                    return;
+                }
+                let src_img = &images.lock()[img_i];
+                if let Some(exposure) = src_img.info.exposure {
+                    let img_hists = lib::job_helpers::compute_image_histograms(src_img);
+                    for (chan, hist) in std::iter::IntoIterator::into_iter(img_hists).enumerate() {
+                        histograms[chan].push((hist, exposure));
                     }
                 }
             }
@@ -565,7 +555,7 @@ impl HDRIMerger {
 
     fn add_image(
         &mut self,
-        img: &image::RgbImage,
+        img: &ImageBuf,
         exposure: f32,
         floor_ceil: &[(f32, f32)],
         linearizing_curves: &[Vec<f32>],
@@ -617,22 +607,45 @@ impl HDRIMerger {
         };
 
         let inv_exposure = 1.0 / exposure;
-        let quant_norm = 1.0 / 255.0;
-        for (i, pixel) in img.pixels().enumerate() {
-            let r = pixel[0] as f32 * quant_norm;
-            let g = pixel[1] as f32 * quant_norm;
-            let b = pixel[2] as f32 * quant_norm;
+        let quant_norm = 1.0 / ((1 << img.bit_depth()) - 1) as f32;
+        match img {
+            ImageBuf::Rgb8(ref inner) => {
+                for (i, pixel) in inner.pixels().enumerate() {
+                    let r = pixel[0] as f32 * quant_norm;
+                    let g = pixel[1] as f32 * quant_norm;
+                    let b = pixel[2] as f32 * quant_norm;
 
-            let r_linear = eval_transfer_function_lut(&linearizing_curves[0][..], r);
-            let g_linear = eval_transfer_function_lut(&linearizing_curves[1][..], g);
-            let b_linear = eval_transfer_function_lut(&linearizing_curves[2][..], b);
+                    let r_linear = eval_transfer_function_lut(&linearizing_curves[0][..], r);
+                    let g_linear = eval_transfer_function_lut(&linearizing_curves[1][..], g);
+                    let b_linear = eval_transfer_function_lut(&linearizing_curves[2][..], b);
 
-            let weight = calc_weight((r, g, b), (r_linear, g_linear, b_linear));
+                    let weight = calc_weight((r, g, b), (r_linear, g_linear, b_linear));
 
-            self.pixels[i][0] += r_linear * inv_exposure * weight;
-            self.pixels[i][1] += g_linear * inv_exposure * weight;
-            self.pixels[i][2] += b_linear * inv_exposure * weight;
-            self.pixel_weights[i] += weight;
+                    self.pixels[i][0] += r_linear * inv_exposure * weight;
+                    self.pixels[i][1] += g_linear * inv_exposure * weight;
+                    self.pixels[i][2] += b_linear * inv_exposure * weight;
+                    self.pixel_weights[i] += weight;
+                }
+            }
+
+            ImageBuf::Rgb16(ref inner) => {
+                for (i, pixel) in inner.pixels().enumerate() {
+                    let r = pixel[0] as f32 * quant_norm;
+                    let g = pixel[1] as f32 * quant_norm;
+                    let b = pixel[2] as f32 * quant_norm;
+
+                    let r_linear = eval_transfer_function_lut(&linearizing_curves[0][..], r);
+                    let g_linear = eval_transfer_function_lut(&linearizing_curves[1][..], g);
+                    let b_linear = eval_transfer_function_lut(&linearizing_curves[2][..], b);
+
+                    let weight = calc_weight((r, g, b), (r_linear, g_linear, b_linear));
+
+                    self.pixels[i][0] += r_linear * inv_exposure * weight;
+                    self.pixels[i][1] += g_linear * inv_exposure * weight;
+                    self.pixels[i][2] += b_linear * inv_exposure * weight;
+                    self.pixel_weights[i] += weight;
+                }
+            }
         }
     }
 
