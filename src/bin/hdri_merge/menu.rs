@@ -17,7 +17,7 @@ pub fn menu_bar(
                     .clicked()
                 {
                     if let Some(paths) = add_images_dialog.clone().pick_files() {
-                        app.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()), ctx);
+                        app.add_image_files(paths, ctx);
                     }
                 }
 

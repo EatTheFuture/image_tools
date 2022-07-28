@@ -222,7 +222,7 @@ pub fn modified_mode_ui(
             ui.horizontal(|ui| {
                 ui.checkbox(
                     &mut app.ui_data.lock_mut().modified.sensor_floor.0,
-                    "Adjust Floor",
+                    "Adjust Noise Floor",
                 );
                 ui.add_space(4.0);
                 if ui

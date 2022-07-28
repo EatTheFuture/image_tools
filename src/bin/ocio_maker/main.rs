@@ -166,13 +166,15 @@ impl eframe::App for AppMain {
 
         // Collect dropped files.
         if !ctx.input().raw.dropped_files.is_empty() {
-            // self.add_image_files(
-            //     ctx.input()
-            //         .raw
-            //         .dropped_files
-            //         .iter()
-            //         .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
-            // );
+            // let file_list: Vec<PathBuf> = ctx
+            //     .input()
+            //     .raw
+            //     .dropped_files
+            //     .iter()
+            //     .map(|dropped_file| dropped_file.path.clone().unwrap())
+            //     .collect();
+
+            // self.add_image_files(file_list, ctx);
         }
     }
 }

@@ -72,7 +72,7 @@ impl AppMain {
             transfer_function_tables: Shared::new(None),
 
             ui_data: Shared::new(UIData {
-                image_view: ImageViewID::Bracketed,
+                image_view: ImageViewID::Dark,
                 mode: AppMode::Generate,
                 export_format: ExportFormat::Cube,
                 preview_mode: graph::PreviewMode::ToLinear,
@@ -108,15 +108,15 @@ pub struct UIData {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ImageViewID {
+    Dark,
     Bracketed,
-    LensCap,
 }
 
 impl ImageViewID {
     fn ui_text(&self) -> &'static str {
         match *self {
+            ImageViewID::Dark => "Lens Cap Images",
             ImageViewID::Bracketed => "Bracketed Exposures",
-            ImageViewID::LensCap => "Lens Cap Images",
         }
     }
 }
@@ -160,13 +160,13 @@ impl eframe::App for AppMain {
                         .show_ui(ui, |ui| {
                             ui.selectable_value(
                                 image_view,
-                                ImageViewID::Bracketed,
-                                ImageViewID::Bracketed.ui_text(),
+                                ImageViewID::Dark,
+                                ImageViewID::Dark.ui_text(),
                             );
                             ui.selectable_value(
                                 image_view,
-                                ImageViewID::LensCap,
-                                ImageViewID::LensCap.ui_text(),
+                                ImageViewID::Bracketed,
+                                ImageViewID::Bracketed.ui_text(),
                             );
                         });
                 }
@@ -176,7 +176,7 @@ impl eframe::App for AppMain {
                 let image_view = self.ui_data.lock().image_view;
                 match image_view {
                     // Lens cap images.
-                    ImageViewID::LensCap => {
+                    ImageViewID::Dark => {
                         self.lens_cap_images.draw(
                             ctx,
                             ui,
@@ -225,15 +225,6 @@ impl eframe::App for AppMain {
                             total_dark_images,
                         );
                     }
-                    AppMode::Estimate => {
-                        estimated_tf::estimated_mode_ui(
-                            ui,
-                            self,
-                            job_count,
-                            total_bracket_images,
-                            total_dark_images,
-                        );
-                    }
                     AppMode::Modify => {
                         modified_tf::modified_mode_ui(
                             ui,
@@ -242,6 +233,15 @@ impl eframe::App for AppMain {
                             total_bracket_images,
                             total_dark_images,
                             &mut working_dir,
+                        );
+                    }
+                    AppMode::Estimate => {
+                        estimated_tf::estimated_mode_ui(
+                            ui,
+                            self,
+                            job_count,
+                            total_bracket_images,
+                            total_dark_images,
                         );
                     }
                 }
@@ -259,26 +259,23 @@ impl eframe::App for AppMain {
 
         // Collect dropped files.
         if !ctx.input().raw.dropped_files.is_empty() {
+            let file_list: Vec<PathBuf> = ctx
+                .input()
+                .raw
+                .dropped_files
+                .iter()
+                .map(|dropped_file| dropped_file.path.clone().unwrap())
+                .collect();
             let image_view = self.ui_data.lock().image_view;
             match image_view {
-                ImageViewID::Bracketed => self.bracket_image_sets.add_image_files(
-                    ctx.input()
-                        .raw
-                        .dropped_files
-                        .iter()
-                        .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
-                    ctx,
-                    &self.job_queue,
-                ),
-                ImageViewID::LensCap => self.lens_cap_images.add_image_files(
-                    ctx.input()
-                        .raw
-                        .dropped_files
-                        .iter()
-                        .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
-                    ctx,
-                    &self.job_queue,
-                ),
+                ImageViewID::Dark => {
+                    self.lens_cap_images
+                        .add_image_files(file_list, ctx, &self.job_queue)
+                }
+                ImageViewID::Bracketed => {
+                    self.bracket_image_sets
+                        .add_image_files(file_list, ctx, &self.job_queue)
+                }
             }
             self.compute_exposure_mappings();
         }
@@ -360,12 +357,12 @@ impl AppMain {
                         ui_data.generated.sensor_floor = floor;
                     }
 
-                    AppMode::Estimate => {
-                        ui_data.estimated.sensor_floor = floor;
-                    }
-
                     AppMode::Modify => {
                         ui_data.modified.sensor_floor.1 = floor;
+                    }
+
+                    AppMode::Estimate => {
+                        ui_data.estimated.sensor_floor = floor;
                     }
                 }
             });
@@ -411,15 +408,15 @@ impl AppMain {
                         }
                     }
 
-                    AppMode::Estimate => {
-                        for i in 0..3 {
-                            ui_data.estimated.sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
-                        }
-                    }
-
                     AppMode::Modify => {
                         for i in 0..3 {
                             ui_data.modified.sensor_ceiling.1[i] = ceiling[i].unwrap_or(1.0);
+                        }
+                    }
+
+                    AppMode::Estimate => {
+                        for i in 0..3 {
+                            ui_data.estimated.sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
                         }
                     }
                 }
@@ -816,8 +813,8 @@ fn exposure_mappings(
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum AppMode {
     Generate,
-    Estimate,
     Modify,
+    Estimate,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

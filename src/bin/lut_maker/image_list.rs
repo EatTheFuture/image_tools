@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::atomic::AtomicBool,
-};
+use std::{path::PathBuf, sync::atomic::AtomicBool};
 
 use job_queue::JobQueue;
 use sensor_analysis::Histogram;
@@ -88,10 +85,10 @@ impl ImageList {
             .clicked()
         {
             if let Some(paths) = add_images_dialog.clone().pick_files() {
-                self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()), ctx, jq);
                 if let Some(parent) = paths.get(0).map(|p| p.parent().map(|p| p.into())).flatten() {
                     *working_dir = parent;
                 }
+                self.add_image_files(paths, ctx, jq);
                 was_changed = true;
             }
         }
@@ -169,15 +166,14 @@ impl ImageList {
         self.multiple_sets.load(Ordering::Acquire)
     }
 
-    pub fn add_image_files<'a, I: Iterator<Item = &'a Path>>(
+    pub fn add_image_files(
         &mut self,
-        paths: I,
+        mut image_paths: Vec<PathBuf>,
         ctx: &egui::Context,
         job_queue: &JobQueue,
     ) {
         let use_sets = self.uses_sets();
 
-        let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
         let histogram_sets = self.histogram_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
         let ctx = ctx.clone();

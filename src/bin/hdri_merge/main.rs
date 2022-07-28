@@ -4,7 +4,7 @@ mod image_list;
 mod image_view;
 mod menu;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use eframe::egui;
 use rayon::prelude::*;
@@ -165,7 +165,7 @@ impl eframe::App for AppMain {
                     .clicked()
                 {
                     if let Some(paths) = add_images_dialog.clone().pick_files() {
-                        self.add_image_files(paths.iter().map(|pathbuf| pathbuf.as_path()), ctx);
+                        self.add_image_files(paths, ctx);
                     }
                 }
 
@@ -209,21 +209,21 @@ impl eframe::App for AppMain {
 
         // Collect dropped files.
         if !ctx.input().raw.dropped_files.is_empty() {
-            self.add_image_files(
-                ctx.input()
-                    .raw
-                    .dropped_files
-                    .iter()
-                    .map(|dropped_file| dropped_file.path.as_ref().unwrap().as_path()),
-                ctx,
-            );
+            let file_list: Vec<PathBuf> = ctx
+                .input()
+                .raw
+                .dropped_files
+                .iter()
+                .map(|dropped_file| dropped_file.path.clone().unwrap())
+                .collect();
+
+            self.add_image_files(file_list, ctx);
         }
     }
 }
 
 impl AppMain {
-    fn add_image_files<'a, I: Iterator<Item = &'a Path>>(&mut self, paths: I, ctx: &egui::Context) {
-        let mut image_paths: Vec<_> = paths.map(|path| path.to_path_buf()).collect();
+    fn add_image_files(&mut self, mut image_paths: Vec<PathBuf>, ctx: &egui::Context) {
         let images = self.images.clone_ref();
         let ui_data = self.ui_data.clone_ref();
         let ctx1 = ctx.clone();

@@ -88,16 +88,16 @@ pub fn bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir:
                     *mode = AppMode::Generate;
                 };
                 if ui
-                    .selectable_label(*mode == AppMode::Estimate, "Estimate")
-                    .clicked()
-                {
-                    *mode = AppMode::Estimate;
-                };
-                if ui
                     .selectable_label(*mode == AppMode::Modify, "Modify")
                     .clicked()
                 {
                     *mode = AppMode::Modify;
+                };
+                if ui
+                    .selectable_label(*mode == AppMode::Estimate, "Estimate")
+                    .clicked()
+                {
+                    *mode = AppMode::Estimate;
                 };
             });
         });
