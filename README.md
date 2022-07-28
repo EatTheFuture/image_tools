@@ -17,6 +17,7 @@ At the moment this only works correctly with image files that contain Exif data 
 
 - [ ] Let users select a filmic "look" when previewing the HDRI (currently it just maps straight to sRGB, which isn't great).
 - [ ] Let users load custom transfer function LUTs (e.g. from ETF LUT Maker) to linearize input images.  Currently linearization is always estimated.
+- [ ] Let users specify color gamut conversions.
 - [ ] Support camera raw images as input, with demosaicing support.
 - [ ] Support saving to EXR files.
 
@@ -30,6 +31,7 @@ Currently this is only capable of generating transfer function LUTs.
 ### To-do:
 
 - [x] Allow loading LUTs to be used as the basis for generating a new LUT (useful for e.g. correcting the black levels of a manufacturer-provided LUT).
+- [x] Allow loading of 16-bit TIFF and PNG files, for estimating parameters of high bit-depth footage.
 - [ ] Export transfer function LUTs with a bit of buffer outside the normal range of the LUT (useful for e.g. preserving negative values throughout a pipeline).
 - [ ] Generate 3D LUTs for chroma, based on color checker images.
 - [ ] Generate 3D LUTs for chroma, based on camera sensor spectral sensitivity data.

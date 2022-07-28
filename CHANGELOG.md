@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+### General improvements
+
+- LUT Maker now has a mode for adjusting existing LUT files.  This is particularly useful for tweaking the sensor noise floor of LUTs from camera manufacturers, which are unlikely to be calibrated for specific cameras.
+- LUT Maker can now load 16-bit TIFF and PNG files, which is particularly useful for estimating the sensor noise floor of high-bit-depth footage accurately.
+- LUT Maker now uses the selected/loaded transfer function in Generate and Modify modes when estimating the sensor noise floor from lens cap images.  This gives more accurate noise floor estimates in some cases.
+- LUT Maker and OCIO Maker can now load Davinci Resolve .cube files.  They could already load Iridas .cube files, which are a little different.
+
 
 ## [0.3.1] - 2022-01-20
 
