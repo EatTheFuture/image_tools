@@ -296,19 +296,69 @@ impl AppMain {
                     .lock_mut()
                     .set_progress(format!("Estimating sensor noise floor"), 0.0);
 
+                let mode = ui_data.lock().mode;
+
+                let loaded_lut_is_monotonic =
+                    if let Some((lut, _, _)) = &ui_data.lock().modified.loaded_lut {
+                        lut.is_monotonic()
+                    } else {
+                        false
+                    };
+
                 let floor = if !lens_cap_images.lock().is_empty() {
+                    let transfer_fn = |n: f32, channel: usize| -> f32 {
+                        match mode {
+                            AppMode::Estimate => n,
+                            AppMode::Generate => {
+                                ui_data.lock().generated.transfer_function_type.to_linear(n)
+                            }
+                            AppMode::Modify => {
+                                if let Some((lut, _, _)) = &ui_data.lock().modified.loaded_lut {
+                                    if loaded_lut_is_monotonic {
+                                        lut.look_up(n, channel.min(lut.tables.len() - 1))
+                                    } else {
+                                        n
+                                    }
+                                } else {
+                                    n
+                                }
+                            }
+                        }
+                    };
+                    let inv_transfer_fn = |n: f32, channel: usize| -> f32 {
+                        match mode {
+                            AppMode::Estimate => n,
+                            AppMode::Generate => ui_data
+                                .lock()
+                                .generated
+                                .transfer_function_type
+                                .from_linear(n),
+                            AppMode::Modify => {
+                                if let Some((lut, _, _)) = &ui_data.lock().modified.loaded_lut {
+                                    if loaded_lut_is_monotonic {
+                                        lut.look_up_inv(n, channel.min(lut.tables.len() - 1))
+                                    } else {
+                                        n
+                                    }
+                                } else {
+                                    n
+                                }
+                            }
+                        }
+                    };
+
                     // Collect stats.
                     let mut sum = [0.0f64; 3];
                     let mut sample_count = [0usize; 3];
                     if let Some(set) = lens_cap_images.lock().get(0) {
                         for (histograms, _) in set.iter() {
                             for chan in 0..3 {
-                                let norm = 1.0 / (histograms[chan].buckets.len() - 1) as f64;
+                                let norm = 1.0 / (histograms[chan].buckets.len() - 1) as f32;
                                 for (i, bucket_population) in
                                     histograms[chan].buckets.iter().enumerate()
                                 {
-                                    let v = i as f64 * norm;
-                                    sum[chan] += v * (*bucket_population as f64);
+                                    let v = transfer_fn(i as f32 * norm, chan);
+                                    sum[chan] += v as f64 * (*bucket_population as f64);
                                     sample_count[chan] += *bucket_population;
                                 }
                             }
@@ -318,8 +368,11 @@ impl AppMain {
                     // Compute floor.
                     let mut floor = [0.0f32; 3];
                     for chan in 0..3 {
-                        let n = sum[chan] / sample_count[chan].max(1) as f64;
-                        floor[chan] = n.max(0.0).min(1.0) as f32;
+                        let n = inv_transfer_fn(
+                            (sum[chan] / sample_count[chan].max(1) as f64) as f32,
+                            chan,
+                        );
+                        floor[chan] = n.max(0.0).min(1.0);
                     }
                     floor
                 } else {
@@ -352,7 +405,7 @@ impl AppMain {
                 };
 
                 let mut ui_data = ui_data.lock_mut();
-                match ui_data.mode {
+                match mode {
                     AppMode::Generate => {
                         ui_data.generated.sensor_floor = floor;
                     }

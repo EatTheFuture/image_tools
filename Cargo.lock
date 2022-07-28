@@ -395,7 +395,7 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 [[package]]
 name = "colorbox"
 version = "0.3.0"
-source = "git+https://github.com/cessen/colorbox?branch=master#242594c19b0c9214224034091005331f1124e214"
+source = "git+https://github.com/cessen/colorbox?branch=master#9d61f94f91d589ba779831dbd0bcf62f83cfbacb"
 
 [[package]]
 name = "combine"

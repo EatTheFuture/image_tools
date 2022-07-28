@@ -214,84 +214,88 @@ pub fn modified_mode_ui(
 
         ui.add_space(48.0);
 
-        // Sensor floor controls.
-        let adjust_floor = app.ui_data.lock().modified.sensor_floor.0;
-        ui.vertical(|ui| {
-            ui.set_width(sub_area_width);
+        let have_lut = app.ui_data.lock().modified.loaded_lut.is_some();
 
-            ui.horizontal(|ui| {
-                ui.checkbox(
-                    &mut app.ui_data.lock_mut().modified.sensor_floor.0,
-                    "Adjust Noise Floor",
-                );
+        ui.add_enabled_ui(have_lut, |ui| {
+            // Sensor floor controls.
+            let adjust_floor = app.ui_data.lock().modified.sensor_floor.0;
+            ui.vertical(|ui| {
+                ui.set_width(sub_area_width);
+
+                ui.horizontal(|ui| {
+                    ui.checkbox(
+                        &mut app.ui_data.lock_mut().modified.sensor_floor.0,
+                        "Adjust Noise Floor",
+                    );
+                    ui.add_space(4.0);
+                    if ui
+                        .add_enabled(
+                            job_count == 0
+                                && adjust_floor
+                                && (total_bracket_images > 0 || total_dark_images > 0),
+                            egui::widgets::Button::new("Estimate"),
+                        )
+                        .clicked()
+                    {
+                        app.estimate_sensor_floor();
+                    }
+                });
                 ui.add_space(4.0);
-                if ui
-                    .add_enabled(
-                        job_count == 0
-                            && adjust_floor
-                            && (total_bracket_images > 0 || total_dark_images > 0),
-                        egui::widgets::Button::new("Estimate"),
-                    )
-                    .clicked()
+                for (label, value) in ["R: ", "G: ", "B: "]
+                    .iter()
+                    .zip(app.ui_data.lock_mut().modified.sensor_floor.1.iter_mut())
                 {
-                    app.estimate_sensor_floor();
+                    ui.horizontal(|ui| {
+                        ui.label(*label);
+                        ui.add_enabled(
+                            job_count == 0 && adjust_floor,
+                            egui::widgets::Slider::new(value, 0.0..=1.0)
+                                .max_decimals(5)
+                                .min_decimals(5),
+                        );
+                    });
                 }
             });
-            ui.add_space(4.0);
-            for (label, value) in ["R: ", "G: ", "B: "]
-                .iter()
-                .zip(app.ui_data.lock_mut().modified.sensor_floor.1.iter_mut())
-            {
+
+            ui.add_space(0.0);
+
+            // Sensor ceiling controls.
+            let adjust_ceiling = app.ui_data.lock().modified.sensor_ceiling.0;
+            ui.vertical(|ui| {
+                ui.set_width(sub_area_width);
+
                 ui.horizontal(|ui| {
-                    ui.label(*label);
-                    ui.add_enabled(
-                        job_count == 0 && adjust_floor,
-                        egui::widgets::Slider::new(value, 0.0..=1.0)
-                            .max_decimals(5)
-                            .min_decimals(5),
+                    ui.checkbox(
+                        &mut app.ui_data.lock_mut().modified.sensor_ceiling.0,
+                        "Adjust Ceiling",
                     );
+                    ui.add_space(4.0);
+                    if ui
+                        .add_enabled(
+                            job_count == 0 && adjust_ceiling && total_bracket_images > 0,
+                            egui::widgets::Button::new("Estimate"),
+                        )
+                        .clicked()
+                    {
+                        app.estimate_sensor_ceiling();
+                    }
                 });
-            }
-        });
-
-        ui.add_space(0.0);
-
-        // Sensor ceiling controls.
-        let adjust_ceiling = app.ui_data.lock().modified.sensor_ceiling.0;
-        ui.vertical(|ui| {
-            ui.set_width(sub_area_width);
-
-            ui.horizontal(|ui| {
-                ui.checkbox(
-                    &mut app.ui_data.lock_mut().modified.sensor_ceiling.0,
-                    "Adjust Ceiling",
-                );
                 ui.add_space(4.0);
-                if ui
-                    .add_enabled(
-                        job_count == 0 && adjust_ceiling && total_bracket_images > 0,
-                        egui::widgets::Button::new("Estimate"),
-                    )
-                    .clicked()
+                for (label, value) in ["R: ", "G: ", "B: "]
+                    .iter()
+                    .zip(app.ui_data.lock_mut().modified.sensor_ceiling.1.iter_mut())
                 {
-                    app.estimate_sensor_ceiling();
+                    ui.horizontal(|ui| {
+                        ui.label(*label);
+                        ui.add_enabled(
+                            job_count == 0 && adjust_ceiling,
+                            egui::widgets::Slider::new(value, 0.0..=1.0)
+                                .max_decimals(5)
+                                .min_decimals(5),
+                        );
+                    });
                 }
             });
-            ui.add_space(4.0);
-            for (label, value) in ["R: ", "G: ", "B: "]
-                .iter()
-                .zip(app.ui_data.lock_mut().modified.sensor_ceiling.1.iter_mut())
-            {
-                ui.horizontal(|ui| {
-                    ui.label(*label);
-                    ui.add_enabled(
-                        job_count == 0 && adjust_ceiling,
-                        egui::widgets::Slider::new(value, 0.0..=1.0)
-                            .max_decimals(5)
-                            .min_decimals(5),
-                    );
-                });
-            }
         });
     });
 }

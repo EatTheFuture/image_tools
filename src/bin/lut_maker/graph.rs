@@ -141,7 +141,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     .data_aspect(1.0)
                     .show(ui, |plot| {
                         plot.text(egui::widgets::plot::Text::new(
-                            PlotPoint::new(0.5, 0.5),
+                            PlotPoint::new(0.4, 0.1),
                             "No estimated transfer function.",
                         ));
                     });
@@ -217,7 +217,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     .data_aspect(1.0)
                     .show(ui, |plot| {
                         plot.text(egui::widgets::plot::Text::new(
-                            PlotPoint::new(0.5, 0.5),
+                            PlotPoint::new(0.4, 0.1),
                             "No transfer function LUT.",
                         ));
                     });
@@ -237,8 +237,8 @@ fn exposure_mappings_graph(
         .show(ui, |plot| {
             if exposure_mappings[0].is_empty() {
                 plot.text(egui::widgets::plot::Text::new(
-                    PlotPoint::new(0.5, 0.5),
-                    "Two or more bracketed exposure images needed to generate data.",
+                    PlotPoint::new(0.4, 0.1),
+                    "Two or more bracketed exposure images\nare needed to generate this data.",
                 ));
             } else {
                 plot.line(Line::new(vec![[0.0f64, 0.0], [1.0, 1.0]]).color(lib::colors::GRAY));
