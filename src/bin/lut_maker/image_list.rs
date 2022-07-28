@@ -9,7 +9,7 @@ use shared_data::Shared;
 
 use lib::ImageInfo;
 
-use crate::egui::{self, Context, Ui};
+use crate::egui::{self, Context, TextureFilter, Ui};
 
 pub struct ImageList {
     pub histogram_sets: Shared<Vec<Vec<([Histogram; 3], ImageInfo)>>>,
@@ -250,6 +250,7 @@ impl ImageList {
                                 [width, height],
                                 &pixels,
                             ),
+                            TextureFilter::Linear,
                         );
                     (tex_handle, width, height)
                 };

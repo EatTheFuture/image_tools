@@ -1,8 +1,10 @@
+use std::iter::FromIterator;
+
 use sensor_analysis::{utils::lerp_slice, ExposureMapping};
 
 use crate::egui::{
     self,
-    widgets::plot::{Line, Plot, Points, Value, Values},
+    widgets::plot::{Line, Plot, PlotPoint, PlotPoints, Points},
     Ui,
 };
 
@@ -139,7 +141,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     .data_aspect(1.0)
                     .show(ui, |plot| {
                         plot.text(egui::widgets::plot::Text::new(
-                            egui::widgets::plot::Value { x: 0.5, y: 0.5 },
+                            PlotPoint::new(0.5, 0.5),
                             "No estimated transfer function.",
                         ));
                     });
@@ -215,7 +217,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     .data_aspect(1.0)
                     .show(ui, |plot| {
                         plot.text(egui::widgets::plot::Text::new(
-                            egui::widgets::plot::Value { x: 0.5, y: 0.5 },
+                            PlotPoint::new(0.5, 0.5),
                             "No transfer function LUT.",
                         ));
                     });
@@ -235,20 +237,15 @@ fn exposure_mappings_graph(
         .show(ui, |plot| {
             if exposure_mappings[0].is_empty() {
                 plot.text(egui::widgets::plot::Text::new(
-                    egui::widgets::plot::Value { x: 0.5, y: 0.5 },
+                    PlotPoint::new(0.5, 0.5),
                     "Two or more bracketed exposure images needed to generate data.",
                 ));
             } else {
-                plot.line(
-                    Line::new(Values::from_values_iter(
-                        [Value::new(0.0, 0.0), Value::new(1.0, 1.0)].iter().copied(),
-                    ))
-                    .color(lib::colors::GRAY),
-                );
+                plot.line(Line::new(vec![[0.0f64, 0.0], [1.0, 1.0]]).color(lib::colors::GRAY));
                 for chan in 0..3 {
                     let lut_range = (luts[chan].1, luts[chan].2);
                     let lut_norm = 1.0 / (lut_range.1 - lut_range.0);
-                    plot.points(Points::new(Values::from_values_iter(
+                    plot.points(Points::new(PlotPoints::from_iter(
                         exposure_mappings[chan]
                             .iter()
                             .map(|m| {
@@ -256,10 +253,10 @@ fn exposure_mappings_graph(
                                 m.curve.iter().map(move |(x, y)| {
                                     let x = (*x - lut_range.0) * lut_norm;
                                     let y = (*y - lut_range.0) * lut_norm;
-                                    Value::new(
-                                        lerp_slice(&luts[chan].0, x) * norm,
-                                        lerp_slice(&luts[chan].0, y),
-                                    )
+                                    [
+                                        (lerp_slice(&luts[chan].0, x) * norm) as f64,
+                                        lerp_slice(&luts[chan].0, y) as f64,
+                                    ]
                                 })
                             })
                             .flatten(),
@@ -276,49 +273,20 @@ fn transfer_function_graph<I: Iterator<Item = (f32, f32)>, F: Fn(usize) -> I>(
 ) {
     let colors = &[lib::colors::RED, lib::colors::GREEN, lib::colors::BLUE];
 
-    // Hack to work around egui bug:
-    // https://github.com/emilk/egui/issues/1649
-    let (min_co, max_co) = {
-        let mut min_co = (std::f32::INFINITY, std::f32::INFINITY);
-        let mut max_co = (-std::f32::INFINITY, -std::f32::INFINITY);
-        for i in 0..3 {
-            for co in channel_points(i) {
-                min_co.0 = min_co.0.min(co.0);
-                min_co.1 = min_co.1.min(co.1);
-                max_co.0 = max_co.0.max(co.0);
-                max_co.1 = max_co.1.max(co.1);
-            }
-        }
-        let extent_co = (max_co.0 - min_co.0, max_co.1 - min_co.1);
-        let needed_x_extent = {
-            let extent_ui = (ui.available_width(), ui.available_height());
-            let aspect_ui = extent_ui.0 / extent_ui.1;
-            extent_co.1 * aspect_ui
-        };
-        if needed_x_extent > extent_co.0 {
-            let pad = (needed_x_extent - extent_co.0) * 0.5;
-            min_co.0 -= pad;
-            max_co.0 += pad;
-        }
-        (min_co, max_co)
-    };
-
     // Draw the graph.
     Plot::new("Transfer Function Graph")
         .data_aspect(1.0)
-        .include_x(min_co.0)
-        .include_x(max_co.0)
         .show(ui, |plot| {
             if let Some(text) = label {
                 plot.text(egui::widgets::plot::Text::new(
-                    egui::widgets::plot::Value { x: 0.5, y: -0.05 },
+                    PlotPoint::new(0.5, -0.05),
                     text,
                 ));
             }
             for chan in 0..3 {
                 plot.line(
-                    Line::new(Values::from_values_iter(
-                        channel_points(chan).map(|(x, y)| Value::new(x, y)),
+                    Line::new(PlotPoints::from_iter(
+                        channel_points(chan).map(|(x, y)| [x as f64, y as f64]),
                     ))
                     .color(colors[chan]),
                 );

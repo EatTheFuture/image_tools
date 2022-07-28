@@ -1,4 +1,4 @@
-use crate::egui::{self, Context, Ui};
+use crate::egui::{self, Align, Context, Ui};
 use crate::ShowImage;
 
 pub fn image_view(
@@ -53,7 +53,7 @@ pub fn image_view(
             }
         }
 
-        ui.with_layout(egui::Layout::right_to_left(), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(Align::Max), |ui| {
             ui.scope(|ui| {
                 ui.add_space(6.0);
                 ui.spacing_mut().slider_width = 200.0;

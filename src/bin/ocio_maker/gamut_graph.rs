@@ -1,3 +1,5 @@
+use std::iter::FromIterator;
+
 use crate::egui::{self, Color32, Ui};
 
 use lib::colors::*;
@@ -10,33 +12,21 @@ pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
 
     // Visualize chromaticities / gamut.
     if let Some(chroma) = space.chroma_space.chromaticities(space.custom_chroma) {
-        use egui::widgets::plot::{HLine, Line, LineStyle, Plot, VLine, Value, Values};
+        use egui::widgets::plot::{HLine, Line, LineStyle, Plot, PlotPoints, VLine};
         let wp_style = LineStyle::Dashed { length: 10.0 };
-        let r = Value {
-            x: chroma.r.0,
-            y: chroma.r.1,
-        };
-        let g = Value {
-            x: chroma.g.0,
-            y: chroma.g.1,
-        };
-        let b = Value {
-            x: chroma.b.0,
-            y: chroma.b.1,
-        };
-        let w = Value {
-            x: chroma.w.0,
-            y: chroma.w.1,
-        };
+        let r = [chroma.r.0, chroma.r.1];
+        let g = [chroma.g.0, chroma.g.1];
+        let b = [chroma.b.0, chroma.b.1];
+        let w = [chroma.w.0, chroma.w.1];
 
         Plot::new("chromaticities_plot")
             .data_aspect(1.0)
             .height(250.0)
             .width(250.0)
-            .include_x(0.0)
-            .include_x(1.0)
-            .include_y(0.0)
-            .include_y(1.0)
+            .include_x(-0.12)
+            .include_x(1.12)
+            .include_y(-0.12)
+            .include_y(1.12)
             .allow_drag(false)
             .allow_zoom(false)
             .show_x(false)
@@ -45,11 +35,13 @@ pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
             .show(ui, |plot| {
                 // Spectral locus and boundary lines.
                 plot.line(
-                    Line::new(Values::from_values_iter({
+                    Line::new(PlotPoints::from_iter({
                         use colorbox::tables::cie_1931_xyz::{X, Y, Z};
-                        (0..X.len()).chain(0..1).map(|i| Value {
-                            x: (X[i] / (X[i] + Y[i] + Z[i])) as f64,
-                            y: (Y[i] / (X[i] + Y[i] + Z[i])) as f64,
+                        (0..X.len()).chain(0..1).map(|i| {
+                            [
+                                (X[i] / (X[i] + Y[i] + Z[i])) as f64,
+                                (Y[i] / (X[i] + Y[i] + Z[i])) as f64,
+                            ]
                         })
                     }))
                     .color(GRAY),
@@ -58,25 +50,21 @@ pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
                 plot.vline(VLine::new(0.0).color(Color32::from_rgb(50, 50, 50)));
 
                 // Color space
+                plot.line(Line::new(PlotPoints::from_iter([r, g].iter().copied())).color(YELLOW));
+                plot.line(Line::new(PlotPoints::from_iter([g, b].iter().copied())).color(CYAN));
+                plot.line(Line::new(PlotPoints::from_iter([b, r].iter().copied())).color(MAGENTA));
                 plot.line(
-                    Line::new(Values::from_values_iter([r, g].iter().copied())).color(YELLOW),
-                );
-                plot.line(Line::new(Values::from_values_iter([g, b].iter().copied())).color(CYAN));
-                plot.line(
-                    Line::new(Values::from_values_iter([b, r].iter().copied())).color(MAGENTA),
-                );
-                plot.line(
-                    Line::new(Values::from_values_iter([r, w].iter().copied()))
+                    Line::new(PlotPoints::from_iter([r, w].iter().copied()))
                         .color(RED)
                         .style(wp_style),
                 );
                 plot.line(
-                    Line::new(Values::from_values_iter([g, w].iter().copied()))
+                    Line::new(PlotPoints::from_iter([g, w].iter().copied()))
                         .color(GREEN)
                         .style(wp_style),
                 );
                 plot.line(
-                    Line::new(Values::from_values_iter([b, w].iter().copied()))
+                    Line::new(PlotPoints::from_iter([b, w].iter().copied()))
                         .color(BLUE)
                         .style(wp_style),
                 );

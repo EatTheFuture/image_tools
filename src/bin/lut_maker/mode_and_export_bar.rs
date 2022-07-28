@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::egui::{self, Ui};
+use crate::egui::{self, Align, Ui};
 
 use crate::{AppMode, ExportFormat};
 
@@ -21,7 +21,7 @@ pub fn bar(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir:
         d
     };
 
-    ui.with_layout(egui::Layout::right_to_left(), |ui| {
+    ui.with_layout(egui::Layout::right_to_left(Align::Max), |ui| {
         // Export buttons.
         let export_enabled = {
             let mode = app.ui_data.lock().mode;

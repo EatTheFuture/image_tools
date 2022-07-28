@@ -3,7 +3,7 @@ use eframe::egui::{
     color::Rgba,
     containers::ScrollArea,
     widgets::{Button, Label, ProgressBar},
-    RichText,
+    Align, RichText,
 };
 use job_queue::{JobQueue, LogLevel};
 
@@ -75,7 +75,7 @@ pub fn status_bar(ctx: &egui::Context, job_queue: &JobQueue) {
                 );
             });
         } else if log_count > 0 {
-            ui.with_layout(egui::Layout::right_to_left(), |ui| {
+            ui.with_layout(egui::Layout::right_to_left(Align::Max), |ui| {
                 if ui.add(Button::new("🗙  Clear Log")).clicked() {
                     job_queue.clear_log();
                 }

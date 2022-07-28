@@ -486,6 +486,7 @@ impl AppMain {
                             ctx.load_texture(
                                 "",
                                 egui::ColorImage::from_rgba_unmultiplied([*width, *height], pixels),
+                                egui::TextureFilter::Linear,
                             ),
                             *width,
                             *height,
@@ -526,6 +527,7 @@ impl AppMain {
                     let tex_handle = ctx.load_texture(
                         "",
                         egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels),
+                        egui::TextureFilter::Linear,
                     );
 
                     let mut ui_data = ui_data.lock_mut();
@@ -665,5 +667,6 @@ fn make_texture(img: (&[u8], usize, usize), ctx: &egui::Context) -> egui::Textur
     ctx.load_texture(
         "",
         egui::ColorImage::from_rgba_unmultiplied([img.1, img.2], img.0),
+        egui::TextureFilter::Linear,
     )
 }
