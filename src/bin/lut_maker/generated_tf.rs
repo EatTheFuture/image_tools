@@ -149,6 +149,7 @@ pub fn generated_mode_ui(
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TransferFunction {
     Linear,
+    BlackmagicFilmGen5,
     CanonLog1,
     CanonLog2,
     CanonLog3,
@@ -161,6 +162,7 @@ pub enum TransferFunction {
     PQ_108,
     PQ_1000,
     Rec709,
+    RedLog3G10,
     SonySlog1,
     SonySlog2,
     SonySlog3,
@@ -175,6 +177,7 @@ pub const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
     TransferFunction::PQ,
     TransferFunction::PQ_108,
     TransferFunction::PQ_1000,
+    TransferFunction::BlackmagicFilmGen5,
     TransferFunction::CanonLog1,
     TransferFunction::CanonLog2,
     TransferFunction::CanonLog3,
@@ -182,6 +185,7 @@ pub const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
     TransferFunction::FujifilmFlog,
     TransferFunction::NikonNlog,
     TransferFunction::PanasonicVlog,
+    TransferFunction::RedLog3G10,
     TransferFunction::SonySlog1,
     TransferFunction::SonySlog2,
     TransferFunction::SonySlog3,
@@ -221,21 +225,23 @@ impl TransferFunction {
         match *self {
             Linear => n,
 
-            CanonLog1 => canon_log1::to_linear(n),
-            CanonLog2 => canon_log2::to_linear(n),
-            CanonLog3 => canon_log3::to_linear(n),
-            DJIDlog => dji_dlog::to_linear(n),
-            FujifilmFlog => fujifilm_flog::to_linear(n),
-            HLG => hlg::to_linear(n),
-            NikonNlog => nikon_nlog::to_linear(n),
-            PanasonicVlog => panasonic_vlog::to_linear(n),
-            PQ => pq::to_linear(n),
-            PQ_108 => pq::to_linear(n) * (1.0 / 108.0),
-            PQ_1000 => pq::to_linear(n) * (1.0 / 1000.0),
+            BlackmagicFilmGen5 => blackmagic::film_gen5::to_linear(n),
+            CanonLog1 => canon::log1::to_linear(n),
+            CanonLog2 => canon::log2::to_linear(n),
+            CanonLog3 => canon::log3::to_linear(n),
+            DJIDlog => dji::dlog::to_linear(n),
+            FujifilmFlog => fujifilm::flog::to_linear(n),
+            HLG => rec2100_hlg::to_linear(n),
+            NikonNlog => nikon::nlog::to_linear(n),
+            PanasonicVlog => panasonic::vlog::to_linear(n),
+            PQ => rec2100_pq::to_linear(n),
+            PQ_108 => rec2100_pq::to_linear(n) * (1.0 / 108.0),
+            PQ_1000 => rec2100_pq::to_linear(n) * (1.0 / 1000.0),
             Rec709 => rec709::to_linear(n),
-            SonySlog1 => sony_slog1::to_linear(n),
-            SonySlog2 => sony_slog2::to_linear(n),
-            SonySlog3 => sony_slog3::to_linear(n),
+            RedLog3G10 => red::log3g10::to_linear(n),
+            SonySlog1 => sony::slog1::to_linear(n),
+            SonySlog2 => sony::slog2::to_linear(n),
+            SonySlog3 => sony::slog3::to_linear(n),
             sRGB => srgb::to_linear(n),
         }
     }
@@ -246,21 +252,23 @@ impl TransferFunction {
         match *self {
             Linear => n,
 
-            CanonLog1 => canon_log1::from_linear(n),
-            CanonLog2 => canon_log2::from_linear(n),
-            CanonLog3 => canon_log3::from_linear(n),
-            DJIDlog => dji_dlog::from_linear(n),
-            FujifilmFlog => fujifilm_flog::from_linear(n),
-            HLG => hlg::from_linear(n),
-            NikonNlog => nikon_nlog::from_linear(n),
-            PanasonicVlog => panasonic_vlog::from_linear(n),
-            PQ => pq::from_linear(n),
-            PQ_108 => pq::from_linear(n * 108.0),
-            PQ_1000 => pq::from_linear(n * 1000.0),
+            BlackmagicFilmGen5 => blackmagic::film_gen5::from_linear(n),
+            CanonLog1 => canon::log1::from_linear(n),
+            CanonLog2 => canon::log2::from_linear(n),
+            CanonLog3 => canon::log3::from_linear(n),
+            DJIDlog => dji::dlog::from_linear(n),
+            FujifilmFlog => fujifilm::flog::from_linear(n),
+            HLG => rec2100_hlg::from_linear(n),
+            NikonNlog => nikon::nlog::from_linear(n),
+            PanasonicVlog => panasonic::vlog::from_linear(n),
+            PQ => rec2100_pq::from_linear(n),
+            PQ_108 => rec2100_pq::from_linear(n * 108.0),
+            PQ_1000 => rec2100_pq::from_linear(n * 1000.0),
             Rec709 => rec709::from_linear(n),
-            SonySlog1 => sony_slog1::from_linear(n),
-            SonySlog2 => sony_slog2::from_linear(n),
-            SonySlog3 => sony_slog3::from_linear(n),
+            RedLog3G10 => red::log3g10::from_linear(n),
+            SonySlog1 => sony::slog1::from_linear(n),
+            SonySlog2 => sony::slog2::from_linear(n),
+            SonySlog3 => sony::slog3::from_linear(n),
             sRGB => srgb::from_linear(n),
         }
     }
@@ -284,53 +292,67 @@ impl TransferFunction {
         match *self {
             Linear => (0.0, 1.0, 0.0, 1.0, 1.0),
 
+            BlackmagicFilmGen5 => {
+                use blackmagic::film_gen5::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
             CanonLog1 => {
-                use canon_log1::*;
+                use canon::log1::*;
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             CanonLog2 => {
-                use canon_log2::*;
+                use canon::log2::*;
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             CanonLog3 => {
-                use canon_log3::*;
+                use canon::log3::*;
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             DJIDlog => {
-                use dji_dlog::*;
+                use dji::dlog::*;
                 (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             FujifilmFlog => {
-                use fujifilm_flog::*;
+                use fujifilm::flog::*;
                 (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             HLG => (0.0, 1.0, 0.0, 1.0, 1.0),
             NikonNlog => {
-                use nikon_nlog::*;
+                use nikon::nlog::*;
                 (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             PanasonicVlog => {
-                use panasonic_vlog::*;
+                use panasonic::vlog::*;
                 (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
-            PQ => (0.0, 1.0, 0.0, pq::LUMINANCE_MAX, pq::LUMINANCE_MAX),
+            PQ => (
+                0.0,
+                1.0,
+                0.0,
+                rec2100_pq::LUMINANCE_MAX,
+                rec2100_pq::LUMINANCE_MAX,
+            ),
             PQ_108 => (
                 0.0,
                 1.0,
                 0.0,
-                pq::LUMINANCE_MAX / 108.0,
-                pq::LUMINANCE_MAX / 108.0,
+                rec2100_pq::LUMINANCE_MAX / 108.0,
+                rec2100_pq::LUMINANCE_MAX / 108.0,
             ),
             PQ_1000 => (
                 0.0,
                 1.0,
                 0.0,
-                pq::LUMINANCE_MAX / 1000.0,
-                pq::LUMINANCE_MAX / 1000.0,
+                rec2100_pq::LUMINANCE_MAX / 1000.0,
+                rec2100_pq::LUMINANCE_MAX / 1000.0,
             ),
             Rec709 => (0.0, 1.0, 0.0, 1.0, 1.0),
+            RedLog3G10 => {
+                use red::log3g10::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
             SonySlog1 => {
-                use sony_slog1::*;
+                use sony::slog1::*;
                 (
                     CV_BLACK,
                     CV_SATURATION,
@@ -340,7 +362,7 @@ impl TransferFunction {
                 )
             }
             SonySlog2 => {
-                use sony_slog2::*;
+                use sony::slog2::*;
                 (
                     CV_BLACK,
                     CV_SATURATION,
@@ -350,7 +372,7 @@ impl TransferFunction {
                 )
             }
             SonySlog3 => {
-                use sony_slog3::*;
+                use sony::slog3::*;
                 (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             sRGB => (0.0, 1.0, 0.0, 1.0, 1.0),
@@ -362,6 +384,7 @@ impl TransferFunction {
         match *self {
             Linear => "Linear",
 
+            BlackmagicFilmGen5 => "BMD Film Gen5",
             CanonLog1 => "Canon Log",
             CanonLog2 => "Canon Log 2",
             CanonLog3 => "Canon Log 3",
@@ -374,6 +397,7 @@ impl TransferFunction {
             PQ_108 => "Rec.2100 - PQ - 108 nits",
             PQ_1000 => "Rec.2100 - PQ - 1000 nits",
             Rec709 => "Rec.709",
+            RedLog3G10 => "RED Log3G10",
             SonySlog1 => "Sony S-Log",
             SonySlog2 => "Sony S-Log2",
             SonySlog3 => "Sony S-Log3",
