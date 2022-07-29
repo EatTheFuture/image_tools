@@ -44,91 +44,9 @@ pub fn editor(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_d
             .width(256.0)
             .selected_text(format!("{}", space.chroma_space.ui_text()))
             .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::None,
-                    ChromaSpace::None.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::Custom,
-                    ChromaSpace::Custom.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::Rec709,
-                    ChromaSpace::Rec709.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::Rec2020,
-                    ChromaSpace::Rec2020.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::DciP3,
-                    ChromaSpace::DciP3.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::AcesAP0,
-                    ChromaSpace::AcesAP0.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::AcesAP1,
-                    ChromaSpace::AcesAP1.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::AdobeRGB,
-                    ChromaSpace::AdobeRGB.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::AdobeWideGamutRGB,
-                    ChromaSpace::AdobeWideGamutRGB.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::AlexaWideGamutRGB,
-                    ChromaSpace::AlexaWideGamutRGB.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::BlackmagicWideGamutGen4,
-                    ChromaSpace::BlackmagicWideGamutGen4.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::DJIDGamut,
-                    ChromaSpace::DJIDGamut.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::PanasonicVGamut,
-                    ChromaSpace::PanasonicVGamut.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::ProPhoto,
-                    ChromaSpace::ProPhoto.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::RedWideGamutRGB,
-                    ChromaSpace::RedWideGamutRGB.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::SGamut,
-                    ChromaSpace::SGamut.ui_text(),
-                );
-                ui.selectable_value(
-                    &mut space.chroma_space,
-                    ChromaSpace::SGamut3Cine,
-                    ChromaSpace::SGamut3Cine.ui_text(),
-                );
+                for cs in super::CHROMA_SPACES {
+                    ui.selectable_value(&mut space.chroma_space, *cs, cs.ui_text());
+                }
             });
     });
 

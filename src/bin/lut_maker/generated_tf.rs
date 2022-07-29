@@ -150,6 +150,7 @@ pub fn generated_mode_ui(
 pub enum TransferFunction {
     Linear,
     BlackmagicFilmGen5,
+    DavinciIntermediate,
     CanonLog1,
     CanonLog2,
     CanonLog3,
@@ -178,6 +179,7 @@ pub const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
     TransferFunction::PQ_108,
     TransferFunction::PQ_1000,
     TransferFunction::BlackmagicFilmGen5,
+    TransferFunction::DavinciIntermediate,
     TransferFunction::CanonLog1,
     TransferFunction::CanonLog2,
     TransferFunction::CanonLog3,
@@ -226,6 +228,7 @@ impl TransferFunction {
             Linear => n,
 
             BlackmagicFilmGen5 => blackmagic::film_gen5::to_linear(n),
+            DavinciIntermediate => blackmagic::davinci_intermediate::to_linear(n),
             CanonLog1 => canon::log1::to_linear(n),
             CanonLog2 => canon::log2::to_linear(n),
             CanonLog3 => canon::log3::to_linear(n),
@@ -253,6 +256,7 @@ impl TransferFunction {
             Linear => n,
 
             BlackmagicFilmGen5 => blackmagic::film_gen5::from_linear(n),
+            DavinciIntermediate => blackmagic::davinci_intermediate::from_linear(n),
             CanonLog1 => canon::log1::from_linear(n),
             CanonLog2 => canon::log2::from_linear(n),
             CanonLog3 => canon::log3::from_linear(n),
@@ -294,6 +298,10 @@ impl TransferFunction {
 
             BlackmagicFilmGen5 => {
                 use blackmagic::film_gen5::*;
+                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
+            DavinciIntermediate => {
+                use blackmagic::davinci_intermediate::*;
                 (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             CanonLog1 => {
@@ -385,6 +393,7 @@ impl TransferFunction {
             Linear => "Linear",
 
             BlackmagicFilmGen5 => "BMD Film Gen5",
+            DavinciIntermediate => "DaVinci Intermediate",
             CanonLog1 => "Canon Log",
             CanonLog2 => "Canon Log 2",
             CanonLog3 => "Canon Log 3",
