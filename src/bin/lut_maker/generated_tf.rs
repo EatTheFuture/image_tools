@@ -298,11 +298,11 @@ impl TransferFunction {
 
             BlackmagicFilmGen5 => {
                 use blackmagic::film_gen5::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             DavinciIntermediate => {
                 use blackmagic::davinci_intermediate::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             CanonLog1 => {
                 use canon::log1::*;
@@ -318,20 +318,20 @@ impl TransferFunction {
             }
             DJIDlog => {
                 use dji::dlog::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             FujifilmFlog => {
                 use fujifilm::flog::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             HLG => (0.0, 1.0, 0.0, 1.0, 1.0),
             NikonNlog => {
                 use nikon::nlog::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             PanasonicVlog => {
                 use panasonic::vlog::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             PQ => (
                 0.0,
@@ -357,31 +357,31 @@ impl TransferFunction {
             Rec709 => (0.0, 1.0, 0.0, 1.0, 1.0),
             RedLog3G10 => {
                 use red::log3g10::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             SonySlog1 => {
                 use sony::slog1::*;
                 (
-                    CV_BLACK,
-                    CV_SATURATION,
+                    NONLINEAR_BLACK,
+                    NONLINEAR_SATURATION,
                     LINEAR_MIN,
                     LINEAR_MAX,
-                    self.to_linear(CV_SATURATION),
+                    self.to_linear(NONLINEAR_SATURATION),
                 )
             }
             SonySlog2 => {
                 use sony::slog2::*;
                 (
-                    CV_BLACK,
-                    CV_SATURATION,
+                    NONLINEAR_BLACK,
+                    NONLINEAR_SATURATION,
                     LINEAR_MIN,
                     LINEAR_MAX,
-                    self.to_linear(CV_SATURATION),
+                    self.to_linear(NONLINEAR_SATURATION),
                 )
             }
             SonySlog3 => {
                 use sony::slog3::*;
-                (CV_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
             }
             sRGB => (0.0, 1.0, 0.0, 1.0, 1.0),
         }
