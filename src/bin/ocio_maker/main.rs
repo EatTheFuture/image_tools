@@ -467,10 +467,19 @@ impl AppMain {
                 .lock_mut()
                 .set_progress("Writing config to disk".into(), 0.0);
             config
-                .write_to_directory(export_path)
+                .write_to_directory(export_path.clone())
                 .expect("Failed to write OCIO config");
 
-            status.lock_mut().log_note("Export successful!".into());
+            // Print help message about how to use the configuration.
+            let config_path = {
+                let tmp: PathBuf = export_path.into();
+                tmp.join("config.ocio")
+            };
+            if cfg!(target_family = "windows") {
+                status.lock_mut().log_note(format!("Export successful!  To use this configuration in your OCIO-enabled applications, create the following Windows environment variable:\n    Name:   OCIO\n    Value:   {}\nIf you're unsure how to create environment variables on Windows, step-by-step instructions can be found on the internet.", config_path.display()));
+            } else {
+                status.lock_mut().log_note(format!("Export successful!  To use this configuration in your OCIO-enabled applications, set the following environment variable:\n    OCIO={}", config_path.display()));
+            }
         });
     }
 
