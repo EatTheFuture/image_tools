@@ -889,7 +889,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f82b0f4c27ad9f8bfd1f3208d882da2b09c301bc1c828fd3a00d0216d2fbbff6"
 dependencies = [
  "crc32fast",
- "miniz_oxide",
+ "miniz_oxide 0.5.3",
 ]
 
 [[package]]
@@ -1236,12 +1236,21 @@ dependencies = [
  "color_quant",
  "exr",
  "gif",
- "jpeg-decoder",
+ "jpeg-decoder 0.2.6",
  "num-rational",
  "num-traits",
  "png",
  "scoped_threadpool",
- "tiff",
+ "tiff 0.7.3",
+]
+
+[[package]]
+name = "image_fmt"
+version = "0.1.0"
+dependencies = [
+ "jpeg-decoder 0.3.0",
+ "png",
+ "tiff 0.8.0",
 ]
 
 [[package]]
@@ -1254,6 +1263,7 @@ dependencies = [
  "egui_custom",
  "hdr",
  "image",
+ "image_fmt",
  "job_queue",
  "kamadak-exif",
  "ocio_gen",
@@ -1319,6 +1329,15 @@ name = "jpeg-decoder"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9478aa10f73e7528198d75109c8be5cd7d15fb530238040148d5f9a22d4c5b3b"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
+name = "jpeg-decoder"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc0000e42512c92e31c2252315bda326620a4e034105e900c98ec492fa077b3e"
 dependencies = [
  "rayon",
 ]
@@ -1463,6 +1482,15 @@ name = "miniz_oxide"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f5c75688da582b8ffc1f1799e9db273f32133c49e048f614d22ec3256773ccc"
+dependencies = [
+ "adler",
+]
+
+[[package]]
+name = "miniz_oxide"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b275950c28b37e794e8c55d88aeb5e139d0ce23fdbbeda68f8d7174abdf9e8fa"
 dependencies = [
  "adler",
 ]
@@ -1885,14 +1913,14 @@ checksum = "1df8c4ec4b0627e53bdf214615ad287367e482558cf84b109250b37464dc03ae"
 
 [[package]]
 name = "png"
-version = "0.17.5"
+version = "0.17.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc38c0ad57efb786dd57b9864e5b18bae478c00c824dc55a38bbc9da95dde3ba"
+checksum = "5d708eaf860a19b19ce538740d2b4bdeeb8337fa53f7738455e706623ad5c638"
 dependencies = [
  "bitflags",
  "crc32fast",
- "deflate",
- "miniz_oxide",
+ "flate2",
+ "miniz_oxide 0.6.2",
 ]
 
 [[package]]
@@ -2415,7 +2443,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7259662e32d1e219321eb309d5f9d898b779769d81b76e762c07c8e5d38fcb65"
 dependencies = [
  "flate2",
- "jpeg-decoder",
+ "jpeg-decoder 0.2.6",
+ "weezl",
+]
+
+[[package]]
+name = "tiff"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f17def29300a156c19ae30814710d9c63cd50288a49c6fd3a10ccfbe4cf886fd"
+dependencies = [
+ "flate2",
+ "jpeg-decoder 0.3.0",
  "weezl",
 ]
 

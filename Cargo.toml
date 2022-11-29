@@ -7,6 +7,7 @@ edition = "2018"
 members = [
     "sub_crates/egui_custom",
     "sub_crates/hdr",
+    "sub_crates/image_fmt",
     "sub_crates/job_queue",
     "sub_crates/ocio_gen",
     "sub_crates/sensor_analysis",
@@ -125,6 +126,9 @@ path = "sub_crates/egui_custom"
 
 [dependencies.hdr]
 path = "sub_crates/hdr"
+
+[dependencies.image_fmt]
+path = "sub_crates/image_fmt"
 
 [dependencies.job_queue]
 path = "sub_crates/job_queue"
