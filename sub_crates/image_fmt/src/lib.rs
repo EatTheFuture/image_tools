@@ -1,4 +1,5 @@
 mod error;
+mod jpeg_fmt;
 mod png_fmt;
 mod tiff_fmt;
 
@@ -86,6 +87,15 @@ pub fn load<R: Read + Seek>(mut reader: R) -> Result<Image, ReadError> {
 
     // Try png.
     match png_fmt::load(&mut reader) {
+        Err(ReadError::UnknownFormat) => {} // Continue to try next format.
+        r => {
+            return r;
+        }
+    }
+    reader.rewind()?;
+
+    // Try jpeg.
+    match jpeg_fmt::load(&mut reader) {
         Err(ReadError::UnknownFormat) => {} // Continue to try next format.
         r => {
             return r;

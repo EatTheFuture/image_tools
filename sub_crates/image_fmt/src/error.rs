@@ -61,3 +61,16 @@ impl From<png::DecodingError> for ReadError {
         }
     }
 }
+
+impl From<jpeg_decoder::Error> for ReadError {
+    fn from(other: jpeg_decoder::Error) -> Self {
+        use jpeg_decoder::Error::*;
+        match other {
+            Io(e) => Self::IO(e),
+            Format(_) => Self::UnknownFormat,
+            Unsupported(_) => Self::UnsupportedFeature,
+
+            Internal(_) => panic!(),
+        }
+    }
+}
