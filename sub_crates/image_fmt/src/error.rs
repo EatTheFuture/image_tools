@@ -28,6 +28,12 @@ impl std::fmt::Display for ReadError {
 //-------------------------------------------------------------
 // From impls.
 
+impl From<std::io::Error> for ReadError {
+    fn from(other: std::io::Error) -> Self {
+        Self::IO(other)
+    }
+}
+
 impl From<tiff::TiffError> for ReadError {
     fn from(other: tiff::TiffError) -> Self {
         use tiff::TiffError::*;
@@ -39,6 +45,19 @@ impl From<tiff::TiffError> for ReadError {
 
             LimitsExceeded => panic!(),
             UsageError(_) => panic!(),
+        }
+    }
+}
+
+impl From<png::DecodingError> for ReadError {
+    fn from(other: png::DecodingError) -> Self {
+        use png::DecodingError::*;
+        match other {
+            IoError(e) => Self::IO(e),
+            Format(_) => Self::UnknownFormat,
+
+            Parameter(_) => panic!(),
+            LimitsExceeded => panic!(),
         }
     }
 }
