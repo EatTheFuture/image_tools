@@ -201,16 +201,23 @@ impl ImageList {
                 // Load image.
                 let img = match lib::job_helpers::load_image(&path) {
                     Ok(img) => img,
-                    Err(lib::job_helpers::ImageLoadError::NoAccess) => {
+                    Err(image_fmt::ReadError::IO(_)) => {
                         status.lock_mut().log_error(format!(
                             "Unable to access file \"{}\".",
                             path.to_string_lossy()
                         ));
                         return;
                     },
-                    Err(lib::job_helpers::ImageLoadError::UnknownFormat) => {
+                    Err(image_fmt::ReadError::UnknownFormat) => {
                         status.lock_mut().log_error(format!(
                             "Unrecognized image file format: \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        return;
+                    }
+                    Err(image_fmt::ReadError::UnsupportedFeature) => {
+                        status.lock_mut().log_error(format!(
+                            "Image file uses a feature unsupported by our loader: \"{}\".",
                             path.to_string_lossy()
                         ));
                         return;
@@ -219,8 +226,8 @@ impl ImageList {
 
                 // Ensure it has the same resolution as the other images.
                 if !histogram_sets.lock().last().unwrap().is_empty() {
-                    let needed_width = histogram_sets.lock().last().unwrap()[0].1.width as u32;
-                    let needed_height = histogram_sets.lock().last().unwrap()[0].1.height as u32;
+                    let needed_width = histogram_sets.lock().last().unwrap()[0].1.width;
+                    let needed_height = histogram_sets.lock().last().unwrap()[0].1.height;
                     if img.image.width() != needed_width || img.image.height() != needed_height {
                         status.lock_mut().log_error(format!(
                             "Image has a different resolution that the others in the set: \"{}\".  Not loading.  Note: all images in a set must have the same resolution.",

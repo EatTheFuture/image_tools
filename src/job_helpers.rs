@@ -1,42 +1,19 @@
-use std::path::Path;
+use std::{fs::File, io::BufReader, path::Path};
 
 use colorbox::{formats, lut::Lut1D};
-use rayon::prelude::*;
 
 use sensor_analysis::Histogram;
 
-use crate::{ImageBuf, ImageInfo, SourceImage};
+use crate::{ImageInfo, SourceImage};
+use image_fmt::ImageBuf;
 
-#[derive(Debug, Copy, Clone)]
-pub enum ImageLoadError {
-    NoAccess, // Unable to access the file (possibly doesn't exist).
-    UnknownFormat,
-}
-
-pub fn load_image(path: &Path) -> Result<SourceImage, ImageLoadError> {
+pub fn load_image(path: &Path) -> Result<SourceImage, image_fmt::ReadError> {
     // Load image.
-    let img =
-        match image::io::Reader::open(&path).map(|f| f.with_guessed_format().map(|f| f.decode())) {
-            Err(_) => return Err(ImageLoadError::NoAccess),
-
-            Ok(Err(_)) | Ok(Ok(Err(_))) => {
-                return Err(ImageLoadError::UnknownFormat);
-            }
-
-            Ok(Ok(Ok(img))) => match img.color() {
-                image::ColorType::L8
-                | image::ColorType::La8
-                | image::ColorType::Rgb8
-                | image::ColorType::Rgba8 => ImageBuf::Rgb8(img.to_rgb8()),
-
-                image::ColorType::L16
-                | image::ColorType::La16
-                | image::ColorType::Rgb16
-                | image::ColorType::Rgba16 => ImageBuf::Rgb16(img.to_rgb16()),
-
-                _ => ImageBuf::Rgb16(img.to_rgb16()),
-            },
-        };
+    let img = {
+        let mut img = image_fmt::load(BufReader::new(File::open(&path)?))?;
+        img.data = img.data.to_rgb();
+        img
+    };
 
     // Get exposure metadata from EXIF data.
     let (exposure_time, fstop, sensitivity) = {
@@ -44,7 +21,7 @@ pub fn load_image(path: &Path) -> Result<SourceImage, ImageLoadError> {
         let mut fstop = None;
         let mut sensitivity = None;
 
-        let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+        let mut file = std::io::BufReader::new(std::fs::File::open(&path)?);
         if let Ok(img_exif) = exif::Reader::new().read_from_container(&mut file) {
             if let Some(&exif::Value::Rational(ref n)) = img_exif
                 .get_field(exif::Tag::ExposureTime, exif::In::PRIMARY)
@@ -94,8 +71,8 @@ pub fn load_image(path: &Path) -> Result<SourceImage, ImageLoadError> {
             .unwrap_or_else(|| "".into()),
         full_filepath: path.to_string_lossy().into(),
 
-        width: img.width() as usize,
-        height: img.height() as usize,
+        width: img.width(),
+        height: img.height(),
         exposure: total_exposure,
 
         exposure_time: exposure_time.map(|n| (n.num, n.denom)),
@@ -115,7 +92,7 @@ pub fn make_image_preview(
     max_width: Option<usize>,
     max_height: Option<usize>,
 ) -> (Vec<u8>, usize, usize) {
-    let old_dim = (img.image.width() as usize, img.image.height() as usize);
+    let old_dim = img.image.dimensions;
     let new_dim = match (max_width, max_height) {
         (None, None) => old_dim,
         (Some(w), None) => {
@@ -147,14 +124,19 @@ pub fn make_image_preview(
         }
     };
 
+    let preview_img = img
+        .image
+        .clone()
+        .to_8_bit()
+        .resized(new_dim.0, new_dim.1)
+        .to_rgba();
+
     (
-        img.image
-            .resized(new_dim.0 as u32, new_dim.1 as u32)
-            .as_raw()
-            .par_chunks(3)
-            .map(|pix| [pix[0], pix[1], pix[2], 255])
-            .flatten_iter()
-            .collect(),
+        if let image_fmt::ImageBuf::Rgba8(buf) = preview_img.data {
+            buf
+        } else {
+            unreachable!()
+        },
         new_dim.0,
         new_dim.1,
     )
@@ -167,28 +149,24 @@ pub fn compute_image_histograms(src_img: &SourceImage) -> [Histogram; 3] {
         Histogram::default(),
     ];
 
-    match src_img.image {
-        ImageBuf::Rgb8(ref img) => {
+    match src_img.image.data {
+        ImageBuf::Rgb8(ref buf) => {
             let bucket_count = 1 << 8;
             for chan in 0..3 {
-                histograms[chan] = Histogram::from_iter(
-                    img.enumerate_pixels()
-                        .map(|p: (u32, u32, &image::Rgb<u8>)| p.2[chan]),
-                    bucket_count,
-                );
+                histograms[chan] =
+                    Histogram::from_iter(buf.chunks(3).map(|c| c[chan]), bucket_count);
             }
         }
 
-        ImageBuf::Rgb16(ref img) => {
+        ImageBuf::Rgb16(ref buf) => {
             let bucket_count = 1 << 16;
             for chan in 0..3 {
-                histograms[chan] = Histogram::from_iter(
-                    img.enumerate_pixels()
-                        .map(|p: (u32, u32, &image::Rgb<u16>)| p.2[chan]),
-                    bucket_count,
-                );
+                histograms[chan] =
+                    Histogram::from_iter(buf.chunks(3).map(|c| c[chan]), bucket_count);
             }
         }
+
+        _ => panic!(),
     }
 
     histograms

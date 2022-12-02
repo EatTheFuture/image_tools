@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use crate::{error::ReadError, Image, ImageData};
+use crate::{error::ReadError, Image, ImageBuf};
 
 pub fn load<R: Read>(mut reader: R) -> Result<Image, ReadError> {
     let decoder = png::Decoder::new_with_limits(
@@ -29,11 +29,11 @@ pub fn load<R: Read>(mut reader: R) -> Result<Image, ReadError> {
         // RGB.
         (Rgb, Eight) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgb8(pixel_data),
+            data: ImageBuf::Rgb8(pixel_data),
         }),
         (Rgb, Sixteen) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgb16(
+            data: ImageBuf::Rgb16(
                 pixel_data
                     .chunks(2)
                     .map(|c| u16::from_be_bytes([c[0], c[1]]))
@@ -45,11 +45,11 @@ pub fn load<R: Read>(mut reader: R) -> Result<Image, ReadError> {
         // RGBA.
         (Rgba, Eight) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgba8(pixel_data),
+            data: ImageBuf::Rgba8(pixel_data),
         }),
         (Rgba, Sixteen) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgba16(
+            data: ImageBuf::Rgba16(
                 pixel_data
                     .chunks(2)
                     .map(|c| u16::from_be_bytes([c[0], c[1]]))
@@ -61,11 +61,11 @@ pub fn load<R: Read>(mut reader: R) -> Result<Image, ReadError> {
         // Grayscale.
         (Grayscale, Eight) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgba8(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
+            data: ImageBuf::Rgba8(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
         }),
         (Grayscale, Sixteen) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgba16(
+            data: ImageBuf::Rgba16(
                 pixel_data
                     .chunks(2)
                     .map(|c| {
@@ -81,7 +81,7 @@ pub fn load<R: Read>(mut reader: R) -> Result<Image, ReadError> {
         // Grayscale + alpha.
         (GrayscaleAlpha, Eight) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgba8(
+            data: ImageBuf::Rgba8(
                 pixel_data
                     .chunks(2)
                     .map(|c| [c[0], c[0], c[0], c[1]])
@@ -91,7 +91,7 @@ pub fn load<R: Read>(mut reader: R) -> Result<Image, ReadError> {
         }),
         (GrayscaleAlpha, Sixteen) => Ok(Image {
             dimensions: dimensions,
-            data: ImageData::Rgba16(
+            data: ImageBuf::Rgba16(
                 pixel_data
                     .chunks(4)
                     .map(|c| {

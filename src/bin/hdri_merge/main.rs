@@ -244,16 +244,23 @@ impl AppMain {
                 // Load image.
                 let img = match lib::job_helpers::load_image(&path) {
                     Ok(img) => img,
-                    Err(lib::job_helpers::ImageLoadError::NoAccess) => {
+                    Err(image_fmt::ReadError::IO(_)) => {
                         status.lock_mut().log_error(format!(
                             "Unable to access file \"{}\".",
                             path.to_string_lossy()
                         ));
                         return;
                     },
-                    Err(lib::job_helpers::ImageLoadError::UnknownFormat) => {
+                    Err(image_fmt::ReadError::UnknownFormat) => {
                         status.lock_mut().log_error(format!(
                             "Unrecognized image file format: \"{}\".",
+                            path.to_string_lossy()
+                        ));
+                        return;
+                    }
+                    Err(image_fmt::ReadError::UnsupportedFeature) => {
+                        status.lock_mut().log_error(format!(
+                            "Image file uses a feature unsupported by our loader: \"{}\".",
                             path.to_string_lossy()
                         ));
                         return;
@@ -347,8 +354,8 @@ impl AppMain {
 
         self.job_queue.add_job("Build HDRI", move |status| {
             let img_len = images.lock().len();
-            let width = images.lock()[0].image.width() as usize;
-            let height = images.lock()[0].image.height() as usize;
+            let width = images.lock()[0].image.width();
+            let height = images.lock()[0].image.height();
 
             status
                 .lock_mut()
@@ -557,15 +564,15 @@ impl HDRIMerger {
 
     fn add_image(
         &mut self,
-        img: &ImageBuf,
+        img: &image_fmt::Image,
         exposure: f32,
         floor_ceil: &[(f32, f32)],
         linearizing_curves: &[Vec<f32>],
         is_lowest_exposed: bool,
         is_highest_exposed: bool,
     ) {
-        debug_assert_eq!(self.width, img.width() as usize);
-        debug_assert_eq!(self.height, img.height() as usize);
+        debug_assert_eq!(self.width, img.width());
+        debug_assert_eq!(self.height, img.height());
 
         let r_floor = floor_ceil[0].0;
         let r_norm = 1.0 / (floor_ceil[0].1 - floor_ceil[0].0);
@@ -609,10 +616,10 @@ impl HDRIMerger {
         };
 
         let inv_exposure = 1.0 / exposure;
-        let quant_norm = 1.0 / ((1 << img.bit_depth()) - 1) as f32;
-        match img {
+        match img.data {
             ImageBuf::Rgb8(ref inner) => {
-                for (i, pixel) in inner.pixels().enumerate() {
+                let quant_norm = 1.0 / ((1usize << 8) - 1) as f32;
+                for (i, pixel) in inner.chunks(3).enumerate() {
                     let r = pixel[0] as f32 * quant_norm;
                     let g = pixel[1] as f32 * quant_norm;
                     let b = pixel[2] as f32 * quant_norm;
@@ -631,7 +638,8 @@ impl HDRIMerger {
             }
 
             ImageBuf::Rgb16(ref inner) => {
-                for (i, pixel) in inner.pixels().enumerate() {
+                let quant_norm = 1.0 / ((1usize << 16) - 1) as f32;
+                for (i, pixel) in inner.chunks(3).enumerate() {
                     let r = pixel[0] as f32 * quant_norm;
                     let g = pixel[1] as f32 * quant_norm;
                     let b = pixel[2] as f32 * quant_norm;
@@ -648,6 +656,8 @@ impl HDRIMerger {
                     self.pixel_weights[i] += weight;
                 }
             }
+
+            _ => unreachable!(),
         }
     }
 

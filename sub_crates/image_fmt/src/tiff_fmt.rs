@@ -2,7 +2,7 @@ use std::io::{Read, Seek};
 
 use tiff::{decoder::DecodingResult, ColorType};
 
-use crate::{error::ReadError, Image, ImageData};
+use crate::{error::ReadError, Image, ImageBuf};
 
 pub fn load<R: Read + Seek>(mut reader: R) -> Result<Image, ReadError> {
     let mut decoder =
@@ -17,40 +17,40 @@ pub fn load<R: Read + Seek>(mut reader: R) -> Result<Image, ReadError> {
         // RGB.
         (ColorType::RGB(_), DecodingResult::U8(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgb8(pixel_data),
+            data: ImageBuf::Rgb8(pixel_data),
         }),
         (ColorType::RGB(_), DecodingResult::U16(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgb16(pixel_data),
+            data: ImageBuf::Rgb16(pixel_data),
         }),
 
         //-------
         // RGBA.
         (ColorType::RGBA(_), DecodingResult::U8(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgba8(pixel_data),
+            data: ImageBuf::Rgba8(pixel_data),
         }),
         (ColorType::RGBA(_), DecodingResult::U16(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgba16(pixel_data),
+            data: ImageBuf::Rgba16(pixel_data),
         }),
 
         //------------
         // Grayscale.
         (ColorType::Gray(_), DecodingResult::U8(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgb8(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
+            data: ImageBuf::Rgb8(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
         }),
         (ColorType::Gray(_), DecodingResult::U16(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgb16(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
+            data: ImageBuf::Rgb16(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
         }),
 
         //--------------------
         // Grayscale + alpha.
         (ColorType::GrayA(_), DecodingResult::U8(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgba8(
+            data: ImageBuf::Rgba8(
                 pixel_data
                     .chunks(2)
                     .map(|c| [c[0], c[0], c[0], c[1]])
@@ -60,7 +60,7 @@ pub fn load<R: Read + Seek>(mut reader: R) -> Result<Image, ReadError> {
         }),
         (ColorType::GrayA(_), DecodingResult::U16(pixel_data)) => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgba16(
+            data: ImageBuf::Rgba16(
                 pixel_data
                     .chunks(2)
                     .map(|c| [c[0], c[0], c[0], c[1]])

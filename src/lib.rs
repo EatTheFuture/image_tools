@@ -1,8 +1,10 @@
 pub mod job_helpers;
 
+pub use image_fmt::ImageBuf;
+
 #[derive(Debug)]
 pub struct SourceImage {
-    pub image: ImageBuf,
+    pub image: image_fmt::Image,
     pub info: ImageInfo,
 }
 
@@ -18,53 +20,6 @@ pub struct ImageInfo {
     pub exposure_time: Option<(u32, u32)>, // Ratio.
     pub fstop: Option<(u32, u32)>,         // Ratio.
     pub iso: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ImageBuf {
-    /// Bit-depth 8.
-    Rgb8(image::ImageBuffer<image::Rgb<u8>, Vec<u8>>),
-
-    /// Bit-depth 16.
-    Rgb16(image::ImageBuffer<image::Rgb<u16>, Vec<u16>>),
-}
-
-impl ImageBuf {
-    pub fn width(&self) -> u32 {
-        match &self {
-            Self::Rgb8(ref inner) => inner.width(),
-            Self::Rgb16(ref inner) => inner.width(),
-        }
-    }
-
-    pub fn height(&self) -> u32 {
-        match &self {
-            Self::Rgb8(ref inner) => inner.height(),
-            Self::Rgb16(ref inner) => inner.height(),
-        }
-    }
-
-    pub fn bit_depth(&self) -> usize {
-        match &self {
-            Self::Rgb8(_) => 8,
-            Self::Rgb16(_) => 16,
-        }
-    }
-
-    pub fn resized(&self, width: u32, height: u32) -> image::ImageBuffer<image::Rgb<u8>, Vec<u8>> {
-        match &self {
-            Self::Rgb8(ref inner) => {
-                image::imageops::resize(inner, width, height, image::imageops::FilterType::Triangle)
-            }
-            Self::Rgb16(ref inner) => image::DynamicImage::from(image::imageops::resize(
-                inner,
-                width,
-                height,
-                image::imageops::FilterType::Triangle,
-            ))
-            .into_rgb8(),
-        }
-    }
 }
 
 pub mod colors {

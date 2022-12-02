@@ -1,5 +1,4 @@
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum ReadError {
     IO(std::io::Error),
     UnknownFormat,

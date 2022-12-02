@@ -1,6 +1,6 @@
 use std::io::{Read, Seek};
 
-use crate::{error::ReadError, Image, ImageData};
+use crate::{error::ReadError, Image, ImageBuf};
 
 pub fn load<R: Read + Seek>(mut reader: R) -> Result<Image, ReadError> {
     let mut decoder = jpeg_decoder::Decoder::new(&mut reader);
@@ -18,14 +18,14 @@ pub fn load<R: Read + Seek>(mut reader: R) -> Result<Image, ReadError> {
         // RGB.
         RGB24 => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgb8(pixel_data),
+            data: ImageBuf::Rgb8(pixel_data),
         }),
 
         //------------
         // Grayscale.
         L8 => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
-            data: ImageData::Rgb8(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
+            data: ImageBuf::Rgb8(pixel_data.iter().map(|&c| [c, c, c]).flatten().collect()),
         }),
         L16 => Ok(Image {
             dimensions: (dimensions.0 as usize, dimensions.0 as usize),
@@ -33,7 +33,7 @@ pub fn load<R: Read + Seek>(mut reader: R) -> Result<Image, ReadError> {
             // their 16-bit buffers, but examining the code in that
             // crate indicates that it's native endian.  So this
             // transformation should be correct.
-            data: ImageData::Rgba16(
+            data: ImageBuf::Rgba16(
                 pixel_data
                     .chunks(2)
                     .map(|c| {
