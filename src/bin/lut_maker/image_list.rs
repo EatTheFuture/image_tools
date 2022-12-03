@@ -201,10 +201,11 @@ impl ImageList {
                 // Load image.
                 let img = match lib::job_helpers::load_image(&path) {
                     Ok(img) => img,
-                    Err(image_fmt::ReadError::IO(_)) => {
+                    Err(image_fmt::ReadError::IO(e)) => {
                         status.lock_mut().log_error(format!(
-                            "Unable to access file \"{}\".",
-                            path.to_string_lossy()
+                            "Unable to read file \"{}\": {:?}.",
+                            path.to_string_lossy(),
+                            e,
                         ));
                         return;
                     },
