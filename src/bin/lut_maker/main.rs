@@ -67,8 +67,8 @@ impl AppMain {
             job_queue: job_queue,
             last_opened_directory: None,
 
-            bracket_image_sets: image_list::ImageList::new(true),
-            lens_cap_images: image_list::ImageList::new(false),
+            bracket_image_sets: image_list::ImageList::new(true, true),
+            lens_cap_images: image_list::ImageList::new(false, false),
             transfer_function_tables: Shared::new(None),
 
             ui_data: Shared::new(UIData {

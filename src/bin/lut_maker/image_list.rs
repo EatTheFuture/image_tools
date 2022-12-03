@@ -12,6 +12,7 @@ pub struct ImageList {
     pub histogram_sets: Shared<Vec<Vec<([Histogram; 3], ImageInfo)>>>,
     ui_data: Shared<UiData>,
     multiple_sets: AtomicBool,
+    uses_exif_data: AtomicBool,
 }
 
 struct UiData {
@@ -20,7 +21,7 @@ struct UiData {
 }
 
 impl ImageList {
-    pub fn new(multiple_sets: bool) -> ImageList {
+    pub fn new(multiple_sets: bool, uses_exif_data: bool) -> ImageList {
         ImageList {
             histogram_sets: Shared::new(Vec::new()),
             ui_data: Shared::new(UiData {
@@ -28,6 +29,7 @@ impl ImageList {
                 selected_idx: (0, 0),
             }),
             multiple_sets: AtomicBool::new(multiple_sets),
+            uses_exif_data: AtomicBool::new(uses_exif_data),
         }
     }
 
@@ -166,6 +168,11 @@ impl ImageList {
         self.multiple_sets.load(Ordering::Acquire)
     }
 
+    fn uses_exif(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.uses_exif_data.load(Ordering::Acquire)
+    }
+
     pub fn add_image_files(
         &mut self,
         mut image_paths: Vec<PathBuf>,
@@ -173,6 +180,7 @@ impl ImageList {
         job_queue: &JobQueue,
     ) {
         let use_sets = self.uses_sets();
+        let use_exif = self.uses_exif();
 
         let histogram_sets = self.histogram_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
@@ -239,9 +247,9 @@ impl ImageList {
                 }
 
                 // Check if we got exposure data from it.
-                if img.info.exposure.is_none() {
+                if use_exif && img.info.exposure.is_none() {
                     status.lock_mut().log_warning(format!(
-                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  Transfer function estimation will not work correctly.",
+                        "Image file lacks Exif data needed to compute exposure value: \"{}\".  This image will be excluded from transfer function, floor, and ceiling estimation.",
                         path.to_string_lossy()
                     ));
                 }
