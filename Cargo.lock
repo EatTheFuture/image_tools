@@ -2258,7 +2258,7 @@ dependencies = [
 [[package]]
 name = "tiff"
 version = "0.8.0"
-source = "git+https://github.com/image-rs/image-tiff#aa42fcb1bb1fa267507166e55d52b7428f15041f"
+source = "git+https://github.com/image-rs/image-tiff?rev=aa42fcb1bb1fa267507166e55d52b7428f15041f#aa42fcb1bb1fa267507166e55d52b7428f15041f"
 dependencies = [
  "flate2",
  "jpeg-decoder",

@@ -42,7 +42,7 @@ pub struct AppMain {
     last_opened_directory: Option<PathBuf>,
 
     bracket_image_sets: image_list::ImageList,
-    lens_cap_images: image_list::ImageList,
+    dark_images: image_list::ImageList,
     transfer_function_tables: Shared<Option<([Vec<f32>; 3], f32, f32)>>, // (table, x_min, x_max)
 
     ui_data: Shared<UIData>,
@@ -68,7 +68,7 @@ impl AppMain {
             last_opened_directory: None,
 
             bracket_image_sets: image_list::ImageList::new(true, true),
-            lens_cap_images: image_list::ImageList::new(false, false),
+            dark_images: image_list::ImageList::new(false, false),
             transfer_function_tables: Shared::new(None),
 
             ui_data: Shared::new(UIData {
@@ -115,7 +115,7 @@ enum ImageViewID {
 impl ImageViewID {
     fn ui_text(&self) -> &'static str {
         match *self {
-            ImageViewID::Dark => "Lens Cap Images",
+            ImageViewID::Dark => "Dark Images",
             ImageViewID::Bracketed => "Bracketed Exposures",
         }
     }
@@ -130,7 +130,7 @@ impl eframe::App for AppMain {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let job_count = self.job_queue.job_count();
         let total_bracket_images = self.bracket_image_sets.total_image_count();
-        let total_dark_images = self.lens_cap_images.total_image_count();
+        let total_dark_images = self.dark_images.total_image_count();
 
         let mut working_dir = self
             .last_opened_directory
@@ -175,9 +175,9 @@ impl eframe::App for AppMain {
 
                 let image_view = self.ui_data.lock().image_view;
                 match image_view {
-                    // Lens cap images.
+                    // Dark images.
                     ImageViewID::Dark => {
-                        self.lens_cap_images.draw(
+                        self.dark_images.draw(
                             ctx,
                             ui,
                             &self.job_queue,
@@ -269,7 +269,7 @@ impl eframe::App for AppMain {
             let image_view = self.ui_data.lock().image_view;
             match image_view {
                 ImageViewID::Dark => {
-                    self.lens_cap_images
+                    self.dark_images
                         .add_image_files(file_list, ctx, &self.job_queue)
                 }
                 ImageViewID::Bracketed => {
@@ -287,7 +287,7 @@ impl AppMain {
         use sensor_analysis::estimate_sensor_floor_ceiling;
 
         let bracket_image_sets = self.bracket_image_sets.histogram_sets.clone_ref();
-        let lens_cap_images = self.lens_cap_images.histogram_sets.clone_ref();
+        let dark_images = self.dark_images.histogram_sets.clone_ref();
         let ui_data = self.ui_data.clone_ref();
 
         self.job_queue
@@ -305,7 +305,7 @@ impl AppMain {
                         false
                     };
 
-                let floor = if !lens_cap_images.lock().is_empty() {
+                let floor = if !dark_images.lock().is_empty() {
                     let transfer_fn = |n: f32, channel: usize| -> f32 {
                         match mode {
                             AppMode::Estimate => n,
@@ -350,7 +350,7 @@ impl AppMain {
                     // Collect stats.
                     let mut sum = [0.0f64; 3];
                     let mut sample_count = [0usize; 3];
-                    if let Some(set) = lens_cap_images.lock().get(0) {
+                    if let Some(set) = dark_images.lock().get(0) {
                         for (histograms, _) in set.iter() {
                             for chan in 0..3 {
                                 let norm = 1.0 / (histograms[chan].buckets.len() - 1) as f32;

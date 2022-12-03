@@ -11,5 +11,5 @@ png = "0.17.7"
 # Temporarily pointing at tiff's github for the fix for issue #192.
 # TODO: use crates.io release again once a release with the fix is made.
 # tiff = "0.8.0"
-tiff = { git = "https://github.com/image-rs/image-tiff", commit = "aa42fcb1bb1fa267507166e55d52b7428f15041f" }
+tiff = { git = "https://github.com/image-rs/image-tiff", rev = "aa42fcb1bb1fa267507166e55d52b7428f15041f" }
 fast_image_resize = "2.3.0"
