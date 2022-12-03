@@ -379,6 +379,13 @@ impl AppMain {
                     let histogram_sets =
                         bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
 
+                    if histogram_sets.len() < 2 {
+                        status.lock_mut().log_warning(format!(
+                            "Not enough valid images to estimate floor.  Check that you have at least one dark image or at least two bracketed exposure images with exposure Exif data.",
+                        ));
+                        return;
+                    }
+
                     // Estimate sensor floor for each channel.
                     let mut floor: [Option<f32>; 3] = [None; 3];
                     for histograms in histogram_sets.iter() {
@@ -434,6 +441,12 @@ impl AppMain {
                     .set_progress(format!("Estimating sensor ceiling"), 0.0);
 
                 let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
+                if histogram_sets.len() < 2 {
+                    status.lock_mut().log_warning(format!(
+                        "Not enough valid images to estimate ceiling.  Check that you have at least two bracketed exposure images with exposure Exif data.",
+                    ));
+                    return;
+                }
 
                 // Estimate sensor floor for each channel.
                 let mut ceiling: [Option<f32>; 3] = [None; 3];
@@ -520,6 +533,9 @@ impl AppMain {
                     .flatten()
                     .collect();
                 if mappings.is_empty() {
+                    status.lock_mut().log_warning(format!(
+                        "Not enough valid images to estimate transfer function.  Check that you have at least two bracketed exposure images with exposure Exif data.",
+                    ));
                     return;
                 }
 
@@ -801,6 +817,8 @@ impl AppMain {
 }
 
 /// Utility function to get histograms into the right order for processing.
+///
+/// Excludes the histograms of images without exposure data.
 fn bracket_images_to_histogram_sets(
     image_sets: &[Vec<([Histogram; 3], ImageInfo)>],
 ) -> Vec<[Vec<(Histogram, f32)>; 3]> {
