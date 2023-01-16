@@ -3,7 +3,9 @@
 mod colorspace_editor;
 mod colorspace_list;
 mod gamut_graph;
+mod input_transforms;
 mod menu;
+mod top_bar;
 mod transfer_function_graph;
 
 use std::{
@@ -63,6 +65,17 @@ impl AppMain {
             last_opened_directory: std::env::current_dir().ok(),
 
             ui_data: Shared::new(UIData {
+                selected_tab: Tabs::InputTransforms,
+
+                working_color_space: ColorSpaceSpec {
+                    // Only the `chroma_space` and `custom_chroma` fields are
+                    // actually used to define the working color space.
+                    name: "".into(),
+                    transfer_lut: None,
+                    chroma_space: ChromaSpace::Rec709,
+                    custom_chroma: colorbox::chroma::REC709,
+                    include_as_display: false,
+                },
                 color_spaces: Vec::new(),
                 selected_space_index: 0,
                 export_path: String::new(),
@@ -76,6 +89,9 @@ impl AppMain {
 /// Nothing other than the UI should lock this data for non-trivial
 /// amounts of time.
 pub struct UIData {
+    selected_tab: Tabs,
+
+    working_color_space: ColorSpaceSpec, // Main/reference/rendering/working color space.
     color_spaces: Vec<ColorSpaceSpec>,
     selected_space_index: usize,
     export_path: String,
@@ -94,70 +110,19 @@ impl eframe::App for AppMain {
             .clone()
             .unwrap_or_else(|| "".into());
 
-        // File dialogs used in the UI.
-        let select_export_directory_dialog = {
-            let mut d = rfd::FileDialog::new().set_title("Select Export Directory");
-            let export_path: PathBuf = self.ui_data.lock().export_path.clone().into();
-            if !export_path.as_os_str().is_empty() && export_path.is_dir() {
-                d = d.set_directory(&export_path);
-            } else if !working_dir.as_os_str().is_empty() && working_dir.is_dir() {
-                d = d.set_directory(&working_dir);
-            };
-            d
-        };
-
         //----------------
         // GUI.
 
         // Menu bar.
-        menu::menu_bar(ctx, frame, self, &mut working_dir);
+        menu::menu_bar(ctx, frame, self, &mut working_dir, job_count);
+
+        // Top bar, with tabs, config export, etc.
+        top_bar::top_bar(ctx, self);
 
         // Status bar and log (footer).
         egui_custom::status_bar(ctx, &self.job_queue);
 
-        // Color space list (left-side panel).
-        egui::containers::panel::SidePanel::left("color_space_list")
-            .resizable(false)
-            .show(ctx, |ui| {
-                colorspace_list::list(ui, self, job_count);
-            });
-
-        // Main area.
-        egui::containers::panel::CentralPanel::default().show(ctx, |ui| {
-            // Config exporting.
-            ui.horizontal_top(|ui| {
-                let mut ui_data = self.ui_data.lock_mut();
-                ui.label("Config Directory: ");
-                ui.add(
-                    egui::widgets::TextEdit::singleline(&mut ui_data.export_path)
-                        .id(egui::Id::new("Export Path")),
-                );
-                if ui.button("Browse...").clicked() {
-                    if let Some(path) = select_export_directory_dialog.pick_folder() {
-                        ui_data.export_path = path.to_string_lossy().into();
-                    }
-                }
-                ui.add_space(16.0);
-                if ui
-                    .add_enabled(job_count == 0, egui::widgets::Button::new("Export Config"))
-                    .clicked()
-                {
-                    self.export_config();
-                }
-            });
-
-            ui.add(egui::widgets::Separator::default().spacing(12.0));
-
-            // Main UI area.
-            if self.ui_data.lock().selected_space_index < self.ui_data.lock().color_spaces.len() {
-                colorspace_editor::editor(ui, self, job_count, &mut working_dir);
-
-                ui.add_space(8.0);
-
-                gamut_graph::graph(ui, self);
-                transfer_function_graph::graph(ui, self);
-            }
-        });
+        input_transforms::ui(ctx, self, &mut working_dir, job_count);
 
         self.last_opened_directory = Some(working_dir);
 
@@ -549,6 +514,12 @@ impl AppMain {
 }
 
 //-------------------------------------------------------------
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum Tabs {
+    InputTransforms,
+    WorkingColorSpace,
+}
 
 #[derive(Debug, Clone)]
 struct ColorSpaceSpec {

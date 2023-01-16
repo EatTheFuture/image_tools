@@ -6,8 +6,7 @@ pub fn list(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize) {
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.strong("Custom Color Spaces");
-        add_input_space |= ui.button("Add").clicked();
+        add_input_space |= ui.button("New  ➕").clicked();
     });
     ui.add_space(4.0);
 
