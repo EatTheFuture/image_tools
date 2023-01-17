@@ -1,10 +1,18 @@
 use std::path::PathBuf;
 
+use colorbox::formats;
+
 use crate::egui::{self, Ui};
 
 use crate::ChromaSpace;
 
-pub fn editor(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_dir: &mut PathBuf) {
+pub fn editor(
+    ui: &mut Ui,
+    space: &mut crate::ColorSpaceSpec,
+    space_id: &str,
+    job_count: usize,
+    working_dir: &mut PathBuf,
+) -> Result<(), String> {
     let load_1d_lut_dialog = {
         let mut d = rfd::FileDialog::new()
             .set_title("Load 1D LUT")
@@ -17,18 +25,10 @@ pub fn editor(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_d
         d
     };
 
-    let ui_data = &mut *app.ui_data.lock_mut();
-    let selected_space_index = ui_data.selected_space_index;
-
-    let space = &mut ui_data.color_spaces[selected_space_index];
-
     // Name and Misc.
     ui.horizontal(|ui| {
         ui.label("Name: ");
-        ui.add(
-            egui::widgets::TextEdit::singleline(&mut space.name)
-                .id(egui::Id::new(format!("csname{}", selected_space_index))),
-        );
+        ui.add(egui::widgets::TextEdit::singleline(&mut space.name).id(egui::Id::new(space_id)));
 
         ui.add_space(16.0);
 
@@ -38,6 +38,76 @@ pub fn editor(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_d
     ui.add_space(8.0);
 
     // Chromaticity space.
+    chromaticity_editor(ui, space);
+    ui.add_space(8.0);
+
+    // Transfer function.
+    let transfer_lut_label = "Transfer Function (to linear): ";
+    let mut remove_lut = false;
+    if let Some((_, ref filepath, ref mut inverse)) = space.transfer_lut {
+        ui.horizontal(|ui| {
+            ui.label(transfer_lut_label);
+            ui.strong(if let Some(name) = filepath.file_name() {
+                let tmp: String = name.to_string_lossy().into();
+                tmp
+            } else {
+                "Unnamed LUT".into()
+            });
+            if ui
+                .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
+                .clicked()
+            {
+                remove_lut = true;
+            }
+        });
+        ui.indent(0, |ui| {
+            ui.checkbox(
+                inverse,
+                "Invert Transfer Function (should curve to the lower right)",
+            )
+        });
+    } else {
+        ui.horizontal(|ui| {
+            ui.label(transfer_lut_label);
+            if ui
+                .add_enabled(job_count == 0, egui::widgets::Button::new("Load 1D LUT..."))
+                .clicked()
+            {
+                if let Some(path) = load_1d_lut_dialog.clone().pick_file() {
+                    if let Some(parent) = path.parent().map(|p| p.into()) {
+                        *working_dir = parent;
+                    }
+
+                    match lib::job_helpers::load_1d_lut(&path) {
+                        Ok(lut) => space.transfer_lut = Some((lut, path.clone(), false)),
+                        Err(formats::ReadError::IoErr(_)) => {
+                            return Err(format!(
+                                "Unable to access file \"{}\".",
+                                path.to_string_lossy()
+                            ));
+                        }
+                        Err(formats::ReadError::FormatErr) => {
+                            return Err(format!(
+                                "Not a 1D LUT file: \"{}\".",
+                                path.to_string_lossy()
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
+        .inner?;
+    }
+
+    if remove_lut {
+        space.transfer_lut = None;
+    }
+
+    Ok(())
+}
+
+pub fn chromaticity_editor(ui: &mut Ui, space: &mut crate::ColorSpaceSpec) {
     ui.horizontal(|ui| {
         ui.label("Chromaticities / Gamut: ");
         egui::ComboBox::from_id_source("Chromaticity Space")
@@ -117,48 +187,5 @@ pub fn editor(ui: &mut Ui, app: &mut crate::AppMain, job_count: usize, working_d
                 });
         });
         ui.add_space(8.0);
-    }
-
-    ui.add_space(8.0);
-
-    // Transfer function.
-    let transfer_lut_label = "Transfer Function (to linear): ";
-    if let Some((_, ref filepath, ref mut inverse)) = space.transfer_lut {
-        ui.horizontal(|ui| {
-            ui.label(transfer_lut_label);
-            ui.strong(if let Some(name) = filepath.file_name() {
-                let tmp: String = name.to_string_lossy().into();
-                tmp
-            } else {
-                "Unnamed LUT".into()
-            });
-            if ui
-                .add_enabled(job_count == 0, egui::widgets::Button::new("🗙"))
-                .clicked()
-            {
-                app.remove_transfer_function(selected_space_index);
-            }
-        });
-        ui.indent(0, |ui| {
-            ui.checkbox(
-                inverse,
-                "Invert Transfer Function (should curve to the lower right)",
-            )
-        });
-    } else {
-        ui.horizontal(|ui| {
-            ui.label(transfer_lut_label);
-            if ui
-                .add_enabled(job_count == 0, egui::widgets::Button::new("Load 1D LUT..."))
-                .clicked()
-            {
-                if let Some(path) = load_1d_lut_dialog.clone().pick_file() {
-                    app.load_transfer_function(&path, selected_space_index);
-                    if let Some(parent) = path.parent().map(|p| p.into()) {
-                        *working_dir = parent;
-                    }
-                }
-            }
-        });
     }
 }

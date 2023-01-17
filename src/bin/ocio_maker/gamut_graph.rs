@@ -4,12 +4,7 @@ use crate::egui::{self, Color32, Ui};
 
 use lib::colors::*;
 
-pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
-    let ui_data = &mut *app.ui_data.lock_mut();
-    let selected_space_index = ui_data.selected_space_index;
-
-    let space = &mut ui_data.color_spaces[selected_space_index];
-
+pub fn graph(ui: &mut Ui, space: &mut crate::ColorSpaceSpec) {
     // Visualize chromaticities / gamut.
     if let Some(chroma) = space.chroma_space.chromaticities(space.custom_chroma) {
         use egui::widgets::plot::{HLine, Line, LineStyle, Plot, PlotPoints, VLine};

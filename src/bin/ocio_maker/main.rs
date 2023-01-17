@@ -7,6 +7,7 @@ mod input_transforms;
 mod menu;
 mod top_bar;
 mod transfer_function_graph;
+mod working_color_space;
 
 use std::{
     collections::HashMap,
@@ -16,7 +17,7 @@ use std::{
 
 use eframe::egui;
 
-use colorbox::{formats, lut::Lut1D};
+use colorbox::lut::Lut1D;
 use shared_data::Shared;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -122,7 +123,12 @@ impl eframe::App for AppMain {
         // Status bar and log (footer).
         egui_custom::status_bar(ctx, &self.job_queue);
 
-        input_transforms::ui(ctx, self, &mut working_dir, job_count);
+        // Main UI.
+        let selected_tab = self.ui_data.lock().selected_tab; // Work around borrow checker.
+        match selected_tab {
+            Tabs::InputTransforms => input_transforms::ui(ctx, self, &mut working_dir, job_count),
+            Tabs::WorkingColorSpace => working_color_space::ui(ctx, self),
+        }
 
         self.last_opened_directory = Some(working_dir);
 
@@ -182,60 +188,6 @@ impl AppMain {
         };
         ui_data.color_spaces.push(ColorSpaceSpec::with_name(&name));
         ui_data.selected_space_index = ui_data.color_spaces.len() - 1;
-    }
-
-    fn load_transfer_function(&self, lut_path: &Path, color_space_index: usize) {
-        let path: PathBuf = lut_path.into();
-        let ui_data = self.ui_data.clone_ref();
-
-        self.job_queue
-            .add_job("Load Transfer Function LUT", move |status| {
-                status
-                    .lock_mut()
-                    .set_progress(format!("Loading: {}", path.to_string_lossy()), 0.0);
-
-                // Load lut.
-                let lut = match lib::job_helpers::load_1d_lut(&path) {
-                    Ok(lut) => lut,
-                    Err(formats::ReadError::IoErr(_)) => {
-                        status.lock_mut().log_error(format!(
-                            "Unable to access file \"{}\".",
-                            path.to_string_lossy()
-                        ));
-                        return;
-                    }
-                    Err(formats::ReadError::FormatErr) => {
-                        status.lock_mut().log_error(format!(
-                            "Not a 1D LUT file: \"{}\".",
-                            path.to_string_lossy()
-                        ));
-                        return;
-                    }
-                };
-
-                // Set this as the lut for the passed color space index.
-                {
-                    let mut ui_data = ui_data.lock_mut();
-                    if color_space_index < ui_data.color_spaces.len() {
-                        ui_data.color_spaces[color_space_index].transfer_lut =
-                            Some((lut, path, false));
-                    }
-                }
-            });
-    }
-
-    fn remove_transfer_function(&self, color_space_index: usize) {
-        let ui_data = self.ui_data.clone_ref();
-
-        self.job_queue
-            .add_job("Remove Transfer Function LUT", move |status| {
-                status.lock_mut().set_progress("Removing LUT".into(), 0.0);
-                let mut ui_data = ui_data.lock_mut();
-
-                if color_space_index < ui_data.color_spaces.len() {
-                    ui_data.color_spaces[color_space_index].transfer_lut = None;
-                }
-            });
     }
 
     fn export_config(&self) {
@@ -516,13 +468,13 @@ impl AppMain {
 //-------------------------------------------------------------
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Tabs {
+pub enum Tabs {
     InputTransforms,
     WorkingColorSpace,
 }
 
 #[derive(Debug, Clone)]
-struct ColorSpaceSpec {
+pub struct ColorSpaceSpec {
     name: String,
     transfer_lut: Option<(Lut1D, PathBuf, bool)>, // The bool is whether to do the inverse transform.
     chroma_space: ChromaSpace,

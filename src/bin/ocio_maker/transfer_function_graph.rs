@@ -4,12 +4,7 @@ use crate::egui::{self, Ui};
 
 use lib::colors::*;
 
-pub fn graph(ui: &mut Ui, app: &mut crate::AppMain) {
-    let ui_data = &mut *app.ui_data.lock_mut();
-    let selected_space_index = ui_data.selected_space_index;
-
-    let space = &mut ui_data.color_spaces[selected_space_index];
-
+pub fn graph(ui: &mut Ui, space: &mut crate::ColorSpaceSpec) {
     // Visualize transfer function.
     if let Some((ref lut, _, inverse)) = space.transfer_lut {
         use egui::widgets::plot::{Line, Plot, PlotPoints};

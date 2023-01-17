@@ -169,6 +169,21 @@ impl JobQueue {
     pub fn clear_log(&self) {
         self.job_status.lock_mut().log.clear()
     }
+
+    /// Convenience function for logging errors outside of a job.
+    pub fn log_error(&self, message: String) {
+        self.job_status.lock_mut().log_error(message);
+    }
+
+    /// Convenience function for logging warnings outside of a job.
+    pub fn log_warning(&self, message: String) {
+        self.job_status.lock_mut().log_warning(message);
+    }
+
+    /// Convenience function for logging notes outside of a job.
+    pub fn log_note(&self, message: String) {
+        self.job_status.lock_mut().log_note(message);
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
