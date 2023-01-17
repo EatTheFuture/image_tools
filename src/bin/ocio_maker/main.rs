@@ -68,6 +68,7 @@ impl AppMain {
             ui_data: Shared::new(UIData {
                 selected_tab: Tabs::InputTransforms,
 
+                base_preset: BasePreset::Blender3_0,
                 working_color_space: ColorSpaceSpec {
                     // Only the `chroma_space` and `custom_chroma` fields are
                     // actually used to define the working color space.
@@ -92,6 +93,7 @@ impl AppMain {
 pub struct UIData {
     selected_tab: Tabs,
 
+    base_preset: BasePreset,
     working_color_space: ColorSpaceSpec, // Main/reference/rendering/working color space.
     color_spaces: Vec<ColorSpaceSpec>,
     selected_space_index: usize,
@@ -466,6 +468,26 @@ impl AppMain {
 }
 
 //-------------------------------------------------------------
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum BasePreset {
+    None,
+    Blender3_0,
+    ACES,
+}
+
+impl BasePreset {
+    pub fn ui_text(&self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Blender3_0 => "Blender 3.0",
+            Self::ACES => "ACES",
+        }
+    }
+}
+
+pub const BASE_PRESETS: &[BasePreset] =
+    &[BasePreset::None, BasePreset::Blender3_0, BasePreset::ACES];
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Tabs {

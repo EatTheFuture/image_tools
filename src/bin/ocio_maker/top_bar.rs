@@ -30,6 +30,20 @@ pub fn top_bar(ctx: &Context, app: &mut crate::AppMain) {
                     };
                 });
             });
+
+            // Preset selector.
+            ui.with_layout(egui::Layout::right_to_left(Align::Max), |ui| {
+                let mut ui_data = app.ui_data.lock_mut();
+                egui::ComboBox::from_id_source("Base Preset")
+                    .width(256.0)
+                    .selected_text(String::from(ui_data.base_preset.ui_text()))
+                    .show_ui(ui, |ui| {
+                        for bp in super::BASE_PRESETS {
+                            ui.selectable_value(&mut ui_data.base_preset, *bp, bp.ui_text());
+                        }
+                    });
+                ui.label("Configuration base: ");
+            });
         });
     });
 }
