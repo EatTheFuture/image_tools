@@ -39,7 +39,7 @@ pub fn make_blender_3_0() -> OCIOConfig {
     config.roles.aces_interchange = Some("Linear ACES".into());
     config.roles.default = Some("Linear".into());
     config.roles.data = Some("Non-Color".into());
-    config.roles.other = vec![
+    config.roles.other = [
         ("scene_linear".into(), "Linear".into()),
         ("rendering".into(), "Linear".into()),
         ("default_byte".into(), "sRGB".into()),
@@ -50,7 +50,8 @@ pub fn make_blender_3_0() -> OCIOConfig {
         ("compositing_log".into(), "Filmic Log".into()),
         ("matte_paint".into(), "Linear".into()),
         ("texture_paint".into(), "Linear".into()),
-    ];
+    ]
+    .into();
 
     config.displays.push(Display {
         name: "sRGB".into(),
@@ -150,8 +151,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "linear".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Log2),
-        allocationvars: vec![-12.473931188, 12.526068812],
         ..ColorSpace::default()
     });
 
@@ -160,8 +159,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "raw".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(true),
-        allocation: Some(Allocation::Uniform),
-        allocationvars: vec![0.0, 1.0],
         ..ColorSpace::default()
     });
 
@@ -171,8 +168,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "linear".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Log2),
-        allocationvars: vec![-8.5, 5.0],
         from_reference: vec![Transform::MatrixTransform(matrix::to_4x4_f32(
             matrix_compose!(
                 matrix::rgb_to_xyz_matrix(chroma::REC709),
@@ -193,8 +188,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "display".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Uniform),
-        allocationvars: vec![-0.125, 1.125],
         to_reference: vec![Transform::FileTransform {
             src: "rec709.spi1d".into(),
             interpolation: Interpolation::Linear,
@@ -208,8 +201,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "linear".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Log2),
-        allocationvars: vec![-8.5, 5.0],
         from_reference: vec![Transform::MatrixTransform(matrix::to_4x4_f32(
             matrix::rgb_to_xyz_matrix(chroma::REC709),
         ))],
@@ -222,8 +213,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "display".into(),
         bitdepth: Some(BitDepth::F16),
         isdata: Some(false),
-        allocation: Some(Allocation::Uniform),
-        allocationvars: vec![0.0, 1.0],
         from_reference: vec![
             Transform::MatrixTransform(matrix::to_4x4_f32(matrix::rgb_to_xyz_matrix(
                 chroma::REC709,
@@ -243,7 +232,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "display".into(),
         bitdepth: Some(BitDepth::UI10),
         isdata: Some(false),
-        allocation: Some(Allocation::Uniform),
         to_reference: vec![Transform::FileTransform {
             src: "lg10.spi1d".into(),
             interpolation: Interpolation::Nearest,
@@ -257,8 +245,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         description: "Standard RGB Display Space".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Uniform),
-        allocationvars: vec![-0.125, 4.875],
         to_reference: vec![Transform::FileTransform {
             src: "srgb.spi1d".into(),
             interpolation: Interpolation::Linear,
@@ -279,8 +265,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "raw".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(true),
-        allocation: Some(Allocation::Uniform),
-        allocationvars: vec![0.0, 1.0],
         ..ColorSpace::default()
     });
 
@@ -292,8 +276,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "log".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Log2),
-        allocationvars: vec![-12.473931188, 12.526068812],
         from_reference: vec![
             Transform::AllocationTransform {
                 allocation: Allocation::Log2,
@@ -325,8 +307,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "display".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Log2),
-        allocationvars: vec![-12.473931188, 12.526068812],
         from_reference: vec![
             Transform::ColorSpaceTransform {
                 src: "Linear".into(),
@@ -347,8 +327,6 @@ pub fn make_blender_3_0() -> OCIOConfig {
         family: "display".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
-        allocation: Some(Allocation::Log2),
-        allocationvars: vec![-12.473931188, 12.526068812],
         from_reference: vec![
             Transform::ColorSpaceTransform {
                 src: "Linear".into(),

@@ -1,13 +1,22 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
-use colorbox::lut::{Lut1D, Lut3D};
+use colorbox::{
+    chroma::Chromaticities,
+    lut::{Lut1D, Lut3D},
+    matrix::{self, AdaptationMethod},
+    matrix_compose,
+};
 
 #[derive(Debug, Clone)]
 pub struct OCIOConfig {
+    // Not used during export, but rather is used in some convenience
+    // functions for creating color spaces.
+    pub reference_space_chroma: Chromaticities,
+
     // Files to include.
     pub output_files: Vec<OutputFile>,
 
@@ -35,6 +44,8 @@ pub struct OCIOConfig {
 impl Default for OCIOConfig {
     fn default() -> OCIOConfig {
         OCIOConfig {
+            reference_space_chroma: colorbox::chroma::REC709,
+
             output_files: Vec::new(),
 
             header_comment: String::new(),
@@ -120,7 +131,23 @@ impl OCIOConfig {
                         }
                     }
                 }
-                OutputFile::Lut3D { .. } => todo!(),
+                OutputFile::Lut3D { output_path, lut } => {
+                    match output_path.extension().map(|e| e.to_str()).flatten() {
+                        Some("cube") => colorbox::formats::cube_iridas::write_3d(
+                            &mut f,
+                            lut.range,
+                            lut.resolution[0],
+                            [&lut.tables[0], &lut.tables[1], &lut.tables[2]],
+                        )?,
+
+                        _ => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                "Unsupported LUT output file format",
+                            ))
+                        }
+                    }
+                }
             }
         }
 
@@ -280,20 +307,6 @@ impl OCIOConfig {
             if colorspace.isdata == Some(true) {
                 file.write_all(b"    isdata: true\n")?;
             }
-            if let Some(allocation) = colorspace.allocation {
-                file.write_all(format!("    allocation: {}\n", allocation.as_str()).as_bytes())?;
-                if !colorspace.allocationvars.is_empty() {
-                    file.write_all(b"    allocationvars: [")?;
-                    for (i, n) in colorspace.allocationvars.iter().enumerate() {
-                        if i != 0 {
-                            file.write_all(b", ")?;
-                        }
-                        file.write_all(n.to_string().as_bytes())?;
-                    }
-                    file.write_all(b"]\n")?;
-                }
-            }
-
             if !colorspace.from_reference.is_empty() {
                 write_transform_yaml(
                     &mut file,
@@ -398,6 +411,131 @@ impl OCIOConfig {
 
         Ok(())
     }
+
+    //---------------------------------------------------------
+    // Convenience functions to help build configs more easily.
+
+    pub fn add_linear_input_colorspace(
+        &mut self,
+        name: String,
+        description: Option<String>,
+        chromaticities: Chromaticities,
+        whitepoint_adaptation_method: AdaptationMethod,
+    ) {
+        self.colorspaces.push(ColorSpace {
+            name: name,
+            description: description.unwrap_or(String::new()),
+            family: "linear".into(),
+            bitdepth: Some(BitDepth::F32),
+            isdata: Some(false),
+            to_reference: vec![Transform::MatrixTransform(matrix::to_4x4_f32(
+                matrix_compose!(
+                    matrix::rgb_to_xyz_matrix(chromaticities),
+                    matrix::xyz_chromatic_adaptation_matrix(
+                        chromaticities.w,
+                        self.reference_space_chroma.w,
+                        whitepoint_adaptation_method,
+                    ),
+                    matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
+                ),
+            ))],
+            ..ColorSpace::default()
+        });
+    }
+
+    pub fn add_nonlinear_input_colorspace(
+        &mut self,
+        name: String,
+        description: Option<String>,
+        chromaticities: Chromaticities,
+        whitepoint_adaptation_method: AdaptationMethod,
+        to_linear_transform: Transform,
+    ) {
+        self.colorspaces.push(ColorSpace {
+            name: name,
+            description: description.unwrap_or(String::new()),
+            bitdepth: Some(BitDepth::F32),
+            isdata: Some(false),
+            to_reference: vec![
+                to_linear_transform,
+                Transform::MatrixTransform(matrix::to_4x4_f32(matrix_compose!(
+                    matrix::rgb_to_xyz_matrix(chromaticities),
+                    matrix::xyz_chromatic_adaptation_matrix(
+                        chromaticities.w,
+                        self.reference_space_chroma.w,
+                        whitepoint_adaptation_method,
+                    ),
+                    matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
+                ))),
+            ],
+            ..ColorSpace::default()
+        });
+    }
+
+    /// Adds a display color space with basic gamut clipping.
+    pub fn add_clipped_display_colorspace(
+        &mut self,
+        name: String,
+        description: Option<String>,
+        chromaticities: Chromaticities,
+        whitepoint_adaptation_method: AdaptationMethod,
+        from_linear_transform: Transform,
+    ) {
+        let to_xyz_d65_mat = matrix_compose!(
+            matrix::rgb_to_xyz_matrix(chromaticities),
+            matrix::xyz_chromatic_adaptation_matrix(
+                chromaticities.w,
+                colorbox::chroma::WHITEPOINT_D65,
+                whitepoint_adaptation_method,
+            ),
+        );
+        let from_xyz_d65_mat = matrix::invert(to_xyz_d65_mat).unwrap();
+
+        // Create the gamut clipping LUT, and add it to the LUT files to write to disk.
+        let lut_filename = format!("{} - hsv_clip.cube", name);
+        self.output_files.push(OutputFile::Lut3D {
+            output_path: format!("luts/{}", lut_filename).into(),
+            lut: crate::hsv_lut::make_hsv_lut(121, (0.0, 15.0), |rgb| {
+                use colorbox::transforms::oklab;
+                let rgb2 = oklab::rgb_gamut_clip(
+                    [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
+                    Some(1.0),
+                    to_xyz_d65_mat,
+                    from_xyz_d65_mat,
+                );
+                (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
+            }),
+        });
+
+        // Create the colorspace.
+        self.colorspaces.push(ColorSpace {
+            name: name,
+            description: description.unwrap_or(String::new()),
+            family: "display".into(),
+            bitdepth: Some(BitDepth::F32),
+            isdata: Some(false),
+            from_reference: vec![
+                Transform::MatrixTransform(matrix::to_4x4_f32(matrix_compose!(
+                    matrix::rgb_to_xyz_matrix(self.reference_space_chroma),
+                    matrix::xyz_chromatic_adaptation_matrix(
+                        self.reference_space_chroma.w,
+                        chromaticities.w,
+                        whitepoint_adaptation_method,
+                    ),
+                    matrix::xyz_to_rgb_matrix(chromaticities),
+                ))),
+                Transform::ToHSV,
+                Transform::FileTransform {
+                    src: lut_filename.into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: false,
+                },
+                Transform::FromHSV,
+                from_linear_transform,
+            ],
+            ..ColorSpace::default()
+        });
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -440,7 +578,7 @@ pub struct Roles {
     pub data: Option<String>,
 
     // Other roles
-    pub other: Vec<(String, String)>, // (role_name, colorspace_name)
+    pub other: HashMap<String, String>, // role_name -> colorspace_name
 }
 
 impl Default for Roles {
@@ -451,7 +589,7 @@ impl Default for Roles {
             cie_xyz_d65_interchange: None,
             default: None,
             data: None,
-            other: Vec::new(),
+            other: HashMap::new(),
         }
     }
 }
@@ -481,8 +619,6 @@ pub struct ColorSpace {
     pub encoding: Option<Encoding>,
     pub bitdepth: Option<BitDepth>,
     pub isdata: Option<bool>, // OCIO treats absence as "false".
-    pub allocation: Option<Allocation>,
-    pub allocationvars: Vec<f64>,
 
     // At least one of these needs to be filled in.
     pub from_reference: Vec<Transform>,
@@ -499,8 +635,6 @@ impl Default for ColorSpace {
             encoding: None,
             bitdepth: None,
             isdata: None,
-            allocation: None,
-            allocationvars: Vec::new(),
             from_reference: Vec::new(),
             to_reference: Vec::new(),
         }
@@ -530,6 +664,13 @@ pub enum Transform {
         vars: Vec<f64>,
         direction_inverse: bool,
     },
+    ExponentWithLinearTransform {
+        gamma: f64,
+        offset: f64,
+        direction_inverse: bool,
+    },
+    ToHSV,
+    FromHSV,
 }
 
 pub fn write_transform_yaml<W: std::io::Write>(
@@ -592,6 +733,26 @@ pub fn write_transform_yaml<W: std::io::Write>(
                     ""
                 },
             )
+        }
+        &Transform::ExponentWithLinearTransform {
+            gamma,
+            offset,
+            direction_inverse,
+        } => {
+            format!(
+                "!<ExponentWithLinearTransform> {{ gamma: {}, offset: {}{} }}",
+                gamma,
+                offset,
+                if direction_inverse {
+                    ", direction: inverse"
+                } else {
+                    ""
+                },
+            )
+        }
+        &Transform::ToHSV => "!<FixedFunctionTransform> { style: RGB_TO_HSV }".into(),
+        &Transform::FromHSV => {
+            "!<FixedFunctionTransform> { style: RGB_TO_HSV, direction: inverse }".into()
         }
     };
 
