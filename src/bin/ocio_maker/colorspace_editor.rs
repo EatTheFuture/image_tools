@@ -38,7 +38,7 @@ pub fn editor(
     ui.add_space(8.0);
 
     // Chromaticity space.
-    chromaticity_editor(ui, space);
+    chromaticity_editor(ui, "Chromaticities / Gamut: ", space);
     ui.add_space(8.0);
 
     // Transfer function.
@@ -107,9 +107,9 @@ pub fn editor(
     Ok(())
 }
 
-pub fn chromaticity_editor(ui: &mut Ui, space: &mut crate::ColorSpaceSpec) {
+pub fn chromaticity_editor(ui: &mut Ui, label: &str, space: &mut crate::ColorSpaceSpec) {
     ui.horizontal(|ui| {
-        ui.label("Chromaticities / Gamut: ");
+        ui.label(label);
         egui::ComboBox::from_id_source("Chromaticity Space")
             .width(256.0)
             .selected_text(format!("{}", space.chroma_space.ui_text()))
