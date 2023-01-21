@@ -46,10 +46,13 @@ Currently this only generates configurations based on the Blender 3.0 default co
 ### To-do:
 
 - [x] Save data in the OCIO config file that allows OCIO Maker to re-open the config for further editing.  Right now, after closing OCIO Maker you have to start all over if you want to change something, which can be obnoxious.
-- [ ] Add a template for ACES "lite".  Essentially, the same as ACES except without the massive list of IDTs (since you'll be adding your own IDTs).
-- [ ] Add a template for ACES "super lite".  Still using the ACES color spaces, but otherwise super stripped down.
-- [ ] Support for 3D LUTs.
 - [x] Allow specifying custom chromaticity coordinates (currently limited to presets in a menu).
+- [x] Allow specifying a base template config, along with custom reference/working color space.
+- [x] Do reasonable gamut clipping on output transforms.
+- [ ] Do reasonable gamut clipping on input transforms.
+- [ ] Add a template for ACES "lite".  Essentially, the same as ACES except without the massive list of IDTs (since you'll be adding your own IDTs).
+  - [x] "ACES Lite" template added, but not yet complete.
+- [ ] Support for 3D LUTs.
 - [ ] Allow enabling gamut mapping for OCIO 2.1 configs (once OCIO 2.1 is released).
 
 
