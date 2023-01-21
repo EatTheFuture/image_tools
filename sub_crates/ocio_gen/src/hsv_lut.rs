@@ -58,13 +58,24 @@ where
         (vi * res * res) + (si * res) + hi
     };
 
-    // Set the hue of zero-saturation colors to match the next saturation up.
+    let val_thresh = 0.000_001;
+    let sat_thresh = 0.000_01;
+
+    // Sweep down and fix things.
     for val_i in (0..res).rev() {
         for sat_i in (0..res).rev() {
             for hue_i in 0..res {
                 let i = idx(hue_i, sat_i, val_i);
 
-                if lut.tables[1][i].abs() < 0.00001 {
+                // If value is zero, copy hue and sat from next value up.
+                if lut.tables[2][i].abs() < val_thresh {
+                    let i2 = idx(hue_i, sat_i, val_i + 1);
+                    lut.tables[0][i] = lut.tables[0][i2];
+                    lut.tables[1][i] = lut.tables[1][i2];
+                }
+
+                // If saturation is zero, copy from hue from next saturation up.
+                if lut.tables[1][i] < sat_thresh {
                     let i2 = idx(hue_i, sat_i + 1, val_i);
                     lut.tables[0][i] = lut.tables[0][i2];
                 }
@@ -72,17 +83,27 @@ where
         }
     }
 
-    // Set the hue and saturation of zero-value colors to
-    // match the next non-zero value up.
-    for val_i in (0..res).rev() {
+    // Sweep up and fix things.
+    for val_i in 0..res {
         for sat_i in 0..res {
             for hue_i in 0..res {
                 let i = idx(hue_i, sat_i, val_i);
 
-                if lut.tables[2][i].abs() < 0.000_1 {
-                    let i2 = idx(hue_i, sat_i, val_i + 1);
+                // If value is zero, copy hue and sat from next value down.
+                if lut.tables[2][i].abs() < val_thresh {
+                    let i2 = idx(hue_i, sat_i, val_i.saturating_sub(1));
                     lut.tables[0][i] = lut.tables[0][i2];
                     lut.tables[1][i] = lut.tables[1][i2];
+                }
+
+                // If saturation is zero, copy from hue from next saturation down.
+                if lut.tables[1][i] < sat_thresh {
+                    let i2 = if sat_i > 0 {
+                        idx(hue_i, sat_i.saturating_sub(1), val_i)
+                    } else {
+                        idx(hue_i, sat_i, val_i.saturating_sub(1))
+                    };
+                    lut.tables[0][i] = lut.tables[0][i2];
                 }
             }
         }

@@ -11,6 +11,10 @@ use colorbox::{
     matrix_compose,
 };
 
+const GAMUT_DIR: &str = "gamut_handling";
+const GAMUT_CLIP_LUT_STEP_1_FILENAME: &str = "rgb_gamut_clip_bounded_step_1.cube";
+const GAMUT_CLIP_LUT_STEP_2_FILENAME: &str = "rgb_gamut_clip_bounded_step_2.cube";
+
 #[derive(Debug, Clone)]
 pub struct OCIOConfig {
     // Not used during export, but rather is used in some convenience
@@ -18,7 +22,7 @@ pub struct OCIOConfig {
     pub reference_space_chroma: Chromaticities,
 
     // Files to include.
-    pub output_files: Vec<OutputFile>,
+    pub output_files: HashMap<PathBuf, OutputFile>,
 
     // Top-level comment at the start of the config file.
     pub header_comment: String,
@@ -26,7 +30,7 @@ pub struct OCIOConfig {
     // Header fields.
     pub name: Option<String>,
     pub description: Option<String>,
-    pub search_path: Vec<PathBuf>,
+    pub search_path: HashSet<PathBuf>,
 
     // Config sections.
     pub roles: Roles,
@@ -46,12 +50,12 @@ impl Default for OCIOConfig {
         OCIOConfig {
             reference_space_chroma: colorbox::chroma::REC709,
 
-            output_files: Vec::new(),
+            output_files: HashMap::new(),
 
             header_comment: String::new(),
             name: None,
             description: None,
-            search_path: Vec::new(),
+            search_path: HashSet::new(),
 
             roles: Roles::default(),
             displays: Vec::new(),
@@ -73,8 +77,8 @@ impl OCIOConfig {
 
         // First ensure all the directories we need exist.
         crate::ensure_dir_exists(dir_path)?;
-        for output_file in self.output_files.iter() {
-            if let Some(path) = output_file.path().parent() {
+        for (output_path, _) in self.output_files.iter() {
+            if let Some(path) = output_path.parent() {
                 crate::ensure_dir_exists(&dir_path.join(path))?;
             }
         }
@@ -85,11 +89,11 @@ impl OCIOConfig {
         }
 
         // Write the output files.
-        for output_file in self.output_files.iter() {
-            let mut f = BufWriter::new(std::fs::File::create(&dir_path.join(output_file.path()))?);
+        for (output_path, output_file) in self.output_files.iter() {
+            let mut f = BufWriter::new(std::fs::File::create(&dir_path.join(output_path))?);
             match output_file {
-                OutputFile::Raw { data, .. } => f.write_all(&data)?,
-                OutputFile::Lut1D { output_path, lut } => {
+                OutputFile::Raw(data) => f.write_all(&data)?,
+                OutputFile::Lut1D(lut) => {
                     match output_path.extension().map(|e| e.to_str()).flatten() {
                         Some("spi1d") => {
                             if lut.ranges.len() > 1 {
@@ -131,7 +135,7 @@ impl OCIOConfig {
                         }
                     }
                 }
-                OutputFile::Lut3D { output_path, lut } => {
+                OutputFile::Lut3D(lut) => {
                     match output_path.extension().map(|e| e.to_str()).flatten() {
                         Some("cube") => colorbox::formats::cube_iridas::write_3d(
                             &mut f,
@@ -481,31 +485,7 @@ impl OCIOConfig {
         whitepoint_adaptation_method: AdaptationMethod,
         from_linear_transform: Transform,
     ) {
-        let to_xyz_d65_mat = matrix_compose!(
-            matrix::rgb_to_xyz_matrix(chromaticities),
-            matrix::xyz_chromatic_adaptation_matrix(
-                chromaticities.w,
-                colorbox::chroma::WHITEPOINT_D65,
-                whitepoint_adaptation_method,
-            ),
-        );
-        let from_xyz_d65_mat = matrix::invert(to_xyz_d65_mat).unwrap();
-
-        // Create the gamut clipping LUT, and add it to the LUT files to write to disk.
-        let lut_filename = format!("{} - hsv_clip.cube", name);
-        self.output_files.push(OutputFile::Lut3D {
-            output_path: format!("luts/{}", lut_filename).into(),
-            lut: crate::hsv_lut::make_hsv_lut(121, (0.0, 15.0), |rgb| {
-                use colorbox::transforms::oklab;
-                let rgb2 = oklab::rgb_gamut_clip(
-                    [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
-                    Some(1.0),
-                    to_xyz_d65_mat,
-                    from_xyz_d65_mat,
-                );
-                (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
-            }),
-        });
+        self.generate_gamut_clipping_luts();
 
         // Create the colorspace.
         self.colorspaces.push(ColorSpace {
@@ -526,7 +506,12 @@ impl OCIOConfig {
                 ))),
                 Transform::ToHSV,
                 Transform::FileTransform {
-                    src: lut_filename.into(),
+                    src: GAMUT_CLIP_LUT_STEP_1_FILENAME.into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: false,
+                },
+                Transform::FileTransform {
+                    src: GAMUT_CLIP_LUT_STEP_2_FILENAME.into(),
                     interpolation: Interpolation::Linear,
                     direction_inverse: false,
                 },
@@ -535,6 +520,53 @@ impl OCIOConfig {
             ],
             ..ColorSpace::default()
         });
+    }
+
+    /// Creates and adds the default gamut clipping luts, if
+    /// they haven't been already.
+    pub fn generate_gamut_clipping_luts(&mut self) {
+        // We use these luminance weights regardless of actual gamut
+        // because in practice they work plenty well, and this way we
+        // can re-use the same luts for all gamuts.
+        let luminance_weights = [3.0 / 12.0, 8.0 / 12.0, 1.0 / 12.0];
+
+        self.search_path.insert(GAMUT_DIR.into());
+
+        self.output_files
+            .entry(Path::new(GAMUT_DIR).join::<PathBuf>(GAMUT_CLIP_LUT_STEP_1_FILENAME.into()))
+            .or_insert_with(|| {
+                OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
+                    12 * 6 + 1,
+                    (0.0, 24.0),
+                    |rgb| {
+                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
+                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
+                            None,
+                            true,
+                            luminance_weights,
+                        );
+                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
+                    },
+                ))
+            });
+
+        self.output_files
+            .entry(Path::new(GAMUT_DIR).join::<PathBuf>(GAMUT_CLIP_LUT_STEP_2_FILENAME.into()))
+            .or_insert_with(|| {
+                OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
+                    12 * 6 + 1,
+                    (0.0, 12.0),
+                    |rgb| {
+                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
+                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
+                            Some(1.0),
+                            true,
+                            luminance_weights,
+                        );
+                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
+                    },
+                ))
+            });
     }
 }
 
@@ -860,23 +892,7 @@ impl Allocation {
 
 #[derive(Debug, Clone)]
 pub enum OutputFile {
-    Raw { output_path: PathBuf, data: Vec<u8> },
-    Lut1D { output_path: PathBuf, lut: Lut1D },
-    Lut3D { output_path: PathBuf, lut: Lut3D },
-}
-
-impl OutputFile {
-    pub fn path(&self) -> &Path {
-        match self {
-            OutputFile::Raw {
-                ref output_path, ..
-            } => output_path,
-            OutputFile::Lut1D {
-                ref output_path, ..
-            } => output_path,
-            OutputFile::Lut3D {
-                ref output_path, ..
-            } => output_path,
-        }
-    }
+    Raw(Vec<u8>),
+    Lut1D(Lut1D),
+    Lut3D(Lut3D),
 }

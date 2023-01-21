@@ -10,7 +10,6 @@ mod transfer_function_graph;
 mod working_color_space;
 
 use std::{
-    collections::HashMap,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
 };
@@ -261,7 +260,6 @@ impl AppMain {
 
             // Prep to add our own stuff.
             let output_dir: &Path = "ocio_maker".as_ref();
-            let mut output_files: HashMap<PathBuf, OutputFile> = HashMap::new();
             let space_count = ui_data.lock().color_spaces.len();
 
             // Add color spaces.
@@ -283,24 +281,30 @@ impl AppMain {
                     let mut transforms = Vec::new();
                     let mut transforms_inv = Vec::new();
 
-                    let lut_data = space.transfer_lut.map(|(lut, ref path, inverse)| {(
-                        output_files
-                            .entry(path.into())
+
+                    let lut_info = space.transfer_lut.map(|(lut, ref path, inverse)| {
+                        // Compute output path.
+                        let lut_path = output_dir.join(format!(
+                            "omkr_{}__{}",
+                            i,
+                            path.file_name()
+                                .map(|f| f.to_str())
+                                .flatten()
+                                .unwrap_or("lut.cube")
+                        ));
+
+                        // Add LUT file to config if it's not already there.
+                        config.output_files
+                            .entry(lut_path.clone())
                             .or_insert(
-                                OutputFile::Lut1D {
-                                    output_path: output_dir.join(format!(
-                                        "omkr_{}__{}",
-                                        i,
-                                        path.file_name()
-                                            .map(|f| f.to_str())
-                                            .flatten()
-                                            .unwrap_or("lut.cube")
-                                    )),
-                                    lut: lut.clone(),
-                                }
-                            ),
-                        inverse
-                    )});
+                                OutputFile::Lut1D(lut.clone())
+                            );
+
+                        (
+                            lut_path,
+                            inverse,
+                        )
+                    });
 
                     let matrix_pair = space.chroma_space.chromaticities(space.custom_chroma).map(|chroma| {
                         let forward = colorbox::matrix_compose!(
@@ -320,9 +324,9 @@ impl AppMain {
                     });
 
                     // "To Reference" transform.
-                    if let Some((ref lut_file, inverse)) = lut_data {
+                    if let Some((ref lut_path, inverse)) = lut_info {
                         transforms.push(Transform::FileTransform {
-                            src: lut_file.path().file_name().unwrap().into(),
+                            src: lut_path.file_name().unwrap().into(),
                             interpolation: Interpolation::Linear,
                             direction_inverse: inverse,
                         });
@@ -335,9 +339,9 @@ impl AppMain {
                     if let Some((_, matrix_backward)) = matrix_pair {
                         transforms_inv.push(Transform::MatrixTransform(matrix_backward));
                     }
-                    if let Some((ref lut_file, inverse)) = lut_data {
+                    if let Some((ref lut_path, inverse)) = lut_info {
                         transforms_inv.push(Transform::FileTransform {
-                            src: lut_file.path().file_name().unwrap().into(),
+                            src: lut_path.file_name().unwrap().into(),
                             interpolation: Interpolation::Linear,
                             direction_inverse: !inverse,
                         });
@@ -362,12 +366,6 @@ impl AppMain {
                         config.active_displays.push(space_name.clone());
                     }
                 }
-            }
-
-            // Add LUT files.
-            config.search_path.push(output_dir.into());
-            for (_, output_file) in output_files.drain() {
-                config.output_files.push(output_file);
             }
 
             // Add final separator to the end of the header comment.

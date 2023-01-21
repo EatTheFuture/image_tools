@@ -11,7 +11,7 @@ pub fn make_minimal(
 
     config.reference_space_chroma = reference_space_chroma;
 
-    config.search_path = vec!["luts".into()];
+    config.search_path.extend(["luts".into()]);
 
     config.roles.reference = Some("Linear".into());
     config.roles.aces_interchange = Some("Linear ACES".into());
