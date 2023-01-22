@@ -261,6 +261,7 @@ impl AppMain {
 
             // Prep to add our own stuff.
             let output_dir: &Path = "ocio_maker".as_ref();
+            config.search_path.insert(output_dir.into());
             let space_count = ui_data.lock().color_spaces.len();
 
             // Add color spaces.
