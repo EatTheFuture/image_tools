@@ -19,12 +19,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       # Get a checkout and rust toolchain.
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: stable
-          override: true
 
       # Build and test, and make sure benchmarks build.
       - run: cargo +stable test --all && cargo +stable bench --profile=dev --no-run --all

@@ -18,7 +18,7 @@ jobs:
       date_hash_tag: ${{ steps.vars.outputs.DATE_HASH_TAG }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Get info
         id: vars
@@ -61,15 +61,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev wget
 
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       
       - name: Install ${{ matrix.rust }} toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
           target: ${{ matrix.target }}
-          override: true
 
       - name: Build release binaries
         shell: bash
