@@ -31,6 +31,8 @@ const FILMIC_TO_120_SPI1D_XZ: &[u8] =
 pub fn make_blender_3_0() -> OCIOConfig {
     let mut config = OCIOConfig::default();
 
+    config.reference_space_chroma = chroma::REC709;
+
     config.name = Some("Blender 3.0 (customized)".into());
     config.description = Some("Customized variant of the Blender 3.0 configuration.".into());
     config.search_path.extend(["luts".into(), "filmic".into()]);

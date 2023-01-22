@@ -97,33 +97,41 @@ pub fn make_minimal(
         ..ColorSpace::default()
     });
 
-    config.add_linear_input_colorspace(
+    config.add_input_colorspace(
         "Linear ACES".into(),
+        Some("linear".into()),
         Some("ACES AP0 linear space".into()),
         chroma::ACES_AP0,
         whitepoint_adaptation_method,
+        None,
+        true,
     );
 
-    config.add_linear_input_colorspace(
+    config.add_input_colorspace(
         "sRGB Linear".into(),
+        Some("linear".into()),
         Some("Linear color space with sRGB/Rec.709 gamut".into()),
         chroma::REC709,
         whitepoint_adaptation_method,
+        None,
+        true,
     );
 
-    config.add_nonlinear_input_colorspace(
+    config.add_input_colorspace(
         "sRGB".into(),
+        None,
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        Transform::ExponentWithLinearTransform {
+        Some(Transform::ExponentWithLinearTransform {
             gamma: 2.4,
             offset: 0.055,
             direction_inverse: false,
-        },
+        }),
+        true,
     );
 
-    config.add_clipped_display_colorspace(
+    config.add_display_colorspace(
         "sRGB Gamut Clipped".into(),
         None,
         chroma::REC709,
@@ -133,6 +141,7 @@ pub fn make_minimal(
             offset: 0.055,
             direction_inverse: true,
         },
+        true,
     );
 
     config.colorspaces.push(ColorSpace {

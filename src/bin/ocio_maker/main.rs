@@ -280,9 +280,6 @@ impl AppMain {
                         .replace("\"", "\\\"")
                         .replace("]", "\\]")
                         .replace("}", "\\}");
-                    let mut transforms = Vec::new();
-                    let mut transforms_inv = Vec::new();
-
 
                     let lut_info = space.transfer_lut.map(|(lut, ref path, inverse)| {
                         // Compute output path.
@@ -308,57 +305,19 @@ impl AppMain {
                         )
                     });
 
-                    let matrix_pair = space.chroma_space.chromaticities(space.custom_chroma).map(|chroma| {
-                        let forward = colorbox::matrix_compose!(
-                            matrix::rgb_to_xyz_matrix(chroma),
-                            matrix::xyz_chromatic_adaptation_matrix(
-                                chroma.w,
-                                working_space_chroma.w,
-                                matrix::AdaptationMethod::Bradford,
-                            ),
-                            matrix::xyz_to_rgb_matrix(working_space_chroma),
-                        );
-                        let inverse = colorbox::matrix::invert(forward).unwrap();
-                        (
-                            colorbox::matrix::to_4x4_f32(forward),
-                            colorbox::matrix::to_4x4_f32(inverse),
-                        )
-                    });
-
-                    // "To Reference" transform.
-                    if let Some((ref lut_path, inverse)) = lut_info {
-                        transforms.push(Transform::FileTransform {
+                    config.add_input_colorspace(
+                        space_name.clone(),
+                        Some("Custom (OCIO Maker)".into()),
+                        None,
+                        space.chroma_space.chromaticities(space.custom_chroma).unwrap_or(working_space_chroma),
+                        matrix::AdaptationMethod::Bradford,
+                        lut_info.map(|(lut_path, inverse)| Transform::FileTransform {
                             src: lut_path.file_name().unwrap().into(),
                             interpolation: Interpolation::Linear,
                             direction_inverse: inverse,
-                        });
-                    }
-                    if let Some((matrix_forward, _)) = matrix_pair {
-                        transforms.push(Transform::MatrixTransform(matrix_forward));
-                    }
-
-                    // "From Reference" transform.
-                    if let Some((_, matrix_backward)) = matrix_pair {
-                        transforms_inv.push(Transform::MatrixTransform(matrix_backward));
-                    }
-                    if let Some((ref lut_path, inverse)) = lut_info {
-                        transforms_inv.push(Transform::FileTransform {
-                            src: lut_path.file_name().unwrap().into(),
-                            interpolation: Interpolation::Linear,
-                            direction_inverse: !inverse,
-                        });
-                    }
-
-                    // Create the colorspace.
-                    config.colorspaces.push(ColorSpace {
-                        name: space_name.clone(),
-                        family: "Custom (OCIO Maker)".into(),
-                        bitdepth: Some(BitDepth::F32),
-                        isdata: Some(false),
-                        to_reference: transforms,
-                        from_reference: transforms_inv,
-                        ..ColorSpace::default()
-                    });
+                        }),
+                        true,
+                    );
 
                     if space.include_as_display {
                         config.displays.push(Display {

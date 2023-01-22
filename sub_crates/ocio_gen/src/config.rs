@@ -12,8 +12,9 @@ use colorbox::{
 };
 
 const GAMUT_DIR: &str = "gamut_handling";
-const GAMUT_CLIP_LUT_STEP_1_FILENAME: &str = "rgb_gamut_clip_bounded_step_1.cube";
-const GAMUT_CLIP_LUT_STEP_2_FILENAME: &str = "rgb_gamut_clip_bounded_step_2.cube";
+const INPUT_GAMUT_CLIP_LUT_FILENAME: &str = "rgb_input_gamut_clip.cube";
+const OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME: &str = "rgb_output_gamut_clip_step_1.cube";
+const OUTPUT_GAMUT_CLIP_LUT_STEP_2_FILENAME: &str = "rgb_output_gamut_clip_step_2.cube";
 
 #[derive(Debug, Clone)]
 pub struct OCIOConfig {
@@ -419,105 +420,141 @@ impl OCIOConfig {
     //---------------------------------------------------------
     // Convenience functions to help build configs more easily.
 
-    pub fn add_linear_input_colorspace(
+    pub fn add_input_colorspace(
         &mut self,
         name: String,
+        family: Option<String>,
         description: Option<String>,
         chromaticities: Chromaticities,
         whitepoint_adaptation_method: AdaptationMethod,
+        to_linear_transform: Option<Transform>,
+        use_gamut_clipping: bool,
     ) {
-        self.colorspaces.push(ColorSpace {
-            name: name,
-            description: description.unwrap_or(String::new()),
-            family: "linear".into(),
-            bitdepth: Some(BitDepth::F32),
-            isdata: Some(false),
-            to_reference: vec![Transform::MatrixTransform(matrix::to_4x4_f32(
-                matrix_compose!(
-                    matrix::rgb_to_xyz_matrix(chromaticities),
-                    matrix::xyz_chromatic_adaptation_matrix(
-                        chromaticities.w,
-                        self.reference_space_chroma.w,
-                        whitepoint_adaptation_method,
-                    ),
-                    matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
+        // Build to-reference transforms.
+        let mut to_reference_transforms = Vec::new();
+        if let Some(ref to_linear) = to_linear_transform {
+            to_reference_transforms.push(to_linear.clone());
+        }
+        to_reference_transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
+            matrix_compose!(
+                matrix::rgb_to_xyz_matrix(chromaticities),
+                matrix::xyz_chromatic_adaptation_matrix(
+                    chromaticities.w,
+                    self.reference_space_chroma.w,
+                    whitepoint_adaptation_method,
                 ),
-            ))],
-            ..ColorSpace::default()
-        });
-    }
+                matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
+            ),
+        )));
+        if use_gamut_clipping && !gamut_is_within_gamut(chromaticities, self.reference_space_chroma)
+        {
+            self.generate_gamut_clipping_luts();
+            to_reference_transforms.extend([
+                Transform::ToHSV,
+                Transform::FileTransform {
+                    src: INPUT_GAMUT_CLIP_LUT_FILENAME.into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: false,
+                },
+                Transform::FromHSV,
+            ]);
+        }
 
-    pub fn add_nonlinear_input_colorspace(
-        &mut self,
-        name: String,
-        description: Option<String>,
-        chromaticities: Chromaticities,
-        whitepoint_adaptation_method: AdaptationMethod,
-        to_linear_transform: Transform,
-    ) {
+        // Build from-reference transforms.
+        let mut from_reference_transforms = Vec::new();
+        from_reference_transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
+            matrix::invert(matrix_compose!(
+                matrix::rgb_to_xyz_matrix(chromaticities),
+                matrix::xyz_chromatic_adaptation_matrix(
+                    chromaticities.w,
+                    self.reference_space_chroma.w,
+                    whitepoint_adaptation_method,
+                ),
+                matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
+            ))
+            .unwrap(),
+        )));
+        if let Some(to_linear) = to_linear_transform {
+            from_reference_transforms.push(to_linear.invert());
+        }
+        if use_gamut_clipping && !gamut_is_within_gamut(self.reference_space_chroma, chromaticities)
+        {
+            self.generate_gamut_clipping_luts();
+            from_reference_transforms.extend([
+                Transform::ToHSV,
+                Transform::FileTransform {
+                    src: INPUT_GAMUT_CLIP_LUT_FILENAME.into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: false,
+                },
+                Transform::FromHSV,
+            ]);
+        }
+
+        // Add the colorspace.
         self.colorspaces.push(ColorSpace {
             name: name,
+            family: family.unwrap_or("".into()),
             description: description.unwrap_or(String::new()),
             bitdepth: Some(BitDepth::F32),
             isdata: Some(false),
-            to_reference: vec![
-                to_linear_transform,
-                Transform::MatrixTransform(matrix::to_4x4_f32(matrix_compose!(
-                    matrix::rgb_to_xyz_matrix(chromaticities),
-                    matrix::xyz_chromatic_adaptation_matrix(
-                        chromaticities.w,
-                        self.reference_space_chroma.w,
-                        whitepoint_adaptation_method,
-                    ),
-                    matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
-                ))),
-            ],
+            to_reference: to_reference_transforms,
+            from_reference: from_reference_transforms,
             ..ColorSpace::default()
         });
     }
 
     /// Adds a display color space with basic gamut clipping.
-    pub fn add_clipped_display_colorspace(
+    pub fn add_display_colorspace(
         &mut self,
         name: String,
         description: Option<String>,
         chromaticities: Chromaticities,
         whitepoint_adaptation_method: AdaptationMethod,
         from_linear_transform: Transform,
+        use_gamut_clipping: bool,
     ) {
         self.generate_gamut_clipping_luts();
 
-        // Create the colorspace.
+        // Build transforms.
+        let mut transforms = vec![Transform::MatrixTransform(matrix::to_4x4_f32(
+            matrix_compose!(
+                matrix::rgb_to_xyz_matrix(self.reference_space_chroma),
+                matrix::xyz_chromatic_adaptation_matrix(
+                    self.reference_space_chroma.w,
+                    chromaticities.w,
+                    whitepoint_adaptation_method,
+                ),
+                matrix::xyz_to_rgb_matrix(chromaticities),
+            ),
+        ))];
+        if use_gamut_clipping {
+            self.generate_gamut_clipping_luts();
+            transforms.extend([
+                Transform::ToHSV,
+                Transform::FileTransform {
+                    src: OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME.into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: false,
+                },
+                Transform::FileTransform {
+                    src: OUTPUT_GAMUT_CLIP_LUT_STEP_2_FILENAME.into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: false,
+                },
+                Transform::FromHSV,
+            ]);
+        }
+        transforms.push(from_linear_transform);
+
+        // Add the colorspace.
         self.colorspaces.push(ColorSpace {
             name: name,
             description: description.unwrap_or(String::new()),
             family: "display".into(),
             bitdepth: Some(BitDepth::F32),
             isdata: Some(false),
-            from_reference: vec![
-                Transform::MatrixTransform(matrix::to_4x4_f32(matrix_compose!(
-                    matrix::rgb_to_xyz_matrix(self.reference_space_chroma),
-                    matrix::xyz_chromatic_adaptation_matrix(
-                        self.reference_space_chroma.w,
-                        chromaticities.w,
-                        whitepoint_adaptation_method,
-                    ),
-                    matrix::xyz_to_rgb_matrix(chromaticities),
-                ))),
-                Transform::ToHSV,
-                Transform::FileTransform {
-                    src: GAMUT_CLIP_LUT_STEP_1_FILENAME.into(),
-                    interpolation: Interpolation::Linear,
-                    direction_inverse: false,
-                },
-                Transform::FileTransform {
-                    src: GAMUT_CLIP_LUT_STEP_2_FILENAME.into(),
-                    interpolation: Interpolation::Linear,
-                    direction_inverse: false,
-                },
-                Transform::FromHSV,
-                from_linear_transform,
-            ],
+            from_reference: transforms,
             ..ColorSpace::default()
         });
     }
@@ -533,7 +570,27 @@ impl OCIOConfig {
         self.search_path.insert(GAMUT_DIR.into());
 
         self.output_files
-            .entry(Path::new(GAMUT_DIR).join::<PathBuf>(GAMUT_CLIP_LUT_STEP_1_FILENAME.into()))
+            .entry(Path::new(GAMUT_DIR).join::<PathBuf>(INPUT_GAMUT_CLIP_LUT_FILENAME.into()))
+            .or_insert_with(|| {
+                OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
+                    12 * 6 + 1,
+                    (0.0, 1_000_000_000_000.0),
+                    |rgb| {
+                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
+                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
+                            None,
+                            true,
+                            luminance_weights,
+                        );
+                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
+                    },
+                ))
+            });
+
+        self.output_files
+            .entry(
+                Path::new(GAMUT_DIR).join::<PathBuf>(OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME.into()),
+            )
             .or_insert_with(|| {
                 OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
                     12 * 6 + 1,
@@ -551,7 +608,29 @@ impl OCIOConfig {
             });
 
         self.output_files
-            .entry(Path::new(GAMUT_DIR).join::<PathBuf>(GAMUT_CLIP_LUT_STEP_2_FILENAME.into()))
+            .entry(
+                Path::new(GAMUT_DIR).join::<PathBuf>(OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME.into()),
+            )
+            .or_insert_with(|| {
+                OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
+                    12 * 6 + 1,
+                    (0.0, 24.0),
+                    |rgb| {
+                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
+                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
+                            None,
+                            true,
+                            luminance_weights,
+                        );
+                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
+                    },
+                ))
+            });
+
+        self.output_files
+            .entry(
+                Path::new(GAMUT_DIR).join::<PathBuf>(OUTPUT_GAMUT_CLIP_LUT_STEP_2_FILENAME.into()),
+            )
             .or_insert_with(|| {
                 OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
                     12 * 6 + 1,
@@ -703,6 +782,50 @@ pub enum Transform {
     },
     ToHSV,
     FromHSV,
+}
+
+impl Transform {
+    pub fn invert(self) -> Self {
+        use Transform::*;
+        match self {
+            FileTransform {
+                src,
+                interpolation,
+                direction_inverse,
+            } => FileTransform {
+                src: src,
+                interpolation: interpolation,
+                direction_inverse: !direction_inverse,
+            },
+
+            ColorSpaceTransform { src, dst } => ColorSpaceTransform { src: dst, dst: src },
+
+            MatrixTransform(_) => todo!(),
+
+            AllocationTransform {
+                allocation,
+                vars,
+                direction_inverse,
+            } => AllocationTransform {
+                allocation: allocation,
+                vars: vars,
+                direction_inverse: !direction_inverse,
+            },
+
+            ExponentWithLinearTransform {
+                gamma,
+                offset,
+                direction_inverse,
+            } => ExponentWithLinearTransform {
+                gamma: gamma,
+                offset: offset,
+                direction_inverse: !direction_inverse,
+            },
+
+            ToHSV => FromHSV,
+            FromHSV => ToHSV,
+        }
+    }
 }
 
 pub fn write_transform_yaml<W: std::io::Write>(
@@ -895,4 +1018,47 @@ pub enum OutputFile {
     Raw(Vec<u8>),
     Lut1D(Lut1D),
     Lut3D(Lut3D),
+}
+
+/// Returns true if `g1` is fully encompassed by `g2`.
+fn gamut_is_within_gamut(g1: Chromaticities, g2: Chromaticities) -> bool {
+    fn sign(pa: (f64, f64), pb1: (f64, f64), pb2: (f64, f64)) -> f64 {
+        (pa.0 - pb2.0) * (pb1.1 - pb2.1) - (pb1.0 - pb2.0) * (pa.1 - pb2.1)
+    }
+
+    fn point_in_triangle(pt: (f64, f64), v1: (f64, f64), v2: (f64, f64), v3: (f64, f64)) -> bool {
+        let d1 = sign(pt, v1, v2);
+        let d2 = sign(pt, v2, v3);
+        let d3 = sign(pt, v3, v1);
+
+        let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+        let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+
+        !(has_neg && has_pos)
+    }
+
+    point_in_triangle(g1.r, g2.r, g2.g, g2.b)
+        && point_in_triangle(g1.g, g2.r, g2.g, g2.b)
+        && point_in_triangle(g1.b, g2.r, g2.g, g2.b)
+        && point_in_triangle(g1.w, g2.r, g2.g, g2.b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use colorbox::chroma;
+
+    #[test]
+    fn gamut_is_within_gamut_01() {
+        assert_eq!(gamut_is_within_gamut(chroma::REC709, chroma::REC2020), true);
+        assert_eq!(
+            gamut_is_within_gamut(chroma::REC2020, chroma::REC709),
+            false
+        );
+        assert_eq!(gamut_is_within_gamut(chroma::REC709, chroma::REC709), true);
+        assert_eq!(
+            gamut_is_within_gamut(chroma::REC2020, chroma::REC2020),
+            true
+        );
+    }
 }
