@@ -1,25 +1,25 @@
 use colorbox::lut::Lut3D;
 
-/// Note: convert should take and produce *RGB values*, not HSV.
-pub fn make_hsv_lut<F>(res: usize, val_range: (f32, f32), convert: F) -> Lut3D
+/// Note: `convert` should take and produce *RGB values*, not HSV.
+pub fn make_hsv_lut<F>(res: usize, val_range: (f32, f32), max_sat: f32, convert: F) -> Lut3D
 where
     F: Fn((f32, f32, f32)) -> (f32, f32, f32),
 {
     assert!(val_range.0 < val_range.1);
 
     const HUE_RANGE: (f32, f32) = (0.0, 1.0);
-    const SAT_RANGE: (f32, f32) = (0.0, 2.0);
+    let sat_range = (0.0, max_sat);
     let val_delta = val_range.1 - val_range.0;
 
     let mut lut = Lut3D {
-        range: [HUE_RANGE, SAT_RANGE, val_range],
+        range: [HUE_RANGE, sat_range, val_range],
         resolution: [res; 3],
         tables: {
             let mut tables = vec![Vec::new(), Vec::new(), Vec::new()];
             for val_i in 0..res {
                 let val = val_range.0 + (val_delta / (res - 1) as f32 * val_i as f32);
                 for sat_i in 0..res {
-                    let sat = SAT_RANGE.1 / (res - 1) as f32 * sat_i as f32;
+                    let sat = sat_range.1 / (res - 1) as f32 * sat_i as f32;
                     for hue_i in 0..res {
                         let hue = HUE_RANGE.1 / (res - 1) as f32 * hue_i as f32;
 

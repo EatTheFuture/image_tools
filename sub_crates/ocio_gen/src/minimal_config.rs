@@ -33,6 +33,15 @@ pub fn make_minimal(
     ]
     .into();
 
+    //---------------------------------------------------------
+    // Displays
+
+    config.displays.push(Display {
+        name: "None".into(),
+        views: vec![("Standard".into(), "Raw".into())],
+    });
+    config.active_displays.push("None".into());
+
     config.displays.push(Display {
         name: "sRGB".into(),
         views: vec![
@@ -40,30 +49,221 @@ pub fn make_minimal(
             ("Raw".into(), "Raw".into()),
         ],
     });
-    config.displays.push(Display {
-        name: "None".into(),
-        views: vec![("Standard".into(), "Raw".into())],
-    });
+    config.active_displays.push("sRGB".into());
 
-    config.active_displays = vec!["sRGB".into(), "None".into()];
+    config.displays.push(Display {
+        name: "Rec.709".into(),
+        views: vec![
+            ("Standard".into(), "Rec.709 Gamut Clipped".into()),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("Rec.709".into());
+
+    config.displays.push(Display {
+        name: "Rec.2020".into(),
+        views: vec![
+            ("Standard".into(), "Rec.2020 Gamut Clipped".into()),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("Rec.2020".into());
+
+    config.displays.push(Display {
+        name: "Rec.2100 PQ 10000 nits".into(),
+        views: vec![
+            (
+                "Standard".into(),
+                "Rec.2100 PQ 10000 nits Gamut Clipped".into(),
+            ),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("Rec.2100 PQ 10000 nits".into());
+
+    config.displays.push(Display {
+        name: "Rec.2100 PQ 1000 nits".into(),
+        views: vec![
+            (
+                "Standard".into(),
+                "Rec.2100 PQ 1000 nits Gamut Clipped".into(),
+            ),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("Rec.2100 PQ 1000 nits".into());
+
+    config.displays.push(Display {
+        name: "Rec.2100 PQ 100 nits".into(),
+        views: vec![
+            (
+                "Standard".into(),
+                "Rec.2100 PQ 100 nits Gamut Clipped".into(),
+            ),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("Rec.2100 PQ 100 nits".into());
+
+    config.displays.push(Display {
+        name: "Rec.2100 HLG".into(),
+        views: vec![
+            ("Standard".into(), "Rec.2100 HLG Gamut Clipped".into()),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("Rec.2100 HLG".into());
+
+    config.displays.push(Display {
+        name: "DCI-P3".into(),
+        views: vec![
+            ("Standard".into(), "DCI-P3 Gamut Clipped".into()),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("DCI-P3".into());
+
     config.active_views = vec!["Standard".into(), "Raw".into()];
 
     //---------------------------------------------------------
-    // Color spaces.
+    // Display color spaces.
 
-    config.colorspaces.push(ColorSpace {
-        name: "Linear".into(),
-        family: "linear".into(),
-        bitdepth: Some(BitDepth::F32),
-        isdata: Some(false),
-        ..ColorSpace::default()
-    });
+    config.add_display_colorspace(
+        "sRGB Gamut Clipped".into(),
+        None,
+        chroma::REC709,
+        whitepoint_adaptation_method,
+        Transform::ExponentWithLinearTransform {
+            gamma: 2.4,
+            offset: 0.055,
+            direction_inverse: true,
+        },
+        true,
+    );
+
+    config.add_display_colorspace(
+        "Rec.709 Gamut Clipped".into(),
+        None,
+        chroma::REC709,
+        whitepoint_adaptation_method,
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        true,
+    );
+
+    config.add_display_colorspace(
+        "Rec.2020 Gamut Clipped".into(),
+        None,
+        chroma::REC2020,
+        whitepoint_adaptation_method,
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        true,
+    );
+
+    config.generate_gamut_clipping_luts();
+    for nits in [100, 1000, 10000] {
+        config.colorspaces.push(ColorSpace {
+            name: format!("Rec.2100 PQ {} nits Gamut Clipped", nits),
+            description: "".into(),
+            family: "display".into(),
+            bitdepth: Some(BitDepth::F32),
+            isdata: Some(false),
+            from_reference: vec![
+                //---------------------
+                // Convert color gamut.
+                Transform::MatrixTransform(matrix::to_4x4_f32(matrix_compose!(
+                    matrix::rgb_to_xyz_matrix(config.reference_space_chroma),
+                    matrix::xyz_chromatic_adaptation_matrix(
+                        config.reference_space_chroma.w,
+                        chroma::REC2020.w,
+                        whitepoint_adaptation_method,
+                    ),
+                    matrix::xyz_to_rgb_matrix(chroma::REC2020),
+                ))),
+                //------------------------
+                // Gamut and tone mapping.
+                Transform::ToHSV,
+                Transform::FileTransform {
+                    src: OUTPUT_GAMUT_CLIP_LUT_FILENAME.into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: false,
+                },
+                Transform::FromHSV,
+                //--------
+                // Encode.
+                Transform::RangeTransform {
+                    range_in: (0.0, 1.0),
+                    range_out: (0.0, nits as f64 / 10000.0),
+                    clamp: true,
+                },
+                Transform::FileTransform {
+                    src: "pq_norm_to_linear.spi1d".into(),
+                    interpolation: Interpolation::Linear,
+                    direction_inverse: true,
+                },
+            ],
+            ..ColorSpace::default()
+        });
+    }
+
+    config.add_display_colorspace(
+        "Rec.2100 HLG Gamut Clipped".into(),
+        None,
+        chroma::REC2020,
+        whitepoint_adaptation_method,
+        Transform::FileTransform {
+            src: "hlg_to_linear.spi1d".into(),
+            interpolation: Interpolation::Linear,
+            direction_inverse: true,
+        },
+        true,
+    );
+
+    config.add_display_colorspace(
+        "DCI-P3 Gamut Clipped".into(),
+        None,
+        chroma::DCI_P3,
+        whitepoint_adaptation_method,
+        Transform::ExponentTransform {
+            gamma: 2.6,
+            direction_inverse: true,
+        },
+        true,
+    );
+
+    //---------------------------------------------------------
+    // Input color spaces.
 
     config.colorspaces.push(ColorSpace {
         name: "Raw".into(),
         family: "raw".into(),
         bitdepth: Some(BitDepth::F32),
         isdata: Some(true),
+        ..ColorSpace::default()
+    });
+
+    config.colorspaces.push(ColorSpace {
+        name: "Non-Color".into(),
+        description: "Color space used for images which contains non-color data (i,e, normal maps)"
+            .into(),
+        family: "raw".into(),
+        bitdepth: Some(BitDepth::F32),
+        isdata: Some(true),
+        ..ColorSpace::default()
+    });
+
+    config.colorspaces.push(ColorSpace {
+        name: "Linear".into(),
+        family: "linear".into(),
+        bitdepth: Some(BitDepth::F32),
+        isdata: Some(false),
         ..ColorSpace::default()
     });
 
@@ -114,7 +314,7 @@ pub fn make_minimal(
         chroma::REC709,
         whitepoint_adaptation_method,
         None,
-        true,
+        false,
     );
 
     config.add_input_colorspace(
@@ -123,46 +323,44 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        Some(Transform::ExponentWithLinearTransform {
-            gamma: 2.4,
-            offset: 0.055,
+        Some(Transform::FileTransform {
+            src: "srgb_to_linear.spi1d".into(),
+            interpolation: Interpolation::Linear,
             direction_inverse: false,
         }),
-        true,
+        false,
     );
 
-    config.add_display_colorspace(
-        "sRGB Gamut Clipped".into(),
-        None,
-        chroma::REC709,
-        whitepoint_adaptation_method,
-        Transform::ExponentWithLinearTransform {
-            gamma: 2.4,
-            offset: 0.055,
-            direction_inverse: true,
-        },
-        true,
-    );
+    //---------------------------------------------------------
+    // Generate output files.
 
-    config.colorspaces.push(ColorSpace {
-        name: "Non-Color".into(),
-        description: "Color space used for images which contains non-color data (i,e, normal maps)"
-            .into(),
-        family: "raw".into(),
-        bitdepth: Some(BitDepth::F32),
-        isdata: Some(true),
-        ..ColorSpace::default()
-    });
+    config.output_files.extend([
+        (
+            "luts/srgb_to_linear.spi1d".into(),
+            OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(
+                65561,
+                -0.125,
+                4.875,
+                colorbox::transfer_functions::srgb::to_linear,
+            )),
+        ),
+        (
+            "luts/pq_norm_to_linear.spi1d".into(),
+            OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(4096, 0.0, 1.0, |n| {
+                colorbox::transfer_functions::rec2100_pq::to_linear(n)
+                    / colorbox::transfer_functions::rec2100_pq::LUMINANCE_MAX
+            })),
+        ),
+        (
+            "luts/hlg_to_linear.spi1d".into(),
+            OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(
+                4096,
+                0.0,
+                1.0,
+                colorbox::transfer_functions::rec2100_hlg::to_linear,
+            )),
+        ),
+    ]);
 
     config
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn make_minimal_test() {
-//         make_minimal();
-//     }
-// }

@@ -12,9 +12,8 @@ use colorbox::{
 };
 
 const GAMUT_DIR: &str = "gamut_handling";
-const INPUT_GAMUT_CLIP_LUT_FILENAME: &str = "rgb_input_gamut_clip.cube";
-const OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME: &str = "rgb_output_gamut_clip_step_1.cube";
-const OUTPUT_GAMUT_CLIP_LUT_STEP_2_FILENAME: &str = "rgb_output_gamut_clip_step_2.cube";
+pub const INPUT_GAMUT_CLIP_LUT_FILENAME: &str = "rgb_input_gamut_clip.cube";
+pub const OUTPUT_GAMUT_CLIP_LUT_FILENAME: &str = "rgb_output_gamut_clip.cube";
 
 #[derive(Debug, Clone)]
 pub struct OCIOConfig {
@@ -517,7 +516,9 @@ impl OCIOConfig {
         self.generate_gamut_clipping_luts();
 
         // Build transforms.
-        let mut transforms = vec![Transform::MatrixTransform(matrix::to_4x4_f32(
+        let mut transforms = Vec::new();
+
+        transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
             matrix_compose!(
                 matrix::rgb_to_xyz_matrix(self.reference_space_chroma),
                 matrix::xyz_chromatic_adaptation_matrix(
@@ -527,18 +528,14 @@ impl OCIOConfig {
                 ),
                 matrix::xyz_to_rgb_matrix(chromaticities),
             ),
-        ))];
+        )));
+
         if use_gamut_clipping {
             self.generate_gamut_clipping_luts();
             transforms.extend([
                 Transform::ToHSV,
                 Transform::FileTransform {
-                    src: OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME.into(),
-                    interpolation: Interpolation::Linear,
-                    direction_inverse: false,
-                },
-                Transform::FileTransform {
-                    src: OUTPUT_GAMUT_CLIP_LUT_STEP_2_FILENAME.into(),
+                    src: OUTPUT_GAMUT_CLIP_LUT_FILENAME.into(),
                     interpolation: Interpolation::Linear,
                     direction_inverse: false,
                 },
@@ -563,84 +560,54 @@ impl OCIOConfig {
     /// they haven't been already.
     pub fn generate_gamut_clipping_luts(&mut self) {
         // We use these luminance weights regardless of actual gamut
-        // because in practice they work plenty well, and this way we
-        // can re-use the same luts for all gamuts.
-        let luminance_weights = [3.0 / 12.0, 8.0 / 12.0, 1.0 / 12.0];
+        // because in practice they work plenty well, they're only
+        // used for out-of-gamut colors, and this way we can re-use
+        // the same luts for all gamuts.
+        let input_luminance_weights = [3.0 / 13.0, 9.0 / 13.0, 1.0 / 13.0];
+        let output_luminance_weights = [2.0 / 12.0, 8.0 / 12.0, 2.0 / 12.0];
 
         self.search_path.insert(GAMUT_DIR.into());
 
+        let res = 3 * 4;
+        let upper = (3 * (1i64 << 32)) as f32;
+        let _lower = -upper;
         self.output_files
             .entry(Path::new(GAMUT_DIR).join::<PathBuf>(INPUT_GAMUT_CLIP_LUT_FILENAME.into()))
             .or_insert_with(|| {
                 OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
-                    12 * 6 + 1,
-                    (0.0, 1_000_000_000_000.0),
+                    res + 1,
+                    (0.0, upper),
+                    1.5,
                     |rgb| {
                         let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
                             [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
                             None,
                             true,
-                            luminance_weights,
+                            input_luminance_weights,
+                            0.0,
                         );
                         (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
                     },
                 ))
             });
 
+        let res = 3 * 20;
+        let upper = 12;
+        assert_eq!(res % upper, 0);
         self.output_files
-            .entry(
-                Path::new(GAMUT_DIR).join::<PathBuf>(OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME.into()),
-            )
+            .entry(Path::new(GAMUT_DIR).join::<PathBuf>(OUTPUT_GAMUT_CLIP_LUT_FILENAME.into()))
             .or_insert_with(|| {
                 OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
-                    12 * 6 + 1,
-                    (0.0, 24.0),
-                    |rgb| {
-                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
-                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
-                            None,
-                            true,
-                            luminance_weights,
-                        );
-                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
-                    },
-                ))
-            });
-
-        self.output_files
-            .entry(
-                Path::new(GAMUT_DIR).join::<PathBuf>(OUTPUT_GAMUT_CLIP_LUT_STEP_1_FILENAME.into()),
-            )
-            .or_insert_with(|| {
-                OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
-                    12 * 6 + 1,
-                    (0.0, 24.0),
-                    |rgb| {
-                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
-                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
-                            None,
-                            true,
-                            luminance_weights,
-                        );
-                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
-                    },
-                ))
-            });
-
-        self.output_files
-            .entry(
-                Path::new(GAMUT_DIR).join::<PathBuf>(OUTPUT_GAMUT_CLIP_LUT_STEP_2_FILENAME.into()),
-            )
-            .or_insert_with(|| {
-                OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
-                    12 * 6 + 1,
-                    (0.0, 12.0),
+                    res + 1,
+                    (0.0, upper as f32),
+                    1.5,
                     |rgb| {
                         let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
                             [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
                             Some(1.0),
                             true,
-                            luminance_weights,
+                            output_luminance_weights,
+                            0.5,
                         );
                         (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
                     },
@@ -770,9 +737,23 @@ pub enum Transform {
         dst: String,
     },
     MatrixTransform([f32; 16]),
+    BuiltinTransform {
+        name: String,
+        direction_inverse: bool,
+    },
     AllocationTransform {
         allocation: Allocation,
         vars: Vec<f64>,
+        direction_inverse: bool,
+    },
+    /// Maps `range_in` to `range_out`, and clamps both the low and high end.
+    RangeTransform {
+        range_in: (f64, f64),
+        range_out: (f64, f64),
+        clamp: bool,
+    },
+    ExponentTransform {
+        gamma: f64,
         direction_inverse: bool,
     },
     ExponentWithLinearTransform {
@@ -802,6 +783,14 @@ impl Transform {
 
             MatrixTransform(_) => todo!(),
 
+            BuiltinTransform {
+                name,
+                direction_inverse,
+            } => BuiltinTransform {
+                name: name,
+                direction_inverse: !direction_inverse,
+            },
+
             AllocationTransform {
                 allocation,
                 vars,
@@ -809,6 +798,22 @@ impl Transform {
             } => AllocationTransform {
                 allocation: allocation,
                 vars: vars,
+                direction_inverse: !direction_inverse,
+            },
+            RangeTransform {
+                range_in,
+                range_out,
+                clamp,
+            } => RangeTransform {
+                range_in: range_out,
+                range_out: range_in,
+                clamp: clamp,
+            },
+            ExponentTransform {
+                gamma,
+                direction_inverse,
+            } => ExponentTransform {
+                gamma: gamma,
                 direction_inverse: !direction_inverse,
             },
 
@@ -866,6 +871,20 @@ pub fn write_transform_yaml<W: std::io::Write>(
             }
             format!("!<MatrixTransform> {{ matrix: [{}] }}", matrix_string)
         }
+        &Transform::BuiltinTransform {
+            ref name,
+            direction_inverse,
+        } => {
+            format!(
+                "!<BuiltinTransform> {{ style: {}{} }}",
+                name,
+                if direction_inverse {
+                    ", direction: inverse"
+                } else {
+                    ""
+                },
+            )
+        }
         &Transform::AllocationTransform {
             allocation,
             ref vars,
@@ -889,13 +908,41 @@ pub fn write_transform_yaml<W: std::io::Write>(
                 },
             )
         }
+        &Transform::RangeTransform {
+            range_in,
+            range_out,
+            clamp,
+        } => {
+            format!(
+                "!<RangeTransform> {{ min_in_value: {}, max_in_value: {}, min_out_value: {}, max_out_value: {}, style: {} }}",
+                range_in.0,
+                range_in.1,
+                range_out.0,
+                range_out.1,
+                if clamp { "clamp" } else { "noClamp" },
+            )
+        }
+        &Transform::ExponentTransform {
+            gamma,
+            direction_inverse,
+        } => {
+            format!(
+                "!<ExponentTransform> {{ value: [{0}, {0}, {0}, 1.0]{1} }}",
+                gamma,
+                if direction_inverse {
+                    ", direction: inverse"
+                } else {
+                    ""
+                },
+            )
+        }
         &Transform::ExponentWithLinearTransform {
             gamma,
             offset,
             direction_inverse,
         } => {
             format!(
-                "!<ExponentWithLinearTransform> {{ gamma: {}, offset: {}{} }}",
+                "!<ExponentWithLinearTransform> {{ gamma: [{0}, {0}, {0}, 1.0], offset: [{1}, {1}, {1}, 0.0], style: linear{2} }}",
                 gamma,
                 offset,
                 if direction_inverse {
