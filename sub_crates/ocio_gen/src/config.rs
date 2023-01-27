@@ -608,7 +608,7 @@ impl OCIOConfig {
                     (0.0, upper),
                     1.5,
                     |rgb| {
-                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
+                        let rgb2 = crate::gamut_map::rgb_clip(
                             [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
                             None,
                             true,
@@ -631,7 +631,7 @@ impl OCIOConfig {
                     (0.0, upper as f32),
                     1.5,
                     |rgb| {
-                        let rgb2 = colorbox::transforms::gamut_clip::rgb_clip(
+                        let rgb2 = crate::gamut_map::rgb_clip(
                             [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
                             Some(1.0),
                             true,
