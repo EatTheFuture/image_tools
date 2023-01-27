@@ -173,7 +173,7 @@ impl OCIOConfig {
         }
 
         // Header.
-        file.write_all(b"ocio_profile_version: 2\n\n")?;
+        file.write_all(b"ocio_profile_version: 2.1\n\n")?;
         if let Some(name) = &self.name {
             file.write_all(format!("name: {}\n", name).as_bytes())?;
         }
@@ -510,6 +510,7 @@ impl OCIOConfig {
         description: Option<String>,
         chromaticities: Chromaticities,
         whitepoint_adaptation_method: AdaptationMethod,
+        tonemap_transforms: Vec<Transform>,
         from_linear_transform: Transform,
         use_gamut_clipping: bool,
     ) {
@@ -530,6 +531,33 @@ impl OCIOConfig {
             ),
         )));
 
+        // HACK: abuse HSV coordinates to clip saturation to be in-gamut.
+        // TODO: unfortunately, this distorts the luminance of out-of-gamut
+        // colors.  Replace this with a 3D LUT transform that does proper
+        // gamut clipping once issue #1763 is fixed in OCIO and released.
+        if use_gamut_clipping {
+            let scale = (1 << 24) as f64;
+            transforms.extend([
+                Transform::ToHSV,
+                Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+                    1.0,
+                    1.0,
+                    1.0 / scale,
+                ]))),
+                Transform::RangeTransform {
+                    range_in: (0.0, 1.0),
+                    range_out: (0.0, 1.0),
+                    clamp: true,
+                },
+                Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+                    1.0, 0.999, scale,
+                ]))),
+                Transform::FromHSV,
+            ])
+        }
+
+        transforms.extend(tonemap_transforms);
+
         if use_gamut_clipping {
             self.generate_gamut_clipping_luts();
             transforms.extend([
@@ -542,6 +570,7 @@ impl OCIOConfig {
                 Transform::FromHSV,
             ]);
         }
+
         transforms.push(from_linear_transform);
 
         // Add the colorspace.
@@ -763,6 +792,18 @@ pub enum Transform {
     },
     ToHSV,
     FromHSV,
+    ACESGamutMapTransform {
+        /// Effectively the "saturation" threshhold at which the mapping kicks in.
+        threshhold: [f32; 3],
+
+        /// Effectively the "saturation" that gets mapped back to 1.0 saturation.
+        limit: [f32; 3],
+
+        /// How sharp the curve is that does the mapping.
+        power: f32,
+
+        direction_inverse: bool,
+    },
 }
 
 impl Transform {
@@ -829,6 +870,17 @@ impl Transform {
 
             ToHSV => FromHSV,
             FromHSV => ToHSV,
+            ACESGamutMapTransform {
+                threshhold,
+                limit,
+                power,
+                direction_inverse,
+            } => ACESGamutMapTransform {
+                threshhold: threshhold,
+                limit: limit,
+                power: power,
+                direction_inverse: !direction_inverse,
+            },
         }
     }
 }
@@ -955,6 +1007,29 @@ pub fn write_transform_yaml<W: std::io::Write>(
         &Transform::ToHSV => "!<FixedFunctionTransform> { style: RGB_TO_HSV }".into(),
         &Transform::FromHSV => {
             "!<FixedFunctionTransform> { style: RGB_TO_HSV, direction: inverse }".into()
+        }
+
+        &Transform::ACESGamutMapTransform {
+            threshhold,
+            limit,
+            power,
+            direction_inverse,
+        } => {
+            format!(
+                "!<FixedFunctionTransform> {{ style: ACES_GamutComp13, params: [{}, {}, {}, {}, {}, {}, {}]{} }}",
+                limit[0],
+                limit[0],
+                limit[0],
+                threshhold[0],
+                threshhold[0],
+                threshhold[0],
+                power,
+                if direction_inverse {
+                    ", direction: inverse"
+                } else {
+                    ""
+                },
+            )
         }
     };
 
