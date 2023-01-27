@@ -2,8 +2,9 @@ pub mod blender_config;
 pub mod config;
 pub mod minimal_config;
 
-mod hsv_lut;
 mod gamut_map;
+mod hsv_lut;
+mod tone_map;
 
 /// Helper function to decompress in-memory xz-compressed data.
 fn decompress_xz(data: &[u8]) -> Vec<u8> {

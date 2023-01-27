@@ -10,7 +10,6 @@
 /// the maximum value each RGB channel can be in the output, and colors
 /// will be clipped to that as well.  This is typically useful for
 /// processing output colors (e.g. for display).
-
 use colorbox::transforms::rgb_gamut_intersect;
 
 /// A simple but reasonably robust approach that clips in RGB space.
