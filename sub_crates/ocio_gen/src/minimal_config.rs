@@ -389,6 +389,8 @@ pub fn make_minimal(
     // Generate output files.
 
     config.output_files.extend([
+        //---------------------------
+        // Transfer function curves.
         (
             "luts/srgb_to_linear.spi1d".into(),
             OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(
@@ -414,40 +416,40 @@ pub fn make_minimal(
                 colorbox::transfer_functions::rec2100_hlg::to_linear,
             )),
         ),
+        //----------------------
+        // Tone mapping curves.
         ("luts/omkr__tonemap_curve_normal.spi1d".into(), {
-            let fixed_point = 0.18;
-            let stops_range = [-16.0_f64, 8.0];
-            let upper = fixed_point * stops_range[1].exp2();
+            let fixed_point = 0.18_f64; // 18% gray.
+            let upper = (fixed_point.log2() + 8.0).exp2();
             OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(
                 1 << 16,
                 0.0,
                 upper as f32,
-                |n| filmic_curve(n as f64, fixed_point, stops_range, 0.2, 0.0) as f32,
+                |n| filmic_curve(n as f64, fixed_point, upper, 1.3, 1.0) as f32,
             ))
         }),
         ("luts/omkr__tonemap_curve_normal_inv.spi1d".into(), {
-            let fixed_point = 0.18;
-            let stops_range = [-16.0_f64, 8.0];
+            let fixed_point = 0.18_f64;
+            let upper = (fixed_point.log2() + 8.0).exp2();
             OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(1 << 14, 0.0, 1.0, |n| {
-                filmic_curve_inv(n as f64, fixed_point, stops_range, 0.2, 0.0) as f32
+                filmic_curve_inv(n as f64, fixed_point, upper, 1.3, 1.0) as f32
             }))
         }),
         ("luts/omkr__tonemap_curve_contrast.spi1d".into(), {
-            let fixed_point = 0.18;
-            let stops_range = [-16.0_f64, 6.0];
-            let upper = fixed_point * stops_range[1].exp2();
+            let fixed_point = 0.18_f64; // 18% gray.
+            let upper = (fixed_point.log2() + 8.0).exp2();
             OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(
                 1 << 16,
                 0.0,
                 upper as f32,
-                |n| filmic_curve(n as f64, fixed_point, stops_range, 0.05, 0.0) as f32,
+                |n| filmic_curve(n as f64, fixed_point, upper, 1.5, 1.5) as f32,
             ))
         }),
         ("luts/omkr__tonemap_curve_contrast_inv.spi1d".into(), {
-            let fixed_point = 0.18;
-            let stops_range = [-16.0_f64, 6.0];
+            let fixed_point = 0.18_f64;
+            let upper = (fixed_point.log2() + 8.0).exp2();
             OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(1 << 14, 0.0, 1.0, |n| {
-                filmic_curve_inv(n as f64, fixed_point, stops_range, 0.05, 0.0) as f32
+                filmic_curve_inv(n as f64, fixed_point, upper, 1.5, 1.5) as f32
             }))
         }),
     ]);
