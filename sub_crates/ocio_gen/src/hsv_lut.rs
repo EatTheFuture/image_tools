@@ -1,6 +1,7 @@
 use colorbox::lut::Lut3D;
 
-/// Note: `convert` should take and produce *RGB values*, not HSV.
+/// Note: `convert` receives and should produce HSV values according
+/// to the OCIO implementation.
 pub fn make_hsv_lut<F>(res: usize, val_range: (f32, f32), max_sat: f32, convert: F) -> Lut3D
 where
     F: Fn((f32, f32, f32)) -> (f32, f32, f32),
@@ -25,15 +26,15 @@ where
 
                         // Compute the mapping.
                         let hsv_in = (hue, sat, val);
-                        let mut hsv_out = to_hsv(convert(from_hsv(hsv_in)));
+                        let mut hsv_out = convert(hsv_in);
 
                         // Make sure that hue doesn't wrap around the long way.
                         // Note: this assumes a relatively sane mapping, where
                         // e.g. blues aren't mapped to yellows.
-                        let hue_delta = hsv_out.0 - hsv_in.0;
-                        if hue_delta > 0.5 {
+                        while (hsv_out.0 - hsv_in.0) > 0.5 {
                             hsv_out.0 -= 1.0;
-                        } else if hue_delta <= -0.5 {
+                        }
+                        while (hsv_out.0 - hsv_in.0) <= -0.5 {
                             hsv_out.0 += 1.0;
                         }
 
@@ -113,106 +114,13 @@ where
 }
 
 /// OCIO-compatible RGB -> HSV conversion.
-fn to_hsv(rgb: (f32, f32, f32)) -> (f32, f32, f32) {
-    let (red, grn, blu) = rgb;
-
-    let rgb_min = red.min(grn.min(blu));
-    let rgb_max = red.max(grn.max(blu));
-    let delta = rgb_max - rgb_min;
-
-    let mut val = rgb_max;
-    let mut sat = 0.0f32;
-    let mut hue = 0.0f32;
-
-    if delta != 0.0 {
-        // Sat
-        if rgb_max != 0.0 {
-            sat = delta / rgb_max;
-        }
-
-        // Hue
-        if red == rgb_max {
-            hue = (grn - blu) / delta;
-        } else if grn == rgb_max {
-            hue = 2.0 + (blu - red) / delta;
-        } else {
-            hue = 4.0 + (red - grn) / delta;
-        }
-
-        if hue < 0.0 {
-            hue += 6.0;
-        }
-
-        hue *= 1.0 / 6.0;
-    }
-
-    // Handle extended range inputs.
-    if rgb_min < 0.0 {
-        val += rgb_min;
-    }
-
-    if -rgb_min > rgb_max {
-        sat = (rgb_max - rgb_min) / -rgb_min;
-    }
-
-    (hue, sat, val)
+pub fn to_hsv(rgb: (f32, f32, f32)) -> (f32, f32, f32) {
+    let hsv = colorbox::transforms::ocio::rgb_to_hsv([rgb.0 as f64, rgb.1 as f64, rgb.2 as f64]);
+    (hsv[0] as f32, hsv[1] as f32, hsv[2] as f32)
 }
 
 /// OCIO-compatible HSV -> RGB conversion.
-fn from_hsv(hsv: (f32, f32, f32)) -> (f32, f32, f32) {
-    const MAX_SAT: f32 = 1.999;
-
-    let hue = (hsv.0 - hsv.0.floor()) * 6.0;
-    let sat = hsv.1.clamp(0.0, MAX_SAT);
-    let val = hsv.2;
-
-    let red = ((hue - 3.0).abs() - 1.0).clamp(0.0, 1.0);
-    let grn = (2.0 - (hue - 2.0).abs()).clamp(0.0, 1.0);
-    let blu = (2.0 - (hue - 4.0).abs()).clamp(0.0, 1.0);
-
-    let mut rgb_max = val;
-    let mut rgb_min = val * (1.0 - sat);
-
-    // Handle extended range inputs.
-    if sat > 1.0 {
-        rgb_min = val * (1.0 - sat) / (2.0 - sat);
-        rgb_max = val - rgb_min;
-    }
-    if val < 0.0 {
-        rgb_min = val / (2.0 - sat);
-        rgb_max = val - rgb_min;
-    }
-
-    let delta = rgb_max - rgb_min;
-
-    (
-        red * delta + rgb_min,
-        grn * delta + rgb_min,
-        blu * delta + rgb_min,
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const RGB_COLORS: &[(f32, f32, f32)] = &[
-        (0.0, 0.0, 0.0),
-        (0.01, 0.6, 0.2),
-        (0.01, 0.6, -0.2),
-        (0.01, 0.6, -20.0),
-        (0.01, -0.6, 0.2),
-        (-0.01, 0.6, 0.2),
-        (-0.01, -0.6, -0.2),
-    ];
-
-    #[test]
-    fn hsv_round_trip() {
-        for rgb in RGB_COLORS.iter().copied() {
-            let rgb2 = from_hsv(to_hsv(rgb));
-            assert!((rgb.0 - rgb2.0).abs() < 0.00001);
-            assert!((rgb.1 - rgb2.1).abs() < 0.00001);
-            assert!((rgb.2 - rgb2.2).abs() < 0.00001);
-        }
-    }
+pub fn from_hsv(hsv: (f32, f32, f32)) -> (f32, f32, f32) {
+    let rgb = colorbox::transforms::ocio::hsv_to_rgb([hsv.0 as f64, hsv.1 as f64, hsv.2 as f64]);
+    (rgb[0] as f32, rgb[1] as f32, rgb[2] as f32)
 }

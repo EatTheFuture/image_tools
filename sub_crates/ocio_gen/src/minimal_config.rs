@@ -157,17 +157,16 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        vec![Transform::FileTransform {
-            src: "omkr__tonemap_curve_normal_inv.spi1d".into(),
-            interpolation: Interpolation::Linear,
-            direction_inverse: true,
-        }],
+        FilmicCurve::tone_map_transforms(
+            "omkr__tonemap_curve_normal_inv.spi1d",
+            "omkr__tonemap_chroma_normal.cube",
+        ),
         Transform::ExponentWithLinearTransform {
             gamma: 2.4,
             offset: 0.055,
             direction_inverse: true,
         },
-        true,
+        false,
     );
 
     config.add_display_colorspace(
@@ -175,11 +174,10 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        vec![Transform::FileTransform {
-            src: "omkr__tonemap_curve_contrast_inv.spi1d".into(),
-            interpolation: Interpolation::Linear,
-            direction_inverse: true,
-        }],
+        FilmicCurve::tone_map_transforms(
+            "omkr__tonemap_curve_contrast_inv.spi1d",
+            "omkr__tonemap_chroma_contrast.cube",
+        ),
         Transform::ExponentWithLinearTransform {
             gamma: 2.4,
             offset: 0.055,
@@ -282,10 +280,7 @@ pub fn make_minimal(
         chroma::DCI_P3,
         whitepoint_adaptation_method,
         vec![],
-        Transform::ExponentTransform {
-            gamma: 2.6,
-            direction_inverse: true,
-        },
+        Transform::ExponentTransform(2.6).invert(),
         true,
     );
 
@@ -385,6 +380,7 @@ pub fn make_minimal(
     //---------------------------------------------------------
     // Generate output files.
 
+    // Transfer function curves.
     config.output_files.extend([
         //---------------------------
         // Transfer function curves.
@@ -413,43 +409,34 @@ pub fn make_minimal(
                 colorbox::transfer_functions::rec2100_hlg::to_linear,
             )),
         ),
-        //----------------------
-        // Tone mapping curves.
-        ("luts/omkr__tonemap_curve_normal.spi1d".into(), {
-            let upper = 6.0_f64.exp2();
-            let curve = FilmicCurve::new(0.18, upper, 0.5, -0.2);
-            OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(
-                1 << 16,
-                0.0,
-                upper as f32,
-                |n| curve.eval(n as f64) as f32,
-            ))
-        }),
-        ("luts/omkr__tonemap_curve_normal_inv.spi1d".into(), {
-            let upper = 6.0_f64.exp2();
-            let curve = FilmicCurve::new(0.18, upper, 0.5, -0.2);
-            OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(1 << 14, 0.0, 1.0, |n| {
-                curve.eval_inv(n as f64) as f32
-            }))
-        }),
-        ("luts/omkr__tonemap_curve_contrast.spi1d".into(), {
-            let upper = 6.0_f64.exp2();
-            let curve = FilmicCurve::new(0.18, upper, 0.5, 0.2);
-            OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(
-                1 << 16,
-                0.0,
-                upper as f32,
-                |n| curve.eval(n as f64) as f32,
-            ))
-        }),
-        ("luts/omkr__tonemap_curve_contrast_inv.spi1d".into(), {
-            let upper = 6.0_f64.exp2();
-            let curve = FilmicCurve::new(0.18, upper, 0.5, 0.2);
-            OutputFile::Lut1D(colorbox::lut::Lut1D::from_fn_1(1 << 14, 0.0, 1.0, |n| {
-                curve.eval_inv(n as f64) as f32
-            }))
-        }),
     ]);
+
+    // Tone mapping LUTs.
+    {
+        let upper = 6.0_f64.exp2();
+        let (tone_1d_normal, tone_3d_normal) =
+            FilmicCurve::new(0.18, upper, 0.5, -0.2).generate_luts(1 << 14, 37);
+        let (tone_1d_contrast, tone_3d_contrast) =
+            FilmicCurve::new(0.18, upper, 0.5, 0.2).generate_luts(1 << 14, 37);
+        config.output_files.extend([
+            (
+                "luts/omkr__tonemap_curve_normal_inv.spi1d".into(),
+                OutputFile::Lut1D(tone_1d_normal),
+            ),
+            (
+                "luts/omkr__tonemap_chroma_normal.cube".into(),
+                OutputFile::Lut3D(tone_3d_normal),
+            ),
+            (
+                "luts/omkr__tonemap_curve_contrast_inv.spi1d".into(),
+                OutputFile::Lut1D(tone_1d_contrast),
+            ),
+            (
+                "luts/omkr__tonemap_chroma_contrast.cube".into(),
+                OutputFile::Lut3D(tone_3d_contrast),
+            ),
+        ]);
+    }
 
     config
 }

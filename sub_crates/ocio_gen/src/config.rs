@@ -531,17 +531,23 @@ impl OCIOConfig {
             ),
         )));
 
-        // HACK: abuse HSV coordinates to clip saturation to be in-gamut.
-        // TODO: unfortunately, this distorts the luminance of out-of-gamut
-        // colors.  Replace this with a 3D LUT transform that does proper
-        // gamut clipping once issue #1763 is fixed in OCIO and released.
+        transforms.extend(tonemap_transforms);
+
         if use_gamut_clipping {
+            self.generate_gamut_clipping_luts();
             let scale = (1 << 24) as f64;
             transforms.extend([
                 Transform::ToHSV,
+                // HDR gamut clipping.
+                // HACK: abuse HSV coordinates to clip saturation to be
+                // within the gamut that the gamut clipping LUT can handle.
+                // TODO: unfortunately, this distorts the luminance of
+                // those clipped colors.  Replace this with a 3D LUT
+                // transform that does proper HDR gamut clipping once
+                // issue #1763 is fixed in OCIO and released.
                 Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
                     1.0,
-                    1.0,
+                    1.0 / 1.5,
                     1.0 / scale,
                 ]))),
                 Transform::RangeTransform {
@@ -550,18 +556,9 @@ impl OCIOConfig {
                     clamp: true,
                 },
                 Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
-                    1.0, 0.999, scale,
+                    1.0, 1.5, scale,
                 ]))),
-                Transform::FromHSV,
-            ])
-        }
-
-        transforms.extend(tonemap_transforms);
-
-        if use_gamut_clipping {
-            self.generate_gamut_clipping_luts();
-            transforms.extend([
-                Transform::ToHSV,
+                // LDR gamut clipping.
                 Transform::FileTransform {
                     src: OUTPUT_GAMUT_CLIP_LUT_FILENAME.into(),
                     interpolation: Interpolation::Linear,
@@ -588,6 +585,8 @@ impl OCIOConfig {
     /// Creates and adds the default gamut clipping luts, if
     /// they haven't been already.
     pub fn generate_gamut_clipping_luts(&mut self) {
+        use colorbox::transforms::ocio::{hsv_to_rgb, rgb_to_hsv};
+
         // We use these luminance weights regardless of actual gamut
         // because in practice they work plenty well, they're only
         // used for out-of-gamut colors, and this way we can re-use
@@ -607,15 +606,17 @@ impl OCIOConfig {
                     res + 1,
                     (0.0, upper),
                     1.5,
-                    |rgb| {
+                    |(h, s, v)| {
+                        let rgb = hsv_to_rgb([h as f64, s as f64, v as f64]);
                         let rgb2 = crate::gamut_map::rgb_clip(
-                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
+                            rgb,
                             None,
                             true,
                             input_luminance_weights,
                             0.0,
                         );
-                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
+                        let hsv2 = rgb_to_hsv(rgb2);
+                        (hsv2[0] as f32, hsv2[1] as f32, hsv2[2] as f32)
                     },
                 ))
             });
@@ -630,15 +631,17 @@ impl OCIOConfig {
                     res + 1,
                     (0.0, upper as f32),
                     1.5,
-                    |rgb| {
+                    |(h, s, v)| {
+                        let rgb = hsv_to_rgb([h as f64, s as f64, v as f64]);
                         let rgb2 = crate::gamut_map::rgb_clip(
-                            [rgb.0 as f64, rgb.1 as f64, rgb.2 as f64],
+                            rgb,
                             Some(1.0),
                             true,
                             output_luminance_weights,
                             0.5,
                         );
-                        (rgb2[0] as f32, rgb2[1] as f32, rgb2[2] as f32)
+                        let hsv2 = rgb_to_hsv(rgb2);
+                        (hsv2[0] as f32, hsv2[1] as f32, hsv2[2] as f32)
                     },
                 ))
             });
@@ -781,10 +784,7 @@ pub enum Transform {
         range_out: (f64, f64),
         clamp: bool,
     },
-    ExponentTransform {
-        gamma: f64,
-        direction_inverse: bool,
-    },
+    ExponentTransform(f64),
     ExponentWithLinearTransform {
         gamma: f64,
         offset: f64,
@@ -850,13 +850,7 @@ impl Transform {
                 range_out: range_in,
                 clamp: clamp,
             },
-            ExponentTransform {
-                gamma,
-                direction_inverse,
-            } => ExponentTransform {
-                gamma: gamma,
-                direction_inverse: !direction_inverse,
-            },
+            ExponentTransform(e) => ExponentTransform(1.0 / e),
 
             ExponentWithLinearTransform {
                 gamma,
@@ -919,7 +913,7 @@ pub fn write_transform_yaml<W: std::io::Write>(
                 if i != 0 {
                     matrix_string.push_str(", ");
                 }
-                matrix_string.push_str(&format!("{:.7}", n));
+                matrix_string.push_str(&format!("{}", n));
             }
             format!("!<MatrixTransform> {{ matrix: [{}] }}", matrix_string)
         }
@@ -974,19 +968,8 @@ pub fn write_transform_yaml<W: std::io::Write>(
                 if clamp { "clamp" } else { "noClamp" },
             )
         }
-        &Transform::ExponentTransform {
-            gamma,
-            direction_inverse,
-        } => {
-            format!(
-                "!<ExponentTransform> {{ value: [{0}, {0}, {0}, 1.0]{1} }}",
-                gamma,
-                if direction_inverse {
-                    ", direction: inverse"
-                } else {
-                    ""
-                },
-            )
+        &Transform::ExponentTransform(e) => {
+            format!("!<ExponentTransform> {{ value: [{0}, {0}, {0}, 1.0] }}", e,)
         }
         &Transform::ExponentWithLinearTransform {
             gamma,
