@@ -65,20 +65,33 @@ pub fn rgb_clip(
 
     // Clip with channel maximum if one is specified.
     if let Some(channel_max) = channel_max {
+        // Scale for the channel max.
+        let rgb = [
+            rgb[0] / channel_max,
+            rgb[1] / channel_max,
+            rgb[2] / channel_max,
+        ];
+        let l = l / channel_max;
+
         // Luminance rolloff for still out-of-gamut colors.
         let l = {
-            let n = l / channel_max;
             let a = rolloff + 1.0;
-            let n2 = 1.0 - (1.0 - (n.min(a) / a)).powf(a);
-            n2 * channel_max
+            1.0 - (1.0 - (l.min(a) / a)).powf(a)
         };
 
         // Early out for over-luminant colors.
-        if l > channel_max {
+        if l > 1.0 {
             return [channel_max; 3];
         }
 
-        rgb_gamut_intersect(rgb, [l; 3], true, true)
+        let rgb = rgb_gamut_intersect(rgb, [l; 3], true, true);
+
+        // Scale for the channel max.
+        [
+            rgb[0] * channel_max,
+            rgb[1] * channel_max,
+            rgb[2] * channel_max,
+        ]
     } else {
         rgb
     }

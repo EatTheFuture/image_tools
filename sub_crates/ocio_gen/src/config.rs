@@ -597,7 +597,7 @@ impl OCIOConfig {
         self.search_path.insert(GAMUT_DIR.into());
 
         let res = 3 * 4;
-        let upper = (3 * (1i64 << 32)) as f32;
+        let upper = (3 * (1i64 << 32)) as f64;
         let _lower = -upper;
         self.output_files
             .entry(Path::new(GAMUT_DIR).join::<PathBuf>(INPUT_GAMUT_CLIP_LUT_FILENAME.into()))
@@ -607,7 +607,7 @@ impl OCIOConfig {
                     (0.0, upper),
                     1.5,
                     |(h, s, v)| {
-                        let rgb = hsv_to_rgb([h as f64, s as f64, v as f64]);
+                        let rgb = hsv_to_rgb([h, s, v]);
                         let rgb2 = crate::gamut_map::rgb_clip(
                             rgb,
                             None,
@@ -616,7 +616,7 @@ impl OCIOConfig {
                             0.0,
                         );
                         let hsv2 = rgb_to_hsv(rgb2);
-                        (hsv2[0] as f32, hsv2[1] as f32, hsv2[2] as f32)
+                        (hsv2[0], hsv2[1], hsv2[2])
                     },
                 ))
             });
@@ -629,10 +629,10 @@ impl OCIOConfig {
             .or_insert_with(|| {
                 OutputFile::Lut3D(crate::hsv_lut::make_hsv_lut(
                     res + 1,
-                    (0.0, upper as f32),
+                    (0.0, upper as f64),
                     1.5,
                     |(h, s, v)| {
-                        let rgb = hsv_to_rgb([h as f64, s as f64, v as f64]);
+                        let rgb = hsv_to_rgb([h, s, v]);
                         let rgb2 = crate::gamut_map::rgb_clip(
                             rgb,
                             Some(1.0),
@@ -641,7 +641,7 @@ impl OCIOConfig {
                             0.5,
                         );
                         let hsv2 = rgb_to_hsv(rgb2);
-                        (hsv2[0] as f32, hsv2[1] as f32, hsv2[2] as f32)
+                        (hsv2[0], hsv2[1], hsv2[2])
                     },
                 ))
             });
@@ -784,7 +784,7 @@ pub enum Transform {
         range_out: (f64, f64),
         clamp: bool,
     },
-    ExponentTransform(f64),
+    ExponentTransform(f64, f64, f64, f64), // Separate exponents for r, g, b, and a.
     ExponentWithLinearTransform {
         gamma: f64,
         offset: f64,
@@ -850,8 +850,7 @@ impl Transform {
                 range_out: range_in,
                 clamp: clamp,
             },
-            ExponentTransform(e) => ExponentTransform(1.0 / e),
-
+            ExponentTransform(r, g, b, a) => ExponentTransform(1.0 / r, 1.0 / g, 1.0 / b, 1.0 / a),
             ExponentWithLinearTransform {
                 gamma,
                 offset,
@@ -968,8 +967,11 @@ pub fn write_transform_yaml<W: std::io::Write>(
                 if clamp { "clamp" } else { "noClamp" },
             )
         }
-        &Transform::ExponentTransform(e) => {
-            format!("!<ExponentTransform> {{ value: [{0}, {0}, {0}, 1.0] }}", e,)
+        &Transform::ExponentTransform(r, g, b, a) => {
+            format!(
+                "!<ExponentTransform> {{ value: [{}, {}, {}, {}] }}",
+                r, g, b, a,
+            )
         }
         &Transform::ExponentWithLinearTransform {
             gamma,
@@ -1146,6 +1148,118 @@ fn gamut_is_within_gamut(g1: Chromaticities, g2: Chromaticities) -> bool {
         && point_in_triangle(g1.g, g2.r, g2.g, g2.b)
         && point_in_triangle(g1.b, g2.r, g2.g, g2.b)
         && point_in_triangle(g1.w, g2.r, g2.g, g2.b)
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct ExponentLUTMapper {
+    to_linear_exp: f64,
+    one_point: f64,
+    lut_points: usize,
+    channels: [bool; 3],
+}
+
+impl ExponentLUTMapper {
+    /// - `to_linear_exp`: the exponent to use for mapping, in the
+    ///   to-linear direction.
+    /// - `lut_points`: the number of sample points the lut has.
+    /// - `one_point`: the sample point that 1.0 should map to.  This can
+    ///   be fractionally in between points.
+    /// - `channels`: which channels the mapping is used for (the rest
+    ///   are left alone).
+    pub fn new(to_linear_exp: f64, lut_points: usize, one_point: f64, channels: [bool; 3]) -> Self {
+        Self {
+            to_linear_exp: to_linear_exp,
+            one_point: one_point,
+            lut_points: lut_points,
+            channels: channels,
+        }
+    }
+
+    /// The upper bound of the lut range (in lut space).
+    pub fn lut_max(&self) -> f64 {
+        (self.lut_points - 1) as f64
+    }
+
+    /// The max linear value in the resulting lut.
+    pub fn linear_max(&self) -> f64 {
+        (self.lut_max() / self.one_point).powf(self.to_linear_exp)
+    }
+
+    /// Converts a value from lut space to linear.
+    pub fn from_lut(&self, xyz: [f64; 3]) -> [f64; 3] {
+        [
+            if self.channels[0] {
+                (xyz[0] / self.one_point).powf(self.to_linear_exp)
+            } else {
+                xyz[0]
+            },
+            if self.channels[1] {
+                (xyz[1] / self.one_point).powf(self.to_linear_exp)
+            } else {
+                xyz[1]
+            },
+            if self.channels[2] {
+                (xyz[2] / self.one_point).powf(self.to_linear_exp)
+            } else {
+                xyz[2]
+            },
+        ]
+    }
+
+    /// Converts a value to lut space from linear.
+    pub fn to_lut(&self, xyz: [f64; 3]) -> [f64; 3] {
+        [
+            if self.channels[0] {
+                xyz[0].powf(1.0 / self.to_linear_exp) * self.one_point
+            } else {
+                xyz[0]
+            },
+            if self.channels[1] {
+                xyz[1].powf(1.0 / self.to_linear_exp) * self.one_point
+            } else {
+                xyz[1]
+            },
+            if self.channels[2] {
+                xyz[2].powf(1.0 / self.to_linear_exp) * self.one_point
+            } else {
+                xyz[2]
+            },
+        ]
+    }
+
+    /// Generates the transforms to apply a 3D lut with this mapper.
+    #[rustfmt::skip]
+    pub fn transforms_lut_3d(&self, lut_3d_path: &str) -> Vec<Transform> {
+        vec![
+            Transform::ExponentTransform(
+                if self.channels[0] { 1.0 / self.to_linear_exp } else { 1.0 },
+                if self.channels[1] { 1.0 / self.to_linear_exp } else { 1.0 },
+                if self.channels[2] { 1.0 / self.to_linear_exp } else { 1.0 },
+                1.0,
+            ),
+            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+                if self.channels[0] { self.one_point } else { 1.0 },
+                if self.channels[1] { self.one_point } else { 1.0 },
+                if self.channels[2] { self.one_point } else { 1.0 },
+            ]))),
+            Transform::FileTransform {
+                src: lut_3d_path.into(),
+                interpolation: Interpolation::Linear,
+                direction_inverse: false,
+            },
+            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+                if self.channels[0] { 1.0 / self.one_point } else { 1.0 },
+                if self.channels[1] { 1.0 / self.one_point } else { 1.0 },
+                if self.channels[2] { 1.0 / self.one_point } else { 1.0 },
+            ]))),
+            Transform::ExponentTransform(
+                if self.channels[0] { self.to_linear_exp } else { 1.0 },
+                if self.channels[1] { self.to_linear_exp } else { 1.0 },
+                if self.channels[2] { self.to_linear_exp } else { 1.0 },
+                1.0,
+            ),
+        ]
+    }
 }
 
 #[cfg(test)]

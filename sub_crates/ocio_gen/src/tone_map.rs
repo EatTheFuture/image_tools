@@ -1,9 +1,10 @@
 use colorbox::{
     lut::{Lut1D, Lut3D},
     matrix,
+    transforms::rgb_gamut_intersect,
 };
 
-use crate::config::{Interpolation, Transform};
+use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
 /// A simple filmic tonemapping curve.
 ///
@@ -38,7 +39,27 @@ pub struct FilmicCurve {
     b: f64,
     scale_x: f64,
     scale_y: f64,
+    fixed_point: f64,
     luminance_ceiling: f64,
+    res_1d: usize,
+    res_3d: usize,
+    mapper_3d: ExponentLUTMapper,
+}
+
+impl Default for FilmicCurve {
+    fn default() -> FilmicCurve {
+        FilmicCurve {
+            a: 0.0,
+            b: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            fixed_point: 0.18,
+            luminance_ceiling: 1.0,
+            res_1d: 2,
+            res_3d: 2,
+            mapper_3d: ExponentLUTMapper::new(1.0, 2, 1.0, [false, false, true]),
+        }
+    }
 }
 
 impl FilmicCurve {
@@ -56,7 +77,7 @@ impl FilmicCurve {
                 b: b,
                 scale_x: 1.0,
                 scale_y: 1.0,
-                luminance_ceiling: 0.0,
+                ..Default::default()
             }
             .eval_inv(fixed_point);
         let scale_y = 1.0
@@ -65,16 +86,24 @@ impl FilmicCurve {
                 b: b,
                 scale_x: scale_x,
                 scale_y: 1.0,
-                luminance_ceiling: 0.0,
+                ..Default::default()
             }
             .eval(luminance_ceiling);
+
+        let exp = 3.0;
+        let res_1d = 1 << 14;
+        let res_3d = 32 + 1;
 
         FilmicCurve {
             a: a,
             b: b,
             scale_x: scale_x,
             scale_y: scale_y,
+            fixed_point: fixed_point,
             luminance_ceiling: luminance_ceiling,
+            res_1d: res_1d,
+            res_3d: res_3d,
+            mapper_3d: ExponentLUTMapper::new(exp, res_3d, 7.0, [true, true, true]),
         }
     }
 
@@ -96,84 +125,104 @@ impl FilmicCurve {
         }
     }
 
-    /// Generates a 3D and 1D LUT to apply the filmic tone mapping.
+    /// Generates a 1D and 3D LUT to apply the filmic tone mapping.
     ///
-    /// The 3D LUT should be applied in an HSV space generated from RGB
-    /// values with an exponent 0.5 applied to them.  The 1D LUT should
-    /// be applied as an inverse transform in linear RGB space.
-    pub fn generate_luts(&self, res_1d: usize, res_3d: usize) -> (Lut1D, Lut3D) {
+    /// The LUTs should be applied with the transforms yielded by
+    /// `tone_map_transforms()` further below.
+    pub fn generate_luts(&self) -> (Lut1D, Lut3D) {
         use crate::hsv_lut::make_hsv_lut;
         use colorbox::transforms::ocio::{hsv_to_rgb, rgb_to_hsv};
 
-        let lut_1d = Lut1D::from_fn_1(res_1d, 0.0, 1.0, |n| self.eval_inv(n as f64) as f32);
+        let lut_1d = Lut1D::from_fn_1(self.res_1d, 0.0, 1.0, |n| self.eval_inv(n as f64) as f32);
 
-        let lut_3d = make_hsv_lut(res_3d, (0.0, 1.0), 1.0, |(th, ts, tv)| {
-            // To tone mapped rgb.
-            let [tr, tg, tb] = hsv_to_rgb([th as f64, ts as f64, tv as f64]);
-
-            // Linear rgb.
-            let [lr, lg, lb] = [self.eval_inv(tr), self.eval_inv(tg), self.eval_inv(tb)];
-
-            // Linear hsv.
-            let [lh, ls, lv] = rgb_to_hsv([lr, lg, lb]);
-
-            // Gamut-clipped linear rgb.
-            let clipped_rgb = crate::gamut_map::rgb_clip(
-                [lr, lg, lb],
-                Some(self.luminance_ceiling),
-                true,
-                [0.2, 0.6, 0.2],
-                0.0,
-            );
-
-            // Gamut-clipped tone-mapped rgb.
-            let clipped_hsv = rgb_to_hsv([
-                self.eval(clipped_rgb[0]),
-                self.eval(clipped_rgb[1]),
-                self.eval(clipped_rgb[2]),
-            ]);
-
-            // Adjusted tone-mapped saturation based on what it would have
-            // been if the linear saturation were lower.
-            let sat_cutoff = 0.18;
-            let ts2 = if tv >= 1.0 {
-                0.0
-            } else if tv as f64 > sat_cutoff {
-                let sat_fac = {
-                    let t = (tv as f64 - sat_cutoff) / (1.0 - sat_cutoff);
-                    1.0 - t.powf(4.0)
+        let lut_3d = Lut3D::from_fn(
+            [self.res_3d; 3],
+            [0.0; 3],
+            [self.mapper_3d.lut_max() as f32; 3],
+            |(r, g, b)| {
+                const LUMA_WEIGHTS: [f64; 3] = [2.0 / 12.0, 8.0 / 12.0, 2.0 / 12.0];
+                let luma = |rgb: [f64; 3]| {
+                    ((rgb[0] * LUMA_WEIGHTS[0])
+                        + (rgb[1] * LUMA_WEIGHTS[1])
+                        + (rgb[2] * LUMA_WEIGHTS[2]))
+                        / LUMA_WEIGHTS.iter().sum::<f64>()
                 };
-                let a = hsv_to_rgb([lh, ls * sat_fac, lv]);
-                let b = [self.eval(a[0]), self.eval(a[1]), self.eval(a[2])];
-                rgb_to_hsv(b)[1] / sat_fac
-            } else {
-                ts as f64
-            };
 
-            // Return adjusted tone-mapped hsv.
-            // (lh as f32, ts2 as f32, tv)
-            (
-                lh as f32,
-                clipped_hsv[1].min(ts2) as f32,
-                clipped_hsv[2] as f32,
-            )
-        });
+                // Convert out of LUT space.
+                let rgb = self.mapper_3d.from_lut([r as f64, g as f64, b as f64]);
+
+                // Gray point.
+                let gp = {
+                    let l = luma(rgb);
+                    [l, l, l]
+                };
+
+                // HDR gamut-clip to max 1.0 saturation (so no RGB channels are negative).
+                let rgb_clipped = rgb_gamut_intersect(rgb, gp, false, false);
+
+                // Vector such that `gp + rgb_vec = rgb_clipped`.
+                let rgb_vec = vsub(rgb_clipped, gp);
+
+                // // Desaturate a little, so all colors blow out.
+                // let rgb_clipped = {
+                //     let bottom = self.luminance_ceiling / 32.0;
+                //     let top = self.luminance_ceiling * 8.0;
+                //     let power = (vmax(rgb_clipped) - bottom).max(0.0) / (top - bottom);
+                //     vadd(gp, vscale(rgb_vec, (1.0 - power).powf(2.0)))
+                // };
+
+                //---------------------------------------------
+                // Tone mapping space.
+
+                // Tone mapped rgb and gray point.
+                let rgb_tm = [
+                    self.eval(rgb_clipped[0]),
+                    self.eval(rgb_clipped[1]),
+                    self.eval(rgb_clipped[2]),
+                ];
+                let gp_tm = {
+                    let l = self.eval(gp[0]);
+                    // let l = luma(rgb_tm);
+                    [l, l, l]
+                };
+                let rgb_vec_tm = vsub(rgb_tm, gp_tm);
+
+                let rgb_2 = vadd(gp_tm, vscale(rgb_vec, vlen(rgb_vec_tm) / vlen(rgb_vec)));
+
+                // LDR gamut-clip.
+                let rgb_tm_clipped = rgb_gamut_intersect(rgb_2, gp_tm, true, true);
+
+                //---------------------------------------------
+                // Back to linear space.
+
+                // Reverse tone-map.
+                let rgb_final = [
+                    self.eval_inv(rgb_tm_clipped[0]),
+                    self.eval_inv(rgb_tm_clipped[1]),
+                    self.eval_inv(rgb_tm_clipped[2]),
+                ];
+
+                // Back to LUT space.
+                let rgb = self.mapper_3d.to_lut(rgb_final);
+
+                (rgb[0] as f32, rgb[1] as f32, rgb[2] as f32)
+            },
+        );
 
         (lut_1d, lut_3d)
     }
 
-    pub fn tone_map_transforms(lut_1d_path: &str, lut_3d_path: &str) -> Vec<Transform> {
-        vec![
-            // Clip colors to 1.0 saturation, so they they blow out properly.
-            // TODO: unfortunately, this distorts the luminance of
-            // those clipped colors.  Replace this with a 3D LUT
-            // transform that does proper HDR gamut clipping once
-            // issue #1763 is fixed in OCIO and released.
+    pub fn tone_map_transforms(&self, lut_1d_path: &str, lut_3d_path: &str) -> Vec<Transform> {
+        let mut transforms = Vec::new();
+
+        // Clip colors to 1.0 saturation, so they're within the range
+        // of our LUTs.
+        transforms.extend([
             Transform::ToHSV,
             Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
                 1.0,
                 1.0,
-                1.0 / 1_000_000_0.0,
+                1.0 / 10_000_000.0,
             ]))),
             Transform::RangeTransform {
                 range_in: (0.0, 1.0),
@@ -183,24 +232,22 @@ impl FilmicCurve {
             Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
                 1.0,
                 1.0,
-                1_000_000_0.0,
+                10_000_000.0,
             ]))),
             Transform::FromHSV,
-            // Apply tone map curve.
-            Transform::FileTransform {
-                src: lut_1d_path.into(),
-                interpolation: Interpolation::Linear,
-                direction_inverse: true,
-            },
-            // Apply chroma post-adjustment.
-            Transform::ToHSV,
-            Transform::FileTransform {
-                src: lut_3d_path.into(),
-                interpolation: Interpolation::Linear,
-                direction_inverse: false,
-            },
-            Transform::FromHSV,
-        ]
+        ]);
+
+        // Apply chroma LUT.
+        transforms.extend(self.mapper_3d.transforms_lut_3d(lut_3d_path));
+
+        // Apply tone map curve.
+        transforms.extend([Transform::FileTransform {
+            src: lut_1d_path.into(),
+            interpolation: Interpolation::Linear,
+            direction_inverse: true,
+        }]);
+
+        transforms
     }
 }
 
@@ -222,6 +269,26 @@ fn smootherstep(x: f64) -> f64 {
     } else {
         (6.0 * x * x * x * x * x) - (15.0 * x * x * x * x) + (10.0 * x * x * x)
     }
+}
+
+fn vadd(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn vsub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn vscale(a: [f64; 3], scale: f64) -> [f64; 3] {
+    [a[0] * scale, a[1] * scale, a[2] * scale]
+}
+
+fn vlen(a: [f64; 3]) -> f64 {
+    ((a[0] * a[0]) + (a[1] * a[1]) + (a[2] * a[2])).sqrt()
+}
+
+fn vmax(a: [f64; 3]) -> f64 {
+    a[0].max(a[1]).max(a[2])
 }
 
 // /// A tweakable sigmoid function that maps [0.0, 1.0] to [0.0, 1.0].

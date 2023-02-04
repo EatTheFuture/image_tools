@@ -7,6 +7,12 @@ pub fn make_minimal(
     reference_space_chroma: chroma::Chromaticities,
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
+    // Tone mapping curves, used various places below.
+    let filmic_normal = FilmicCurve::new(0.18, 6.0_f64.exp2(), 0.5, -0.2);
+    let filmic_contrast = FilmicCurve::new(0.18, 6.0_f64.exp2(), 0.5, 0.2);
+
+    //---------------------------------------------------------
+
     let mut config = OCIOConfig::default();
 
     config.reference_space_chroma = reference_space_chroma;
@@ -157,7 +163,7 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        FilmicCurve::tone_map_transforms(
+        filmic_normal.tone_map_transforms(
             "omkr__tonemap_curve_normal_inv.spi1d",
             "omkr__tonemap_chroma_normal.cube",
         ),
@@ -174,7 +180,7 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        FilmicCurve::tone_map_transforms(
+        filmic_contrast.tone_map_transforms(
             "omkr__tonemap_curve_contrast_inv.spi1d",
             "omkr__tonemap_chroma_contrast.cube",
         ),
@@ -280,7 +286,7 @@ pub fn make_minimal(
         chroma::DCI_P3,
         whitepoint_adaptation_method,
         vec![],
-        Transform::ExponentTransform(2.6).invert(),
+        Transform::ExponentTransform(2.6, 2.6, 2.6, 1.0).invert(),
         true,
     );
 
@@ -413,11 +419,8 @@ pub fn make_minimal(
 
     // Tone mapping LUTs.
     {
-        let upper = 6.0_f64.exp2();
-        let (tone_1d_normal, tone_3d_normal) =
-            FilmicCurve::new(0.18, upper, 0.5, -0.2).generate_luts(1 << 14, 37);
-        let (tone_1d_contrast, tone_3d_contrast) =
-            FilmicCurve::new(0.18, upper, 0.5, 0.2).generate_luts(1 << 14, 37);
+        let (tone_1d_normal, tone_3d_normal) = filmic_normal.generate_luts();
+        let (tone_1d_contrast, tone_3d_contrast) = filmic_contrast.generate_luts();
         config.output_files.extend([
             (
                 "luts/omkr__tonemap_curve_normal_inv.spi1d".into(),
