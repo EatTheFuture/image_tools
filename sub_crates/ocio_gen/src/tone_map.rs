@@ -6,41 +6,46 @@ use colorbox::{
 
 use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
+const K_LIMIT: f64 = 0.00001;
+
 /// A simple filmic tonemapping curve.
 ///
-/// The basic idea behind this is to layer a power function (for the
-/// toe) on top of an adjustable Reinhard function (for the shoulder.)
-/// This has no real basis in the actual physics of film stock, but in
-/// practice produces pleasing results and is reasonably easy to tweak
-/// for different looks.
+/// The basic idea behind this is to layer a sigmoid contrast function
+/// on top of the Reinhard function.  This has no real basis in the
+/// actual physics of film stock, but in practice produces pleasing
+/// results that are easy to adjust for different looks.
 ///
-/// - `x`: the input value.
-/// - `fixed_point`: the value of `x` that should map to itself.  For
-///   example, you might set this to 0.18 (18% gray) so that colors of
-///   that brightness remain the same.
+/// - `contrast`: how "contrasty" the look should be.  Values between 1.0
+///   and 4.0 give fairly normal looks, while higher starts to look more
+///   high contrast.  Values less than 0.0 aren't meaningful.
+/// - `fixed_point`: the value of `x` that should (approximately) map to
+///   itself.  For example, you might set this to 0.18 (18% gray) so that
+///   colors of that brightness remain the same.
 /// - `luminance_ceiling`: the luminance level that maps to 1.0 in the
 ///   output.  Typically you want this to be a large-ish number
 ///   (e.g. > 30), as it represents the top end of the dynamic range.
 ///   It can be useful to think in terms of photographic stops: if you
 ///   want 6 stops of dynamic range above 1.0, then this should be 2^6,
-///   or 64.
-/// - `toe_sharpness`: how sharp the toe is.  Reasonable values are
-///   typically in [0.0, 1.0].
-/// - `shoulder_sharpness`: how sharp the shoulder is.  Reasonable values
-///   are typically in [-0.2, 1.0].
+///   or 64.  In practice, this doesn't have much impact on the look
+///   beyond maybe 14 stops or so.
+/// - `exposure`: input exposure adjustment before applying the tone mapping.
+///   Input color values are just multiplied by this.  Useful for tuning
+///   different tone mappers to match general brightness without altering
+///   the actual tone mapping curve.
 ///
-/// Note that setting both toe and shoulder sharpness to zero creates
-/// the classic Reinhard tone mapping curve.
+/// Note that setting `contrast` to zero creates the classic Reinhard curve.
 ///
 /// Returns the tonemapped value, always in the range [0.0, 1.0].
 #[derive(Debug, Copy, Clone)]
 pub struct FilmicCurve {
-    a: f64,
+    k: f64,
     b: f64,
-    scale_x: f64,
+    sigmoid_scale_y: f64,
+    reinhard_scale_x: f64,
     scale_y: f64,
-    fixed_point: f64,
     luminance_ceiling: f64,
+    exposure: f64,
+
     res_1d: usize,
     res_3d: usize,
     mapper_3d: ExponentLUTMapper,
@@ -49,12 +54,14 @@ pub struct FilmicCurve {
 impl Default for FilmicCurve {
     fn default() -> FilmicCurve {
         FilmicCurve {
-            a: 0.0,
-            b: 0.0,
-            scale_x: 1.0,
+            k: 0.0,
+            b: 1.0,
+            sigmoid_scale_y: 1.0,
+            reinhard_scale_x: 1.0,
             scale_y: 1.0,
-            fixed_point: 0.18,
-            luminance_ceiling: 1.0,
+            luminance_ceiling: 4096.0,
+            exposure: 1.0,
+
             res_1d: 2,
             res_3d: 2,
             mapper_3d: ExponentLUTMapper::new(1.0, 2, 1.0, [false, false, true]),
@@ -63,47 +70,33 @@ impl Default for FilmicCurve {
 }
 
 impl FilmicCurve {
-    pub fn new(
-        fixed_point: f64,
-        luminance_ceiling: f64,
-        toe_sharpness: f64,
-        shoulder_sharpness: f64,
-    ) -> Self {
-        let a = toe_sharpness + 1.0;
-        let b = shoulder_sharpness + 1.0;
-        let scale_x = fixed_point
-            / FilmicCurve {
-                a: a,
-                b: b,
-                scale_x: 1.0,
-                scale_y: 1.0,
-                ..Default::default()
-            }
-            .eval_inv(fixed_point);
-        let scale_y = 1.0
-            / FilmicCurve {
-                a: a,
-                b: b,
-                scale_x: scale_x,
-                scale_y: 1.0,
-                ..Default::default()
-            }
-            .eval(luminance_ceiling);
+    pub fn new(contrast: f64, fixed_point: f64, luminance_ceiling: f64, exposure: f64) -> Self {
+        let k = contrast.sqrt();
+        let b = fixed_point.log(0.5);
+        let sigmoid_scale_y = if k < K_LIMIT {
+            1.0
+        } else {
+            1.0 / sigmoid(1.0, k)
+        };
+        let reinhard_scale_x = reinhard_inv(fixed_point) / fixed_point;
+        let scale_y =
+            1.0 / unscaled_filmic(luminance_ceiling, k, sigmoid_scale_y, reinhard_scale_x, b);
 
-        let exp = 3.0;
         let res_1d = 1 << 14;
         let res_3d = 32 + 1;
 
         FilmicCurve {
-            a: a,
+            k: k,
             b: b,
-            scale_x: scale_x,
+            sigmoid_scale_y: sigmoid_scale_y,
+            reinhard_scale_x: reinhard_scale_x,
             scale_y: scale_y,
-            fixed_point: fixed_point,
             luminance_ceiling: luminance_ceiling,
+            exposure: exposure,
+
             res_1d: res_1d,
             res_3d: res_3d,
-            mapper_3d: ExponentLUTMapper::new(exp, res_3d, 7.0, [true, true, true]),
+            mapper_3d: ExponentLUTMapper::new(3.0, res_3d, 7.0, [true, true, true]),
         }
     }
 
@@ -111,7 +104,13 @@ impl FilmicCurve {
         if x <= 0.0 {
             0.0
         } else {
-            ((x / self.scale_x).powf(-self.b) + 1.0).powf(self.a / -self.b) * self.scale_y
+            unscaled_filmic(
+                x * self.exposure,
+                self.k,
+                self.sigmoid_scale_y,
+                self.reinhard_scale_x,
+                self.b,
+            ) * self.scale_y
         }
     }
 
@@ -121,7 +120,13 @@ impl FilmicCurve {
         } else if y >= 1.0 {
             self.luminance_ceiling
         } else {
-            ((y / self.scale_y).powf(-self.b / self.a) - 1.0).powf(1.0 / -self.b) * self.scale_x
+            unscaled_filmic_inv(
+                y / self.scale_y,
+                self.k,
+                self.sigmoid_scale_y,
+                self.reinhard_scale_x,
+                self.b,
+            ) / self.exposure
         }
     }
 
@@ -251,6 +256,71 @@ impl FilmicCurve {
     }
 }
 
+#[inline(always)]
+fn reinhard(x: f64) -> f64 {
+    x / (1.0 + x)
+}
+
+#[inline(always)]
+fn reinhard_inv(x: f64) -> f64 {
+    if x <= 0.0 {
+        0.0
+    } else if x >= 1.0 {
+        std::f64::INFINITY
+    } else {
+        (1.0 / (1.0 - x)) - 1.0
+    }
+}
+
+/// A sigmoid that maps -inf,+inf to -1,+1.
+///
+/// `k` determines how sharp the mapping is.
+#[inline(always)]
+fn sigmoid(x: f64, k: f64) -> f64 {
+    (2.0 / (1.0 + (-k * x).exp())) - 1.0
+}
+
+#[inline(always)]
+fn sigmoid_inv(x: f64, k: f64) -> f64 {
+    if x <= -1.0 {
+        -std::f64::INFINITY
+    } else if x >= 1.0 {
+        std::f64::INFINITY
+    } else {
+        ((2.0 / (x + 1.0)) - 1.0).ln() / -k
+    }
+}
+
+#[inline(always)]
+fn unscaled_filmic(x: f64, k: f64, sigmoid_scale_y: f64, reinhard_scale_x: f64, b: f64) -> f64 {
+    // Reinhard.
+    let r = reinhard(x * reinhard_scale_x);
+
+    // Contrast sigmoid.
+    let n = (2.0 * r.powf(1.0 / b)) - 1.0;
+    let m = if k < K_LIMIT {
+        n
+    } else {
+        sigmoid(n, k) * sigmoid_scale_y
+    };
+    ((m + 1.0) / 2.0).powf(b)
+}
+
+#[inline(always)]
+fn unscaled_filmic_inv(x: f64, k: f64, sigmoid_scale_y: f64, reinhard_scale_x: f64, b: f64) -> f64 {
+    // Contrast sigmoid.
+    let m = (x.powf(1.0 / b) * 2.0) - 1.0;
+    let n = if k < K_LIMIT {
+        m
+    } else {
+        sigmoid_inv(m / sigmoid_scale_y, k)
+    };
+    let r = ((n + 1.0) / 2.0).powf(b);
+
+    // Reinhard.
+    reinhard_inv(r) / reinhard_scale_x
+}
+
 fn smoothstep(x: f64) -> f64 {
     if x <= 0.0 {
         0.0
@@ -290,86 +360,6 @@ fn vlen(a: [f64; 3]) -> f64 {
 fn vmax(a: [f64; 3]) -> f64 {
     a[0].max(a[1]).max(a[2])
 }
-
-// /// A tweakable sigmoid function that maps [0.0, 1.0] to [0.0, 1.0].
-// ///
-// /// - `transition`: the value of `x` where the toe transitions to the shoulder.
-// /// - `toe_exp`: the exponent used for the toe part of the curve.
-// ///   1.0 = linear, 2.0 = quadratic, etc.
-// /// - `shoulder_exp`: the exponent used for the shoulder part of the curve.
-// fn s_curve(x: f64, transition: f64, toe_exp: f64, shoulder_exp: f64) -> f64 {
-//     // Early-out for off-the-end values.
-//     if x <= 0.0 {
-//         return 0.0;
-//     } else if x >= 1.0 {
-//         return 1.0;
-//     }
-
-//     // Toe and shoulder curve functions.
-//     let toe = |x: f64, scale: f64| -> f64 { x.powf(toe_exp) * scale };
-//     let shoulder = |x: f64, scale: f64| -> f64 { 1.0 - ((1.0 - x).powf(shoulder_exp) * scale) };
-
-//     // Toe and shoulder slopes at the transition.
-//     let toe_slope = toe_exp * transition.powf(toe_exp - 1.0);
-//     let shoulder_slope = shoulder_exp * (1.0 - transition).powf(shoulder_exp - 1.0);
-
-//     // Vertical scale factors needed to make the toe and shoulder meet
-//     // at the transition with equal slopes.
-//     let s1 = shoulder_slope / toe_slope;
-//     let s2 = 1.0 / (1.0 + toe(transition, s1) - shoulder(transition, 1.0));
-
-//     // The full curve output.
-//     if x < transition {
-//         toe(x, s1 * s2)
-//     } else {
-//         shoulder(x, s2)
-//     }
-//     .clamp(0.0, 1.0)
-// }
-
-// /// Inverse of `s_curve()`.
-// fn s_curve_inv(x: f64, transition: f64, toe_exp: f64, shoulder_exp: f64) -> f64 {
-//     // Early-out for off-the-end values.
-//     if x <= 0.0 {
-//         return 0.0;
-//     } else if x >= 1.0 {
-//         return 1.0;
-//     }
-
-//     // Toe and shoulder curve functions.
-//     let toe = |x: f64, scale: f64| -> f64 { x.powf(toe_exp) * scale };
-//     let shoulder = |x: f64, scale: f64| -> f64 { 1.0 - ((1.0 - x).powf(shoulder_exp) * scale) };
-
-//     // Toe and shoulder slopes at the transition.
-//     let toe_slope = toe_exp * transition.powf(toe_exp - 1.0);
-//     let shoulder_slope = shoulder_exp * (1.0 - transition).powf(shoulder_exp - 1.0);
-
-//     // Vertical scale factors needed to make the toe and shoulder meet
-//     // at the transition with equal slopes.
-//     let s1 = shoulder_slope / toe_slope;
-//     let s2 = 1.0 / (1.0 + toe(transition, s1) - shoulder(transition, 1.0));
-
-//     //-------------------------
-
-//     let transition_inv = toe(transition, s1 * s2);
-
-//     let toe_inv = |x: f64, scale: f64| -> f64 {
-//         // x.powf(toe_exp) * scale
-//         (x / scale).powf(1.0 / toe_exp)
-//     };
-//     let shoulder_inv = |x: f64, scale: f64| -> f64 {
-//         // 1.0 - ((1.0 - x).powf(shoulder_exp) * scale)
-//         1.0 - ((1.0 - x) / scale).powf(1.0 / shoulder_exp)
-//     };
-
-//     // The full curve output.
-//     if x < transition_inv {
-//         toe_inv(x, s1 * s2)
-//     } else {
-//         shoulder_inv(x, s2)
-//     }
-//     .clamp(0.0, 1.0)
-// }
 
 #[cfg(test)]
 mod test {

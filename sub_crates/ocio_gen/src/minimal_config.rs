@@ -8,8 +8,8 @@ pub fn make_minimal(
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
     // Tone mapping curves, used various places below.
-    let filmic_normal = FilmicCurve::new(0.18, 6.0_f64.exp2(), 0.5, -0.2);
-    let filmic_contrast = FilmicCurve::new(0.18, 6.0_f64.exp2(), 0.5, 0.2);
+    let filmic_normal = FilmicCurve::new(2.0, 0.18, 8.0_f64.exp2(), 1.1);
+    let filmic_contrast = FilmicCurve::new(6.0, 0.18, 8.0_f64.exp2(), 1.2);
 
     //---------------------------------------------------------
 
