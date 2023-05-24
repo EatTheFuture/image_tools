@@ -1156,22 +1156,29 @@ pub struct ExponentLUTMapper {
     one_point: f64,
     lut_points: usize,
     channels: [bool; 3],
+    use_tetrahedral_interpolation: bool,
 }
 
 impl ExponentLUTMapper {
     /// - `to_linear_exp`: the exponent to use for mapping, in the
     ///   to-linear direction.
     /// - `lut_points`: the number of sample points the lut has.
-    /// - `one_point`: the sample point that 1.0 should map to.  This can
-    ///   be fractionally in between points.
+    /// - `linear_max`: the linear value that the max sample point should map to.
     /// - `channels`: which channels the mapping is used for (the rest
     ///   are left alone).
-    pub fn new(to_linear_exp: f64, lut_points: usize, one_point: f64, channels: [bool; 3]) -> Self {
+    pub fn new(
+        to_linear_exp: f64,
+        lut_points: usize,
+        linear_max: f64,
+        channels: [bool; 3],
+        use_tetrahedral_interpolation: bool,
+    ) -> Self {
         Self {
             to_linear_exp: to_linear_exp,
-            one_point: one_point,
+            one_point: ((lut_points - 1) as f64) / linear_max.powf(1.0 / to_linear_exp),
             lut_points: lut_points,
             channels: channels,
+            use_tetrahedral_interpolation: use_tetrahedral_interpolation,
         }
     }
 
@@ -1244,7 +1251,11 @@ impl ExponentLUTMapper {
             ]))),
             Transform::FileTransform {
                 src: lut_3d_path.into(),
-                interpolation: Interpolation::Linear,
+                interpolation: if self.use_tetrahedral_interpolation {
+                    Interpolation::Tetrahedral
+                } else {
+                    Interpolation::Linear
+                },
                 direction_inverse: false,
             },
             Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
