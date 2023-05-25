@@ -96,7 +96,7 @@ impl FilmicCurve {
 
             res_1d: res_1d,
             res_3d: res_3d,
-            mapper_3d: ExponentLUTMapper::new(1.5, res_3d, 1.0, [true, true, true], true),
+            mapper_3d: ExponentLUTMapper::new(2.0, res_3d, 1.0, [true, true, true], true),
         }
     }
 
@@ -136,7 +136,7 @@ impl FilmicCurve {
         // allow the client code to pass its own luma function, so that it can
         // be specific to the given color space and as sophisticated as needed.
         fn luma(rgb: [f64; 3]) -> f64 {
-            const LUMA_WEIGHTS: [f64; 3] = [2.0 / 12.0, 8.0 / 12.0, 2.0 / 12.0];
+            const LUMA_WEIGHTS: [f64; 3] = [3.0 / 13.0, 9.0 / 13.0, 1.0 / 13.0];
             ((rgb[0] * LUMA_WEIGHTS[0]) + (rgb[1] * LUMA_WEIGHTS[1]) + (rgb[2] * LUMA_WEIGHTS[2]))
                 / LUMA_WEIGHTS.iter().sum::<f64>()
         }
@@ -174,7 +174,7 @@ impl FilmicCurve {
         let rgb3 = vlerp(gray_point2, rgb2, 1.0 / DESAT_FACTOR);
 
         // Clip to the closed-domain color gamut.
-        rgb_gamut_intersect(rgb, gray_point2, true, true)
+        rgb_gamut_intersect(rgb3, gray_point2, true, true)
     }
 
     /// Generates a 1D and 3D LUT to apply the filmic tone mapping.
