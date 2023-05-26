@@ -148,6 +148,7 @@ impl FilmicCurve {
             let l = luma(rgb);
             [l, l, l]
         };
+        let vec = vsub(rgb, gray_point1);
 
         let rgb1 = {
             // Clip to the open-domain color gamut.
@@ -173,8 +174,17 @@ impl FilmicCurve {
         // Re-saturate, to restore colors.
         let rgb3 = vlerp(gray_point2, rgb2, 1.0 / DESAT_FACTOR);
 
+        // Adjust angle to approximately preserve hue.
+        let rgb4 = {
+            let length1 = vlen(vec);
+            let length2 = vlen(vsub(rgb3, gray_point2));
+            let scale = length2 / length1;
+            let vec2 = vscale(vec, scale);
+            vadd(gray_point2, vec2)
+        };
+
         // Clip to the closed-domain color gamut.
-        rgb_gamut_intersect(rgb3, gray_point2, true, true)
+        rgb_gamut_intersect(rgb4, gray_point2, true, true)
     }
 
     /// Generates a 1D and 3D LUT to apply the filmic tone mapping.
