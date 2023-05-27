@@ -1153,7 +1153,7 @@ fn gamut_is_within_gamut(g1: Chromaticities, g2: Chromaticities) -> bool {
 #[derive(Debug, Copy, Clone)]
 pub struct ExponentLUTMapper {
     to_linear_exp: f64,
-    one_point: f64,
+    linear_max: f64,
     lut_points: usize,
     channels: [bool; 3],
     use_tetrahedral_interpolation: bool,
@@ -1162,8 +1162,8 @@ pub struct ExponentLUTMapper {
 impl ExponentLUTMapper {
     /// - `to_linear_exp`: the exponent to use for mapping, in the
     ///   to-linear direction.
+    /// - `linear_max`: the linear value that the max lut point should map to.
     /// - `lut_points`: the number of sample points the lut has.
-    /// - `linear_max`: the linear value that the max sample point should map to.
     /// - `channels`: which channels the mapping is used for (the rest
     ///   are left alone).
     pub fn new(
@@ -1175,7 +1175,7 @@ impl ExponentLUTMapper {
     ) -> Self {
         Self {
             to_linear_exp: to_linear_exp,
-            one_point: ((lut_points - 1) as f64) / linear_max.powf(1.0 / to_linear_exp),
+            linear_max: linear_max,
             lut_points: lut_points,
             channels: channels,
             use_tetrahedral_interpolation: use_tetrahedral_interpolation,
@@ -1184,29 +1184,29 @@ impl ExponentLUTMapper {
 
     /// The upper bound of the lut range (in lut space).
     pub fn lut_max(&self) -> f64 {
-        (self.lut_points - 1) as f64
+        1.0
     }
 
     /// The max linear value in the resulting lut.
     pub fn linear_max(&self) -> f64 {
-        (self.lut_max() / self.one_point).powf(self.to_linear_exp)
+        self.linear_max
     }
 
     /// Converts a value from lut space to linear.
     pub fn from_lut(&self, xyz: [f64; 3]) -> [f64; 3] {
         [
             if self.channels[0] {
-                (xyz[0] / self.one_point).powf(self.to_linear_exp)
+                xyz[0].powf(self.to_linear_exp) * self.linear_max
             } else {
                 xyz[0]
             },
             if self.channels[1] {
-                (xyz[1] / self.one_point).powf(self.to_linear_exp)
+                xyz[1].powf(self.to_linear_exp) * self.linear_max
             } else {
                 xyz[1]
             },
             if self.channels[2] {
-                (xyz[2] / self.one_point).powf(self.to_linear_exp)
+                xyz[2].powf(self.to_linear_exp) * self.linear_max
             } else {
                 xyz[2]
             },
@@ -1217,17 +1217,17 @@ impl ExponentLUTMapper {
     pub fn to_lut(&self, xyz: [f64; 3]) -> [f64; 3] {
         [
             if self.channels[0] {
-                xyz[0].powf(1.0 / self.to_linear_exp) * self.one_point
+                (xyz[0] / self.linear_max).powf(1.0 / self.to_linear_exp)
             } else {
                 xyz[0]
             },
             if self.channels[1] {
-                xyz[1].powf(1.0 / self.to_linear_exp) * self.one_point
+                (xyz[1] / self.linear_max).powf(1.0 / self.to_linear_exp)
             } else {
                 xyz[1]
             },
             if self.channels[2] {
-                xyz[2].powf(1.0 / self.to_linear_exp) * self.one_point
+                (xyz[2] / self.linear_max).powf(1.0 / self.to_linear_exp)
             } else {
                 xyz[2]
             },
@@ -1238,17 +1238,20 @@ impl ExponentLUTMapper {
     #[rustfmt::skip]
     pub fn transforms_lut_3d(&self, lut_3d_path: &str) -> Vec<Transform> {
         vec![
+            // To LUT space.
+            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+                if self.channels[0] { 1.0 / self.linear_max } else { 1.0 },
+                if self.channels[1] { 1.0 / self.linear_max } else { 1.0 },
+                if self.channels[2] { 1.0 / self.linear_max } else { 1.0 },
+            ]))),
             Transform::ExponentTransform(
                 if self.channels[0] { 1.0 / self.to_linear_exp } else { 1.0 },
                 if self.channels[1] { 1.0 / self.to_linear_exp } else { 1.0 },
                 if self.channels[2] { 1.0 / self.to_linear_exp } else { 1.0 },
                 1.0,
             ),
-            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
-                if self.channels[0] { self.one_point } else { 1.0 },
-                if self.channels[1] { self.one_point } else { 1.0 },
-                if self.channels[2] { self.one_point } else { 1.0 },
-            ]))),
+
+            // Apply LUT.
             Transform::FileTransform {
                 src: lut_3d_path.into(),
                 interpolation: if self.use_tetrahedral_interpolation {
@@ -1258,17 +1261,19 @@ impl ExponentLUTMapper {
                 },
                 direction_inverse: false,
             },
-            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
-                if self.channels[0] { 1.0 / self.one_point } else { 1.0 },
-                if self.channels[1] { 1.0 / self.one_point } else { 1.0 },
-                if self.channels[2] { 1.0 / self.one_point } else { 1.0 },
-            ]))),
+
+            // From LUT space.
             Transform::ExponentTransform(
                 if self.channels[0] { self.to_linear_exp } else { 1.0 },
                 if self.channels[1] { self.to_linear_exp } else { 1.0 },
                 if self.channels[2] { self.to_linear_exp } else { 1.0 },
                 1.0,
             ),
+            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+                if self.channels[0] { self.linear_max } else { 1.0 },
+                if self.channels[1] { self.linear_max } else { 1.0 },
+                if self.channels[2] { self.linear_max } else { 1.0 },
+            ]))),
         ]
     }
 }
