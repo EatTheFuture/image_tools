@@ -8,7 +8,7 @@ use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
 const K_LIMIT: f64 = 0.00001;
 
-/// A simple filmic tonemapping curve.
+/// A filmic(ish) tonemapping operator.
 ///
 /// The basic idea behind this is to layer a sigmoid contrast function
 /// on top of the Reinhard function.  This has no real basis in the
@@ -37,7 +37,7 @@ const K_LIMIT: f64 = 0.00001;
 ///
 /// Returns the tonemapped value, always in the range [0.0, 1.0].
 #[derive(Debug, Copy, Clone)]
-pub struct FilmicCurve {
+pub struct FilmicTonemap {
     k: f64,
     b: f64,
     sigmoid_scale_y: f64,
@@ -51,9 +51,9 @@ pub struct FilmicCurve {
     mapper_3d: ExponentLUTMapper,
 }
 
-impl Default for FilmicCurve {
-    fn default() -> FilmicCurve {
-        FilmicCurve {
+impl Default for FilmicTonemap {
+    fn default() -> FilmicTonemap {
+        FilmicTonemap {
             k: 0.0,
             b: 1.0,
             sigmoid_scale_y: 1.0,
@@ -69,7 +69,7 @@ impl Default for FilmicCurve {
     }
 }
 
-impl FilmicCurve {
+impl FilmicTonemap {
     pub fn new(contrast: f64, fixed_point: f64, luminance_ceiling: f64, exposure: f64) -> Self {
         let k = contrast.sqrt();
         let b = fixed_point.log(0.5);
@@ -85,7 +85,7 @@ impl FilmicCurve {
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
 
-        FilmicCurve {
+        FilmicTonemap {
             k: k,
             b: b,
             sigmoid_scale_y: sigmoid_scale_y,
@@ -104,13 +104,14 @@ impl FilmicCurve {
         if x <= 0.0 {
             0.0
         } else {
-            unscaled_filmic(
+            (unscaled_filmic(
                 x * self.exposure,
                 self.k,
                 self.sigmoid_scale_y,
                 self.reinhard_scale_x,
                 self.b,
-            ) * self.scale_y
+            ) * self.scale_y)
+                .min(1.0)
         }
     }
 
@@ -142,7 +143,7 @@ impl FilmicCurve {
         }
 
         // TODO: make this a user-settable parameter...?
-        const DESAT_FACTOR: f64 = 0.80;
+        const DESAT_FACTOR: f64 = 0.85;
 
         let gray_point1 = {
             let l = luma(rgb);
@@ -258,6 +259,13 @@ impl FilmicCurve {
             Transform::FromHSV,
         ]);
 
+        // Imperceptibly desaturate the colors, for better behavior
+        // during tone mapping.  This ensures that even pathological
+        // colors eventually blow out to white at high enough exposures.
+        transforms.extend([Transform::MatrixTransform(matrix::to_4x4_f32(
+            saturation_matrix(0.99),
+        ))]);
+
         // Apply tone map curve.
         transforms.extend([Transform::FileTransform {
             src: lut_1d_path.into(),
@@ -349,6 +357,17 @@ fn gamut_relative_length(vec: [f64; 3], gray_point: [f64; 3], closed_domain: boo
     }
 }
 
+/// Generates a matrix that does a simplistic saturation adjustment.
+///
+/// Note: only use this for very tiny adjustments.  It's poorly suited
+/// for anything else.
+fn saturation_matrix(factor: f64) -> matrix::Matrix {
+    let a = (factor * 2.0 + 1.0) / 3.0;
+    let b = (1.0 - a) / 2.0;
+
+    [[a, b, b], [b, a, b], [b, b, a]]
+}
+
 fn smoothstep(x: f64) -> f64 {
     if x <= 0.0 {
         0.0
@@ -401,26 +420,26 @@ fn vlerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
 mod test {
     use super::*;
 
-    // #[test]
-    // fn s_curve_round_trip() {
-    //     for i in 0..17 {
-    //         let t = 0.25;
-    //         let p1 = 2.3;
-    //         let p2 = 4.5;
+    #[test]
+    fn contrast_curve_round_trip() {
+        for i in 0..17 {
+            let t = 0.25;
+            let p1 = 2.3;
+            let p2 = 4.5;
 
-    //         let x = i as f64 / 16.0;
-    //         let x2 = s_curve_inv(s_curve(x, t, p1, p2), t, p1, p2);
-    //         assert!((x - x2).abs() < 0.000_000_1);
-    //     }
-    // }
+            let x = i as f64 / 16.0;
+            let x2 = sigmoid_inv(sigmoid(x, 1.5), 1.5);
+            assert!((x - x2).abs() < 0.000_000_1);
+        }
+    }
 
     #[test]
     fn filmic_curve_round_trip() {
-        let curve = FilmicCurve::new(0.18, 64.0, 0.4, 0.4);
+        let curve = FilmicTonemap::new(2.0, 0.18, 8.0_f64.exp2(), 1.1);
         for i in 0..17 {
             let x = i as f64 / 16.0;
-            let x2 = curve.eval_1d_inv(curve.eval_1d(x));
-            assert!((x - x2).abs() < 0.000_000_1);
+            let x2 = curve.eval_1d(curve.eval_1d_inv(x));
+            assert!((x - x2).abs() < 0.000_001);
         }
     }
 }

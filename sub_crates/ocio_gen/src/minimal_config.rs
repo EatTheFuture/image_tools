@@ -1,4 +1,4 @@
-use crate::{config::*, tone_map::FilmicCurve};
+use crate::{config::*, tone_map::FilmicTonemap};
 
 use colorbox::{chroma, matrix, matrix_compose};
 
@@ -7,9 +7,9 @@ pub fn make_minimal(
     reference_space_chroma: chroma::Chromaticities,
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
-    // Tone mapping curves, used various places below.
-    let filmic_normal = FilmicCurve::new(2.0, 0.18, 8.0_f64.exp2(), 1.1);
-    let filmic_contrast = FilmicCurve::new(6.0, 0.18, 8.0_f64.exp2(), 1.2);
+    // Tone mapping operators, used various places below.
+    let tonemap_normal = FilmicTonemap::new(2.0, 0.18, 8.0_f64.exp2(), 1.1);
+    let tonemap_contrast = FilmicTonemap::new(6.0, 0.18, 8.0_f64.exp2(), 1.2);
 
     //---------------------------------------------------------
 
@@ -52,9 +52,9 @@ pub fn make_minimal(
         name: "sRGB".into(),
         views: vec![
             ("Standard".into(), "sRGB Gamut Clipped".into()),
-            ("Filmic".into(), "sRGB Gamut Clipped Filmic".into()),
+            ("Tone Map".into(), "sRGB Gamut Clipped Filmic".into()),
             (
-                "Filmic High Contrast".into(),
+                "Tone Map Punchy".into(),
                 "sRGB Gamut Clipped Filmic Contrast".into(),
             ),
             ("Raw".into(), "Raw".into()),
@@ -136,8 +136,8 @@ pub fn make_minimal(
 
     config.active_views = vec![
         "Standard".into(),
-        "Filmic".into(),
-        "Filmic High Contrast".into(),
+        "Tone Map".into(),
+        "Tone Map Punchy".into(),
         "Raw".into(),
     ];
 
@@ -163,7 +163,7 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        filmic_normal.tone_map_transforms(
+        tonemap_normal.tone_map_transforms(
             "omkr__tonemap_curve_normal_inv.spi1d",
             "omkr__tonemap_chroma_normal.cube",
         ),
@@ -180,7 +180,7 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        filmic_contrast.tone_map_transforms(
+        tonemap_contrast.tone_map_transforms(
             "omkr__tonemap_curve_contrast_inv.spi1d",
             "omkr__tonemap_chroma_contrast.cube",
         ),
@@ -419,8 +419,8 @@ pub fn make_minimal(
 
     // Tone mapping LUTs.
     {
-        let (tone_1d_normal, tone_3d_normal) = filmic_normal.generate_luts();
-        let (tone_1d_contrast, tone_3d_contrast) = filmic_contrast.generate_luts();
+        let (tone_1d_normal, tone_3d_normal) = tonemap_normal.generate_luts();
+        let (tone_1d_contrast, tone_3d_contrast) = tonemap_contrast.generate_luts();
         config.output_files.extend([
             (
                 "luts/omkr__tonemap_curve_normal_inv.spi1d".into(),
