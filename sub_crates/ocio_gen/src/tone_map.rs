@@ -82,8 +82,8 @@ impl FilmicCurve {
         let scale_y =
             1.0 / unscaled_filmic(luminance_ceiling, k, sigmoid_scale_y, reinhard_scale_x, b);
 
-        let res_1d = 1 << 14;
-        let res_3d = 24 + 1;
+        let res_1d = 1 << 12;
+        let res_3d = 32 + 1;
 
         FilmicCurve {
             k: k,
@@ -96,7 +96,7 @@ impl FilmicCurve {
 
             res_1d: res_1d,
             res_3d: res_3d,
-            mapper_3d: ExponentLUTMapper::new(2.0, res_3d, 1.0, [true, true, true], true),
+            mapper_3d: ExponentLUTMapper::new(1.5, res_3d, 1.0, [true, true, true], true),
         }
     }
 
@@ -142,13 +142,13 @@ impl FilmicCurve {
         }
 
         // TODO: make this a user-settable parameter...?
-        const DESAT_FACTOR: f64 = 0.85;
+        const DESAT_FACTOR: f64 = 0.80;
 
         let gray_point1 = {
             let l = luma(rgb);
             [l, l, l]
         };
-        let vec = vsub(rgb, gray_point1);
+        let vec1 = vsub(rgb, gray_point1);
 
         let rgb1 = {
             // Clip to the open-domain color gamut.
@@ -171,20 +171,18 @@ impl FilmicCurve {
             [l, l, l]
         };
 
-        // Re-saturate, to restore colors.
-        let rgb3 = vlerp(gray_point2, rgb2, 1.0 / DESAT_FACTOR);
+        // Re-saturate to restore colors.
+        let resat = vlerp(gray_point2, rgb2, 1.0 / DESAT_FACTOR);
 
         // Adjust angle to approximately preserve hue.
-        let rgb4 = {
-            let length1 = vlen(vec);
-            let length2 = vlen(vsub(rgb3, gray_point2));
-            let scale = length2 / length1;
-            let vec2 = vscale(vec, scale);
-            vadd(gray_point2, vec2)
+        let rgb_final = {
+            let length1 = gamut_relative_length(vec1, gray_point2, false);
+            let length2 = gamut_relative_length(vsub(resat, gray_point2), gray_point2, false);
+            vadd(gray_point2, vscale(vec1, length2 / length1))
         };
 
         // Clip to the closed-domain color gamut.
-        rgb_gamut_intersect(rgb4, gray_point2, true, true)
+        rgb_gamut_intersect(rgb_final, gray_point2, true, true)
     }
 
     /// Generates a 1D and 3D LUT to apply the filmic tone mapping.
@@ -339,6 +337,18 @@ fn unscaled_filmic_inv(x: f64, k: f64, sigmoid_scale_y: f64, reinhard_scale_x: f
     reinhard_inv(r) / reinhard_scale_x
 }
 
+#[inline(always)]
+fn gamut_relative_length(vec: [f64; 3], gray_point: [f64; 3], closed_domain: bool) -> f64 {
+    let len = vlen(vec);
+    if len > 0.00000001 {
+        let distant = vadd(gray_point, vscale(vec, 65536.0));
+        let projected = rgb_gamut_intersect(distant, gray_point, closed_domain, true);
+        vlen(vec) / vlen(vsub(projected, gray_point))
+    } else {
+        0.0
+    }
+}
+
 fn smoothstep(x: f64) -> f64 {
     if x <= 0.0 {
         0.0
@@ -409,7 +419,7 @@ mod test {
         let curve = FilmicCurve::new(0.18, 64.0, 0.4, 0.4);
         for i in 0..17 {
             let x = i as f64 / 16.0;
-            let x2 = curve.eval_inv(curve.eval(x));
+            let x2 = curve.eval_1d_inv(curve.eval_1d(x));
             assert!((x - x2).abs() < 0.000_000_1);
         }
     }
