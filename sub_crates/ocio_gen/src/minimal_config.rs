@@ -1,4 +1,4 @@
-use crate::{config::*, tone_map::FilmicTonemap};
+use crate::{config::*, tone_map::Tonemapper};
 
 use colorbox::{chroma, matrix, matrix_compose};
 
@@ -8,8 +8,8 @@ pub fn make_minimal(
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
     // Tone mapping operators, used various places below.
-    let tonemap_normal = FilmicTonemap::new(2.0, 0.18, 8.0_f64.exp2(), 1.1);
-    let tonemap_contrast = FilmicTonemap::new(6.0, 0.18, 8.0_f64.exp2(), 1.2);
+    let tonemap_normal = Tonemapper::new(1.1, 2.0, 0.18, 8.0_f64.exp2());
+    let tonemap_contrast = Tonemapper::new(1.2, 6.0, 0.18, 8.0_f64.exp2());
 
     //---------------------------------------------------------
 

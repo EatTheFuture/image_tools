@@ -6,21 +6,18 @@ use colorbox::{
 
 use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
-const K_LIMIT: f64 = 0.00001;
-
 /// A filmic(ish) tonemapping operator.
 ///
-/// The basic idea behind this is to layer a sigmoid contrast function
-/// on top of the Reinhard function.  This has no real basis in the
-/// actual physics of film stock, but in practice produces pleasing
-/// results that are easy to adjust for different looks.
-///
+/// - `exposure`: input exposure adjustment before applying the tone mapping.
+///   Input color values are simply multiplied by this.  Useful for tuning
+///   different tone mappers to match general brightness without altering
+///   the actual tone mapping curve.
 /// - `contrast`: how "contrasty" the look should be.  Values between 1.0
 ///   and 4.0 give fairly normal looks, while higher starts to look more
-///   high contrast.  Values less than 0.0 aren't meaningful.
-/// - `fixed_point`: the value of `x` that should (approximately) map to
+///   high contrast.
+/// - `fixed_point`: the luminance that should approximately map to
 ///   itself.  For example, you might set this to 0.18 (18% gray) so that
-///   colors of that brightness remain the same.
+///   colors of that brightness remain roughly the same.
 /// - `luminance_ceiling`: the luminance level that maps to 1.0 in the
 ///   output.  Typically you want this to be a large-ish number
 ///   (e.g. > 30), as it represents the top end of the dynamic range.
@@ -28,39 +25,27 @@ const K_LIMIT: f64 = 0.00001;
 ///   want 6 stops of dynamic range above 1.0, then this should be 2^6,
 ///   or 64.  In practice, this doesn't have much impact on the look
 ///   beyond maybe 14 stops or so.
-/// - `exposure`: input exposure adjustment before applying the tone mapping.
-///   Input color values are just multiplied by this.  Useful for tuning
-///   different tone mappers to match general brightness without altering
-///   the actual tone mapping curve.
-///
-/// Note that setting `contrast` to zero creates the classic Reinhard curve.
-///
-/// Returns the tonemapped value, always in the range [0.0, 1.0].
 #[derive(Debug, Copy, Clone)]
-pub struct FilmicTonemap {
+pub struct Tonemapper {
+    exposure: f64,
     k: f64,
-    b: f64,
-    sigmoid_scale_y: f64,
-    reinhard_scale_x: f64,
+    fixed_point: f64,
     scale_y: f64,
     luminance_ceiling: f64,
-    exposure: f64,
 
     res_1d: usize,
     res_3d: usize,
     mapper_3d: ExponentLUTMapper,
 }
 
-impl Default for FilmicTonemap {
-    fn default() -> FilmicTonemap {
-        FilmicTonemap {
+impl Default for Tonemapper {
+    fn default() -> Tonemapper {
+        Tonemapper {
+            exposure: 1.0,
             k: 0.0,
-            b: 1.0,
-            sigmoid_scale_y: 1.0,
-            reinhard_scale_x: 1.0,
+            fixed_point: 0.2,
             scale_y: 1.0,
             luminance_ceiling: 4096.0,
-            exposure: 1.0,
 
             res_1d: 2,
             res_3d: 2,
@@ -69,30 +54,20 @@ impl Default for FilmicTonemap {
     }
 }
 
-impl FilmicTonemap {
-    pub fn new(contrast: f64, fixed_point: f64, luminance_ceiling: f64, exposure: f64) -> Self {
-        let k = contrast.sqrt();
-        let b = fixed_point.log(0.5);
-        let sigmoid_scale_y = if k < K_LIMIT {
-            1.0
-        } else {
-            1.0 / sigmoid(1.0, k)
-        };
-        let reinhard_scale_x = reinhard_inv(fixed_point) / fixed_point;
-        let scale_y =
-            1.0 / unscaled_filmic(luminance_ceiling, k, sigmoid_scale_y, reinhard_scale_x, b);
+impl Tonemapper {
+    pub fn new(exposure: f64, contrast: f64, fixed_point: f64, luminance_ceiling: f64) -> Self {
+        let k = contrast.abs().sqrt() * contrast.signum();
+        let scale_y = 1.0 / filmic::curve(luminance_ceiling, k, fixed_point);
 
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
 
-        FilmicTonemap {
+        Tonemapper {
+            exposure: exposure,
             k: k,
-            b: b,
-            sigmoid_scale_y: sigmoid_scale_y,
-            reinhard_scale_x: reinhard_scale_x,
+            fixed_point: fixed_point,
             scale_y: scale_y,
             luminance_ceiling: luminance_ceiling,
-            exposure: exposure,
 
             res_1d: res_1d,
             res_3d: res_3d,
@@ -104,14 +79,7 @@ impl FilmicTonemap {
         if x <= 0.0 {
             0.0
         } else {
-            (unscaled_filmic(
-                x * self.exposure,
-                self.k,
-                self.sigmoid_scale_y,
-                self.reinhard_scale_x,
-                self.b,
-            ) * self.scale_y)
-                .min(1.0)
+            (filmic::curve(x * self.exposure, self.k, self.fixed_point) * self.scale_y).min(1.0)
         }
     }
 
@@ -121,13 +89,7 @@ impl FilmicTonemap {
         } else if y >= 1.0 {
             self.luminance_ceiling
         } else {
-            unscaled_filmic_inv(
-                y / self.scale_y,
-                self.k,
-                self.sigmoid_scale_y,
-                self.reinhard_scale_x,
-                self.b,
-            ) / self.exposure
+            filmic::curve_inv(y / self.scale_y, self.k, self.fixed_point) / self.exposure
         }
     }
 
@@ -156,7 +118,7 @@ impl FilmicTonemap {
             let clipped = rgb_gamut_intersect(rgb, gray_point1, false, true);
 
             // Desaturate all colors slightly, so that even super saturated
-            // colors blow out at the high end after tone mapping.
+            // colors blow out at the high end with the tone mapping curve.
             vlerp(gray_point1, clipped, DESAT_FACTOR)
         };
 
@@ -186,7 +148,7 @@ impl FilmicTonemap {
         rgb_gamut_intersect(rgb_final, gray_point2, true, true)
     }
 
-    /// Generates a 1D and 3D LUT to apply the filmic tone mapping.
+    /// Generates a 1D and 3D LUT to apply the tone mapping.
     ///
     /// The LUTs should be applied with the transforms yielded by
     /// `tone_map_transforms()` further below.
@@ -280,69 +242,139 @@ impl FilmicTonemap {
     }
 }
 
-#[inline(always)]
-fn reinhard(x: f64) -> f64 {
-    x / (1.0 + x)
-}
-
-#[inline(always)]
-fn reinhard_inv(x: f64) -> f64 {
-    if x <= 0.0 {
-        0.0
-    } else if x >= 1.0 {
-        std::f64::INFINITY
-    } else {
-        (1.0 / (1.0 - x)) - 1.0
-    }
-}
-
-/// A sigmoid that maps -inf,+inf to -1,+1.
+/// A "filmic" tone mapping curve.
 ///
-/// `k` determines how sharp the mapping is.
-#[inline(always)]
-fn sigmoid(x: f64, k: f64) -> f64 {
-    (2.0 / (1.0 + (-k * x).exp())) - 1.0
-}
+/// The basic idea behind this is to layer a sigmoid contrast function
+/// on top of the Reinhard function.  This has no particular basis in
+/// anything, but in practice produces pleasing results that are easy
+/// to adjust for different looks.
+///
+/// Note: this maps [0.0, inf] to [0.0, 1.0].  So if you want to limit
+/// the dynamic range, you should scale up and clamp the result by the
+/// appropriate amount.
+mod filmic {
+    /// `c`: contrast.  A value of zero creates the classic Reinhard
+    ///      curve, larger values produce a more contrasty look, and
+    ///      lower values less.
+    /// `fixed_point`: the value of `x` that should map to itself.
+    #[inline(always)]
+    pub fn curve(x: f64, c: f64, fixed_point: f64) -> f64 {
+        let b = fixed_point.log(0.5);
+        let reinhard_scale_x = reinhard_inv(fixed_point) / fixed_point;
 
-#[inline(always)]
-fn sigmoid_inv(x: f64, k: f64) -> f64 {
-    if x <= -1.0 {
-        -std::f64::INFINITY
-    } else if x >= 1.0 {
-        std::f64::INFINITY
-    } else {
-        ((2.0 / (x + 1.0)) - 1.0).ln() / -k
+        // Reinhard.
+        let r = reinhard(x * reinhard_scale_x);
+
+        // Contrast sigmoid.
+        let n = r.powf(1.0 / b);
+        let m = contrast(n, c);
+        m.powf(b)
     }
-}
 
-#[inline(always)]
-fn unscaled_filmic(x: f64, k: f64, sigmoid_scale_y: f64, reinhard_scale_x: f64, b: f64) -> f64 {
-    // Reinhard.
-    let r = reinhard(x * reinhard_scale_x);
+    #[inline(always)]
+    pub fn curve_inv(y: f64, c: f64, fixed_point: f64) -> f64 {
+        let b = fixed_point.log(0.5);
+        let reinhard_scale_x = reinhard_inv(fixed_point) / fixed_point;
 
-    // Contrast sigmoid.
-    let n = (2.0 * r.powf(1.0 / b)) - 1.0;
-    let m = if k < K_LIMIT {
-        n
-    } else {
-        sigmoid(n, k) * sigmoid_scale_y
-    };
-    ((m + 1.0) / 2.0).powf(b)
-}
+        // Contrast sigmoid.
+        let m = y.powf(1.0 / b);
+        let n = contrast(m, -c);
+        let r = n.powf(b);
 
-#[inline(always)]
-fn unscaled_filmic_inv(x: f64, k: f64, sigmoid_scale_y: f64, reinhard_scale_x: f64, b: f64) -> f64 {
-    // Contrast sigmoid.
-    let m = (x.powf(1.0 / b) * 2.0) - 1.0;
-    let n = if k < K_LIMIT {
-        m
-    } else {
-        sigmoid_inv(m / sigmoid_scale_y, k)
-    };
-    let r = ((n + 1.0) / 2.0).powf(b);
+        // Reinhard.
+        reinhard_inv(r) / reinhard_scale_x
+    }
 
-    // Reinhard.
-    reinhard_inv(r) / reinhard_scale_x
+    /// A sigmoid based on the classic logistic function.
+    ///
+    /// Maps [-inf,+inf] to [-1,+1].
+    ///
+    /// `k` determines how sharp the mapping is.
+    #[inline(always)]
+    fn sigmoid(x: f64, k: f64) -> f64 {
+        (2.0 / (1.0 + (-k * x).exp())) - 1.0
+    }
+
+    #[inline(always)]
+    fn sigmoid_inv(x: f64, k: f64) -> f64 {
+        if x <= -1.0 {
+            -std::f64::INFINITY
+        } else if x >= 1.0 {
+            std::f64::INFINITY
+        } else {
+            ((2.0 / (x + 1.0)) - 1.0).ln() / -k
+        }
+    }
+
+    /// Adjusts contrast in [0.0, 1.0] via a sigmoid function.
+    ///
+    /// Unlike simply multiplying `v` by some constant with a pivot around
+    /// 0.5, this function uses a sigmoid to compress/expand the values near
+    /// 0.0 and 1.0, which avoids pushing any values outside of [0.0, 1.0].
+    ///
+    /// `x`: value to adjust.
+    /// `c`: amount of contrast adjustment. 0 is no adjustment, > 0 increases
+    ///      contrast, < 0 decreases contrast.
+    ///
+    /// Note: this function is its own inverse by simply passing the negative
+    /// of `c`.
+    #[inline(always)]
+    fn contrast(x: f64, c: f64) -> f64 {
+        if c > -0.00001 && c < 0.00001 {
+            // Conceptually this is for when `c == 0.0`, but for numerical
+            // stability reasons we do it within a small range around 0.0.
+            x
+        } else {
+            let scale = 2.0 * sigmoid(1.0, c);
+            if c > 0.0 {
+                // Increase contrast.
+                sigmoid(2.0 * x - 1.0, c) / scale + 0.5
+            } else {
+                // Decrease contrast.
+                sigmoid_inv((x - 0.5) * -scale, -c) * 0.5 + 0.5
+            }
+        }
+        .clamp(0.0, 1.0)
+    }
+
+    #[inline(always)]
+    fn reinhard(x: f64) -> f64 {
+        x / (1.0 + x)
+    }
+
+    #[inline(always)]
+    fn reinhard_inv(x: f64) -> f64 {
+        if x <= 0.0 {
+            0.0
+        } else if x >= 1.0 {
+            std::f64::INFINITY
+        } else {
+            (1.0 / (1.0 - x)) - 1.0
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn contrast_round_trip() {
+            for i in 0..17 {
+                let x = i as f64 / 16.0;
+                let x2 = contrast(contrast(x, 2.0), -2.0);
+                assert!((x - x2).abs() < 0.000_000_1);
+            }
+        }
+
+        #[test]
+        fn filmic_curve_round_trip() {
+            for i in 0..17 {
+                let x = i as f64 / 16.0;
+                let x2 = curve(curve_inv(x, 2.0, 0.18), 2.0, 0.18);
+                assert!((x - x2).abs() < 0.000_001);
+            }
+        }
+    }
 }
 
 #[inline(always)]
@@ -421,21 +453,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn contrast_curve_round_trip() {
-        for i in 0..17 {
-            let t = 0.25;
-            let p1 = 2.3;
-            let p2 = 4.5;
-
-            let x = i as f64 / 16.0;
-            let x2 = sigmoid_inv(sigmoid(x, 1.5), 1.5);
-            assert!((x - x2).abs() < 0.000_000_1);
-        }
-    }
-
-    #[test]
-    fn filmic_curve_round_trip() {
-        let curve = FilmicTonemap::new(2.0, 0.18, 8.0_f64.exp2(), 1.1);
+    fn tonemap_1d_round_trip() {
+        let curve = Tonemapper::new(1.1, 2.0, 0.18, 8.0_f64.exp2());
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));
