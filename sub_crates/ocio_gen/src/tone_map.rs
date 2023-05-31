@@ -30,7 +30,6 @@ pub struct Tonemapper {
     exposure: f64,
     k: f64,
     fixed_point: f64,
-    scale_y: f64,
     luminance_ceiling: f64,
 
     res_1d: usize,
@@ -44,7 +43,6 @@ impl Default for Tonemapper {
             exposure: 1.0,
             k: 0.0,
             fixed_point: 0.2,
-            scale_y: 1.0,
             luminance_ceiling: 4096.0,
 
             res_1d: 2,
@@ -57,7 +55,6 @@ impl Default for Tonemapper {
 impl Tonemapper {
     pub fn new(exposure: f64, contrast: f64, fixed_point: f64, luminance_ceiling: f64) -> Self {
         let k = contrast.abs().sqrt() * contrast.signum();
-        let scale_y = 1.0 / filmic::curve(luminance_ceiling, k, fixed_point);
 
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
@@ -66,7 +63,6 @@ impl Tonemapper {
             exposure: exposure,
             k: k,
             fixed_point: fixed_point,
-            scale_y: scale_y,
             luminance_ceiling: luminance_ceiling,
 
             res_1d: res_1d,
@@ -79,7 +75,13 @@ impl Tonemapper {
         if x <= 0.0 {
             0.0
         } else {
-            (filmic::curve(x * self.exposure, self.k, self.fixed_point) * self.scale_y).min(1.0)
+            filmic::curve(
+                x * self.exposure,
+                self.k,
+                self.fixed_point,
+                self.luminance_ceiling,
+            )
+            .min(1.0)
         }
     }
 
@@ -89,7 +91,7 @@ impl Tonemapper {
         } else if y >= 1.0 {
             self.luminance_ceiling
         } else {
-            filmic::curve_inv(y / self.scale_y, self.k, self.fixed_point) / self.exposure
+            filmic::curve_inv(y, self.k, self.fixed_point, self.luminance_ceiling) / self.exposure
         }
     }
 
@@ -245,25 +247,32 @@ impl Tonemapper {
 /// A "filmic" tone mapping curve.
 ///
 /// The basic idea behind this is to layer a sigmoid contrast function
-/// on top of the Reinhard function.  This has no particular basis in
-/// anything, but in practice produces pleasing results that are easy
-/// to adjust for different looks.
+/// on top of a generalized Reinhard function.  This has no particular
+/// basis in anything, but in practice produces pleasing results that
+/// are easy to adjust for different looks.
 ///
 /// Note: this maps [0.0, inf] to [0.0, 1.0].  So if you want to limit
 /// the dynamic range, you should scale up and clamp the result by the
 /// appropriate amount.
 mod filmic {
+    /// How "sharp" our Reinhard function is.  1.0 is standard Reinhard,
+    /// less than 1.0 is gentler, more than 1.0 is sharper.  Gentler
+    /// seems to give more flexibility in terms of effective dynamic
+    /// range.
+    const REINHARD_P: f64 = 0.5;
+
     /// `c`: contrast.  A value of zero creates the classic Reinhard
     ///      curve, larger values produce a more contrasty look, and
     ///      lower values less.
     /// `fixed_point`: the value of `x` that should map to itself.
     #[inline(always)]
-    pub fn curve(x: f64, c: f64, fixed_point: f64) -> f64 {
+    pub fn curve(x: f64, c: f64, fixed_point: f64, luminance_ceiling: f64) -> f64 {
         let b = fixed_point.log(0.5);
-        let reinhard_scale_x = reinhard_inv(fixed_point) / fixed_point;
+        let reinhard_scale_x = reinhard_inv(fixed_point, REINHARD_P) / fixed_point;
+        let reinhard_scale_y = 1.0 / reinhard(luminance_ceiling, REINHARD_P);
 
         // Reinhard.
-        let r = reinhard(x * reinhard_scale_x);
+        let r = reinhard(x * reinhard_scale_x, REINHARD_P) * reinhard_scale_y;
 
         // Contrast sigmoid.
         let n = r.powf(1.0 / b);
@@ -272,9 +281,10 @@ mod filmic {
     }
 
     #[inline(always)]
-    pub fn curve_inv(y: f64, c: f64, fixed_point: f64) -> f64 {
+    pub fn curve_inv(y: f64, c: f64, fixed_point: f64, luminance_ceiling: f64) -> f64 {
         let b = fixed_point.log(0.5);
-        let reinhard_scale_x = reinhard_inv(fixed_point) / fixed_point;
+        let reinhard_scale_x = reinhard_inv(fixed_point, REINHARD_P) / fixed_point;
+        let reinhard_scale_y = 1.0 / reinhard(luminance_ceiling, REINHARD_P);
 
         // Contrast sigmoid.
         let m = y.powf(1.0 / b);
@@ -282,7 +292,7 @@ mod filmic {
         let r = n.powf(b);
 
         // Reinhard.
-        reinhard_inv(r) / reinhard_scale_x
+        reinhard_inv(r / reinhard_scale_y, REINHARD_P) / reinhard_scale_x
     }
 
     /// A sigmoid based on the classic logistic function.
@@ -337,19 +347,24 @@ mod filmic {
         .clamp(0.0, 1.0)
     }
 
+    /// Generalized Reinhard curve.
+    ///
+    /// `p`: a tweaking parameter that affects the shape of the curve,
+    ///      in (0.0, inf].  Larger values make it sharper, lower values
+    ///      make it gentler.  1.0 = standard Reinhard.
     #[inline(always)]
-    fn reinhard(x: f64) -> f64 {
-        x / (1.0 + x)
+    fn reinhard(x: f64, p: f64) -> f64 {
+        (x.powf(-p) + 1.0).powf(1.0 / -p)
     }
 
     #[inline(always)]
-    fn reinhard_inv(x: f64) -> f64 {
+    fn reinhard_inv(x: f64, p: f64) -> f64 {
         if x <= 0.0 {
             0.0
         } else if x >= 1.0 {
             std::f64::INFINITY
         } else {
-            (1.0 / (1.0 - x)) - 1.0
+            (x.powf(-p) - 1.0).powf(1.0 / -p)
         }
     }
 
