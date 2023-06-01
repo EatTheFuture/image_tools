@@ -385,7 +385,7 @@ mod filmic {
         fn filmic_curve_round_trip() {
             for i in 0..17 {
                 let x = i as f64 / 16.0;
-                let x2 = curve(curve_inv(x, 2.0, 0.18), 2.0, 0.18);
+                let x2 = curve(curve_inv(x, 2.0, 0.18, 2048.0), 2.0, 0.18, 2048.0);
                 assert!((x - x2).abs() < 0.000_001);
             }
         }
