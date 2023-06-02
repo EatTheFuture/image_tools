@@ -30,7 +30,7 @@ pub struct Tonemapper {
     exposure: f64,
     k: f64,
     fixed_point: f64,
-    luminance_ceiling: f64,
+    luminance_ceiling: Option<f64>,
 
     res_1d: usize,
     res_3d: usize,
@@ -43,7 +43,7 @@ impl Default for Tonemapper {
             exposure: 1.0,
             k: 0.0,
             fixed_point: 0.2,
-            luminance_ceiling: 4096.0,
+            luminance_ceiling: None,
 
             res_1d: 2,
             res_3d: 2,
@@ -53,7 +53,12 @@ impl Default for Tonemapper {
 }
 
 impl Tonemapper {
-    pub fn new(exposure: f64, contrast: f64, fixed_point: f64, luminance_ceiling: f64) -> Self {
+    pub fn new(
+        exposure: f64,
+        contrast: f64,
+        fixed_point: f64,
+        luminance_ceiling: Option<f64>,
+    ) -> Self {
         let k = contrast.abs().sqrt() * contrast.signum();
 
         let res_1d = 1 << 12;
@@ -89,7 +94,16 @@ impl Tonemapper {
         if y <= 0.0 {
             0.0
         } else if y >= 1.0 {
-            self.luminance_ceiling
+            if let Some(ceil) = self.luminance_ceiling {
+                ceil
+            } else {
+                // Infinity would actually be correct here, but it leads
+                // to issues in the generated LUTs.  So instead we just
+                // choose an extremely large finite number that fits
+                // within an f32 (since later processing may be done in
+                // f32).
+                (f32::MAX / 2.0) as f64
+            }
         } else {
             filmic::curve_inv(y, self.k, self.fixed_point, self.luminance_ceiling) / self.exposure
         }
@@ -266,10 +280,14 @@ mod filmic {
     ///      lower values less.
     /// `fixed_point`: the value of `x` that should map to itself.
     #[inline(always)]
-    pub fn curve(x: f64, c: f64, fixed_point: f64, luminance_ceiling: f64) -> f64 {
+    pub fn curve(x: f64, c: f64, fixed_point: f64, luminance_ceiling: Option<f64>) -> f64 {
         let b = fixed_point.log(0.5);
         let reinhard_scale_x = reinhard_inv(fixed_point, REINHARD_P) / fixed_point;
-        let reinhard_scale_y = 1.0 / reinhard(luminance_ceiling, REINHARD_P);
+        let reinhard_scale_y = if let Some(ceil) = luminance_ceiling {
+            1.0 / reinhard(ceil, REINHARD_P)
+        } else {
+            1.0
+        };
 
         // Reinhard.
         let r = reinhard(x * reinhard_scale_x, REINHARD_P) * reinhard_scale_y;
@@ -281,10 +299,14 @@ mod filmic {
     }
 
     #[inline(always)]
-    pub fn curve_inv(y: f64, c: f64, fixed_point: f64, luminance_ceiling: f64) -> f64 {
+    pub fn curve_inv(y: f64, c: f64, fixed_point: f64, luminance_ceiling: Option<f64>) -> f64 {
         let b = fixed_point.log(0.5);
         let reinhard_scale_x = reinhard_inv(fixed_point, REINHARD_P) / fixed_point;
-        let reinhard_scale_y = 1.0 / reinhard(luminance_ceiling, REINHARD_P);
+        let reinhard_scale_y = if let Some(ceil) = luminance_ceiling {
+            1.0 / reinhard(ceil, REINHARD_P)
+        } else {
+            1.0
+        };
 
         // Contrast sigmoid.
         let m = y.powf(1.0 / b);
