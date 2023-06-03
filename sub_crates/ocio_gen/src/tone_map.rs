@@ -407,7 +407,12 @@ mod filmic {
         fn filmic_curve_round_trip() {
             for i in 0..17 {
                 let x = i as f64 / 16.0;
-                let x2 = curve(curve_inv(x, 2.0, 0.18, 2048.0), 2.0, 0.18, 2048.0);
+                let x2 = curve(
+                    curve_inv(x, 2.0, 0.18, Some(2048.0)),
+                    2.0,
+                    0.18,
+                    Some(2048.0),
+                );
                 assert!((x - x2).abs() < 0.000_001);
             }
         }
@@ -491,7 +496,7 @@ mod test {
 
     #[test]
     fn tonemap_1d_round_trip() {
-        let curve = Tonemapper::new(1.1, 2.0, 0.18, 8.0_f64.exp2());
+        let curve = Tonemapper::new(1.1, 2.0, 0.18, Some(5.0_f64.exp2()));
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));
