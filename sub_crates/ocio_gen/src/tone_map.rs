@@ -269,11 +269,13 @@ impl Tonemapper {
 /// the dynamic range, you should scale up and clamp the result by the
 /// appropriate amount.
 mod filmic {
-    /// How "sharp" our Reinhard function is.  1.0 is standard Reinhard,
-    /// less than 1.0 is gentler, more than 1.0 is sharper.  Gentler
+    use super::{reinhard, reinhard_inv};
+
+    /// How "gentle" our Reinhard function is.  1.0 is standard Reinhard,
+    /// less than 1.0 is sharper, more than 1.0 is gentler.  Gentler
     /// seems to give more flexibility in terms of effective dynamic
     /// range.
-    const REINHARD_P: f64 = 0.5;
+    const REINHARD_P: f64 = 2.0;
 
     /// `c`: contrast.  A value of zero creates the classic Reinhard
     ///      curve, larger values produce a more contrasty look, and
@@ -369,27 +371,6 @@ mod filmic {
         .clamp(0.0, 1.0)
     }
 
-    /// Generalized Reinhard curve.
-    ///
-    /// `p`: a tweaking parameter that affects the shape of the curve,
-    ///      in (0.0, inf].  Larger values make it sharper, lower values
-    ///      make it gentler.  1.0 = standard Reinhard.
-    #[inline(always)]
-    fn reinhard(x: f64, p: f64) -> f64 {
-        (x.powf(-p) + 1.0).powf(1.0 / -p)
-    }
-
-    #[inline(always)]
-    fn reinhard_inv(x: f64, p: f64) -> f64 {
-        if x <= 0.0 {
-            0.0
-        } else if x >= 1.0 {
-            std::f64::INFINITY
-        } else {
-            (x.powf(-p) - 1.0).powf(1.0 / -p)
-        }
-    }
-
     #[cfg(test)]
     mod test {
         use super::*;
@@ -440,6 +421,71 @@ fn saturation_matrix(factor: f64) -> matrix::Matrix {
     let b = (1.0 - a) / 2.0;
 
     [[a, b, b], [b, a, b], [b, b, a]]
+}
+
+/// Generalized Reinhard curve.
+///
+/// `p`: a tweaking parameter that affects the shape of the curve,
+///      in (0.0, inf].  Larger values make it gentler, lower values
+///      make it sharper.  1.0 = standard Reinhard, 0.0 = linear
+///      in [0,1].
+#[inline(always)]
+fn reinhard(x: f64, p: f64) -> f64 {
+    // Make out-of-range numbers do something reasonable and predictable.
+    if x <= 0.0 {
+        return x;
+    }
+
+    // Special case so we get linear at `p == 0` instead of undefined.
+    // Negative `p` is unsupported, so clamp.
+    if p <= 0.0 {
+        if x >= 1.0 {
+            return 1.0;
+        } else {
+            return x;
+        }
+    }
+
+    let tmp = x.powf(-1.0 / p);
+
+    // Special cases for numerical stability.
+    // Note that for the supported values of `p`, `tmp > 1.0` implies
+    // `x < 1.0` and vice versa.
+    if tmp > 1.0e15 {
+        return x;
+    } else if tmp < 1.0e-15 {
+        return 1.0;
+    }
+
+    // Actual generalized Reinhard.
+    (tmp + 1.0).powf(-p)
+}
+
+/// Inverse of `reinhard()`.
+#[inline(always)]
+fn reinhard_inv(x: f64, p: f64) -> f64 {
+    // Make out-of-range numbers do something reasonable and predictable.
+    if x <= 0.0 {
+        return x;
+    } else if x >= 1.0 {
+        return std::f64::INFINITY;
+    }
+
+    // Special case so we get linear at `p == 0` instead of undefined.
+    // Negative `p` is unsupported, so clamp.
+    if p <= 0.0 {
+        return x;
+    }
+
+    let tmp = x.powf(-1.0 / p);
+
+    // Special case for numerical stability.
+    if tmp > 1.0e15 {
+        return x;
+    }
+
+    // Actual generalized Reinhard inverse.
+    (tmp - 1.0).powf(-p)
 }
 
 fn smoothstep(x: f64) -> f64 {
@@ -501,6 +547,18 @@ mod test {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));
             assert!((x - x2).abs() < 0.000_001);
+        }
+    }
+
+    #[test]
+    fn reinhard_round_trip() {
+        for i in 0..17 {
+            for p in 0..17 {
+                let x = (i - 8) as f64 / 4.0;
+                let p = i as f64 / 8.0;
+                let x2 = reinhard_inv(reinhard(x, p), p);
+                assert!((x - x2).abs() < 0.000_001);
+            }
         }
     }
 }
