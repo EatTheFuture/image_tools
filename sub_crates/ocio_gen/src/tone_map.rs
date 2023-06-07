@@ -121,21 +121,29 @@ impl Tonemapper {
         }
 
         // TODO: make this a user-settable parameter...?
-        const DESAT_FACTOR: f64 = 0.85;
+        const DESAT_FACTOR: f64 = 0.25;
 
         let gray_point1 = {
             let l = luma(rgb);
             [l, l, l]
         };
-        let vec1 = vsub(rgb, gray_point1);
 
-        let rgb1 = {
-            // Clip to the open-domain color gamut.
-            let clipped = rgb_gamut_intersect(rgb, gray_point1, false, true);
+        // Clip to the open-domain color gamut.
+        let clipped = rgb_gamut_intersect(rgb, gray_point1, false, true);
 
-            // Desaturate all colors slightly, so that even super saturated
-            // colors blow out at the high end with the tone mapping curve.
-            vlerp(gray_point1, clipped, DESAT_FACTOR)
+        let vec1 = vsub(clipped, gray_point1);
+
+        // Desaturate all colors slightly, so that even super saturated
+        // colors blow out at the high end with the tone mapping curve.
+        let (desat_factor, rgb1) = {
+            let sat = gamut_relative_length(vec1, gray_point1, false);
+            let desat_factor = if sat > 0.000_000_000_000_1 {
+                reinhard(sat, DESAT_FACTOR) / sat
+            } else {
+                1.0
+            };
+
+            (desat_factor, vlerp(gray_point1, clipped, desat_factor))
         };
 
         // Apply tone mapping curve.
@@ -151,7 +159,7 @@ impl Tonemapper {
         };
 
         // Re-saturate to restore colors.
-        let resat = vlerp(gray_point2, rgb2, 1.0 / DESAT_FACTOR);
+        let resat = vlerp(gray_point2, rgb2, 1.0 / desat_factor);
 
         // Adjust angle to approximately preserve hue.
         let rgb_final = {
@@ -436,6 +444,17 @@ fn set_saturation(rgb: [f64; 3], gray_point: [f64; 3], saturation: f64) -> [f64;
         let sat = len / gp_len;
         let scale = saturation / sat;
         vadd(gray_point, vscale(vec, scale))
+    }
+}
+
+fn gamut_relative_length(vec: [f64; 3], gray_point: [f64; 3], closed_domain: bool) -> f64 {
+    let len = vlen(vec);
+    if len > SATURATION_THRESHOLD {
+        let distant = vadd(gray_point, vscale(vec, 1_000_000_000.0 / len));
+        let projected = rgb_gamut_intersect(distant, gray_point, closed_domain, true);
+        len / vlen(vsub(projected, gray_point))
+    } else {
+        0.0
     }
 }
 
