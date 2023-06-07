@@ -115,60 +115,48 @@ impl Tonemapper {
         // allow the client code to pass its own luma function, so that it can
         // be specific to the given color space and as sophisticated as needed.
         fn luma(rgb: [f64; 3]) -> f64 {
-            const LUMA_WEIGHTS: [f64; 3] = [3.0 / 13.0, 9.0 / 13.0, 1.0 / 13.0];
+            const LUMA_WEIGHTS: [f64; 3] = [3.0 / 13.0, 10.0 / 13.0, 1.0 / 13.0];
             ((rgb[0] * LUMA_WEIGHTS[0]) + (rgb[1] * LUMA_WEIGHTS[1]) + (rgb[2] * LUMA_WEIGHTS[2]))
                 / LUMA_WEIGHTS.iter().sum::<f64>()
         }
 
         // TODO: make this a user-settable parameter...?
-        const DESAT_FACTOR: f64 = 0.25;
+        // Should be >= 0.0, with larger values desturating
+        // colors more.
+        const DESAT_POWER: f64 = 2.0;
 
-        let gray_point1 = {
-            let l = luma(rgb);
-            [l, l, l]
+        // Luminance computations.
+        let lm = luma(rgb);
+        if lm <= 0.0 {
+            return [0.0; 3];
+        }
+        let lm_tonemapped = self.eval_1d(lm);
+        let lm_compression = {
+            // Compute the compression of the luminance.  The is
+            // basically a numerically approximated relative derivative.
+            // 1.0 means no compression, < 1.0 means compressed,
+            // and > 1.0 means expanded.
+            const DELTA: f64 = 1.00001;
+            let lm_d = (lm * DELTA) - lm;
+            let lm_d_tonemapped = self.eval_1d(lm * DELTA) - lm_tonemapped;
+            lm_d_tonemapped / lm_d
         };
 
-        // Clip to the open-domain color gamut.
-        let clipped = rgb_gamut_intersect(rgb, gray_point1, false, true);
+        // RGB and gray point adjusted to the tone mapped luminance.
+        let rgb2 = vscale(rgb, lm_tonemapped / lm);
+        let gray_point2 = [lm_tonemapped; 3];
 
-        let vec1 = vsub(clipped, gray_point1);
-
-        // Desaturate all colors slightly, so that even super saturated
-        // colors blow out at the high end with the tone mapping curve.
-        let (desat_factor, rgb1) = {
-            let sat = gamut_relative_length(vec1, gray_point1, false);
-            let desat_factor = if sat > 0.000_000_000_000_1 {
-                reinhard(sat, DESAT_FACTOR) / sat
-            } else {
+        // Desaturate colors based on how compressed their luminance is.
+        let desat_factor = {
+            let x = lm_compression.min(1.0);
+            if DESAT_POWER == 0.0 {
                 1.0
-            };
-
-            (desat_factor, vlerp(gray_point1, clipped, desat_factor))
-        };
-
-        // Apply tone mapping curve.
-        let rgb2 = [
-            self.eval_1d(rgb1[0]),
-            self.eval_1d(rgb1[1]),
-            self.eval_1d(rgb1[2]),
-        ];
-
-        let gray_point2 = {
-            let l = luma(rgb2);
-            [l, l, l]
-        };
-
-        // Re-saturate to restore colors.
-        let resat = vlerp(gray_point2, rgb2, 1.0 / desat_factor);
-
-        // Adjust angle to approximately preserve hue.
-        let rgb_final = {
-            if let Some(sat) = saturation(resat, gray_point2) {
-                set_saturation(vadd(gray_point2, vec1), gray_point2, sat)
             } else {
-                resat
+                let k = DESAT_POWER * DESAT_POWER;
+                (((k + 1.0) * x) / (k + x)).powf(1.0 / 2.0)
             }
         };
+        let rgb_final = vadd(gray_point2, vscale(vsub(rgb2, gray_point2), desat_factor));
 
         // Clip to the closed-domain color gamut.
         rgb_gamut_intersect(rgb_final, gray_point2, true, true)
@@ -251,7 +239,7 @@ impl Tonemapper {
         // during tone mapping.  This ensures that even pathological
         // colors eventually blow out to white at high enough exposures.
         transforms.extend([Transform::MatrixTransform(matrix::to_4x4_f32(
-            saturation_matrix(0.99),
+            saturation_matrix(0.995),
         ))]);
 
         // Apply tone map curve.
