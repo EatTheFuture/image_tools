@@ -155,9 +155,11 @@ impl Tonemapper {
 
         // Adjust angle to approximately preserve hue.
         let rgb_final = {
-            let length1 = gamut_relative_length(vec1, gray_point2, false);
-            let length2 = gamut_relative_length(vsub(resat, gray_point2), gray_point2, false);
-            vadd(gray_point2, vscale(vec1, length2 / length1))
+            if let Some(sat) = saturation(resat, gray_point2) {
+                set_saturation(vadd(gray_point2, vec1), gray_point2, sat)
+            } else {
+                resat
+            }
         };
 
         // Clip to the closed-domain color gamut.
@@ -400,15 +402,40 @@ mod filmic {
     }
 }
 
+const SATURATION_THRESHOLD: f64 = 0.000_000_000_000_1;
+
+/// This isn't "saturation" in the typical sense.  It's basically a
+/// luminance-relative distance from the gray point.  This stands in
+/// well for most purposes, but it's worth being aware that the
+/// returned value has no relationship to the maximum possible
+/// saturation within the gamut (i.e. 1.0 != max saturation).
 #[inline(always)]
-fn gamut_relative_length(vec: [f64; 3], gray_point: [f64; 3], closed_domain: bool) -> f64 {
+fn saturation(rgb: [f64; 3], gray_point: [f64; 3]) -> Option<f64> {
+    let vec = vsub(rgb, gray_point);
     let len = vlen(vec);
-    if len > 0.00000001 {
-        let distant = vadd(gray_point, vscale(vec, 65536.0));
-        let projected = rgb_gamut_intersect(distant, gray_point, closed_domain, true);
-        vlen(vec) / vlen(vsub(projected, gray_point))
+    let gp_len = vlen(gray_point);
+
+    if len <= SATURATION_THRESHOLD {
+        Some(0.0)
+    } else if gp_len <= SATURATION_THRESHOLD {
+        None
     } else {
-        0.0
+        Some(len / gp_len)
+    }
+}
+
+#[inline(always)]
+fn set_saturation(rgb: [f64; 3], gray_point: [f64; 3], saturation: f64) -> [f64; 3] {
+    let vec = vsub(rgb, gray_point);
+    let len = vlen(vec);
+    let gp_len = vlen(gray_point);
+
+    if len <= SATURATION_THRESHOLD || gp_len <= SATURATION_THRESHOLD {
+        gray_point
+    } else {
+        let sat = len / gp_len;
+        let scale = saturation / sat;
+        vadd(gray_point, vscale(vec, scale))
     }
 }
 
