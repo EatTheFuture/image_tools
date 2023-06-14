@@ -111,19 +111,14 @@ impl Tonemapper {
 
     pub fn eval_rgb(&self, rgb: [f64; 3]) -> [f64; 3] {
         // TODO: this luma function is poor, just using the general idea that
-        // blue has the least influence and green has the most.  In the future,
-        // allow the client code to pass its own luma function, so that it can
-        // be specific to the given color space and as sophisticated as needed.
+        // green has the most influence.  In the future, allow the client code
+        // to pass its own luma function, so that it can be specific to the
+        // given color space and as sophisticated as needed.
         fn luma(rgb: [f64; 3]) -> f64 {
-            const LUMA_WEIGHTS: [f64; 3] = [3.0 / 13.0, 10.0 / 13.0, 1.0 / 13.0];
+            const LUMA_WEIGHTS: [f64; 3] = [2.0, 10.0, 1.0];
             ((rgb[0] * LUMA_WEIGHTS[0]) + (rgb[1] * LUMA_WEIGHTS[1]) + (rgb[2] * LUMA_WEIGHTS[2]))
                 / LUMA_WEIGHTS.iter().sum::<f64>()
         }
-
-        // TODO: make this a user-settable parameter...?
-        // Should be >= 0.0, with larger values desturating
-        // colors more.
-        const DESAT_POWER: f64 = 2.0;
 
         // Luminance computations.
         let lm = luma(rgb);
@@ -131,34 +126,37 @@ impl Tonemapper {
             return [0.0; 3];
         }
         let lm_tonemapped = self.eval_1d(lm);
-        let lm_compression = {
-            // Compute the compression of the luminance.  The is
-            // basically a numerically approximated relative derivative.
-            // 1.0 means no compression, < 1.0 means compressed,
-            // and > 1.0 means expanded.
-            const DELTA: f64 = 1.00001;
-            let lm_d = (lm * DELTA) - lm;
-            let lm_d_tonemapped = self.eval_1d(lm * DELTA) - lm_tonemapped;
-            lm_d_tonemapped / lm_d
+
+        // Slope of the tone mapping at the evaluated point.  This gives
+        // us a measure of luminance compression.
+        let lm_tonemapped_slope = {
+            // We could do this with an analytic derivative, but we
+            // do it numerically instead because laziness.  And it's
+            // more than good enough anyway.
+            let lm_d = if lm.abs() > 0.000_000_1 {
+                lm * 1.00001
+            } else {
+                lm + 0.000_000_000_1
+            };
+            let lm_d_tonemapped = self.eval_1d(lm_d);
+            (lm_d_tonemapped - lm_tonemapped) / (lm_d - lm)
         };
 
         // RGB and gray point adjusted to the tone mapped luminance.
         let rgb2 = vscale(rgb, lm_tonemapped / lm);
         let gray_point2 = [lm_tonemapped; 3];
 
-        // Desaturate colors based on how compressed their luminance is.
+        // Desaturate colors based on a combination of how compressed their
+        // luminance is and how saturated they are.
         let desat_factor = {
-            let x = lm_compression.min(1.0);
-            if DESAT_POWER == 0.0 {
-                1.0
-            } else {
-                let k = DESAT_POWER * DESAT_POWER;
-                (((k + 1.0) * x) / (k + x)).powf(1.0 / 2.0)
-            }
+            let saturation = luma(vsub(rgb2, gray_point2)) / gray_point2[0];
+            let x = lm_tonemapped_slope.min(1.0);
+            x.powf(lerp(0.3, 0.05, saturation.max(0.0).min(1.0).powf(0.2)))
         };
-        let rgb_final = vadd(gray_point2, vscale(vsub(rgb2, gray_point2), desat_factor));
+        let rgb_final = vlerp(gray_point2, rgb2, desat_factor);
 
         // Clip to the closed-domain color gamut.
+        // TODO: do this with a soft clip that doesn't introduce mach bands.
         rgb_gamut_intersect(rgb_final, gray_point2, true, true)
     }
 
@@ -564,10 +562,15 @@ fn vmax(a: [f64; 3]) -> f64 {
 
 fn vlerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
     [
-        (a[0] * (1.0 - t)) + (b[0] * t),
-        (a[1] * (1.0 - t)) + (b[1] * t),
-        (a[2] * (1.0 - t)) + (b[2] * t),
+        lerp(a[0], b[0], t),
+        lerp(a[1], b[1], t),
+        lerp(a[2], b[2], t),
     ]
+}
+
+#[inline(always)]
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    (a * (1.0 - t)) + (b * t)
 }
 
 #[cfg(test)]
