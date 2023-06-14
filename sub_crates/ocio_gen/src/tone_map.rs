@@ -6,6 +6,8 @@ use colorbox::{
 
 use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
+const TMP_DESAT_FACTOR: f64 = 0.9;
+
 /// A filmic(ish) tonemapping operator.
 ///
 /// - `exposure`: input exposure adjustment before applying the tone mapping.
@@ -125,6 +127,8 @@ impl Tonemapper {
         if lm <= 0.0 {
             return [0.0; 3];
         }
+        let gray_point1 = [lm; 3];
+        let rgb1 = rgb_gamut_intersect(rgb, gray_point1, false, true);
         let lm_tonemapped = self.eval_1d(lm);
 
         // Slope of the tone mapping at the evaluated point.  This gives
@@ -143,7 +147,7 @@ impl Tonemapper {
         };
 
         // RGB and gray point adjusted to the tone mapped luminance.
-        let rgb2 = vscale(rgb, lm_tonemapped / lm);
+        let rgb2 = vscale(rgb1, lm_tonemapped / lm);
         let gray_point2 = [lm_tonemapped; 3];
 
         // Desaturate colors based on a combination of how compressed their
@@ -188,6 +192,10 @@ impl Tonemapper {
                     self.eval_1d_inv(rgb[1]),
                     self.eval_1d_inv(rgb[2]),
                 ];
+
+                // Resaturate;
+                let rgb_linear =
+                    matrix::transform_color(rgb_linear, saturation_matrix(1.0 / TMP_DESAT_FACTOR));
 
                 // Figure out what it should map to.
                 let rgb_adjusted = self.eval_rgb(rgb_linear);
@@ -237,7 +245,7 @@ impl Tonemapper {
         // during tone mapping.  This ensures that even pathological
         // colors eventually blow out to white at high enough exposures.
         transforms.extend([Transform::MatrixTransform(matrix::to_4x4_f32(
-            saturation_matrix(0.995),
+            saturation_matrix(TMP_DESAT_FACTOR),
         ))]);
 
         // Apply tone map curve.
