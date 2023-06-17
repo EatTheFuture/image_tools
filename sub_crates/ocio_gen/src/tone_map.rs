@@ -64,7 +64,7 @@ impl Tonemapper {
         let k = contrast.abs().sqrt() * contrast.signum();
 
         let res_1d = 1 << 12;
-        let res_3d = 32 + 1;
+        let res_3d = 24 + 1;
 
         Tonemapper {
             exposure: exposure,
@@ -117,7 +117,7 @@ impl Tonemapper {
         // to pass its own luma function, so that it can be specific to the
         // given color space and as sophisticated as needed.
         fn luma(rgb: [f64; 3]) -> f64 {
-            const LUMA_WEIGHTS: [f64; 3] = [1.0, 10.0, 1.0];
+            const LUMA_WEIGHTS: [f64; 3] = [1.0 / 6.0, 4.0 / 6.0, 1.0 / 6.0];
             ((rgb[0] * LUMA_WEIGHTS[0]) + (rgb[1] * LUMA_WEIGHTS[1]) + (rgb[2] * LUMA_WEIGHTS[2]))
                 / LUMA_WEIGHTS.iter().sum::<f64>()
         }
