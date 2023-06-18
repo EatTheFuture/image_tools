@@ -24,9 +24,9 @@ At the moment this only works correctly with image files that contain Exif data 
 
 ## ETF LUT Maker
 
-A tool to generate LUTs by analyzing purpose-captured images from a camera.
+A tool for generating and adjusting LUTs.
 
-Currently this is only capable of generating transfer function LUTs.
+Currently this is only capable of generating 1D transfer function LUTs.
 
 ### To-do:
 
@@ -41,19 +41,17 @@ Currently this is only capable of generating transfer function LUTs.
 
 A tool to easily generate custom Open Color IO configurations.
 
-Currently this only generates configurations based on the Blender 3.0 default configuration, but other configuration templates are planned.
-
 ### To-do:
 
 - [x] Save data in the OCIO config file that allows OCIO Maker to re-open the config for further editing.  Right now, after closing OCIO Maker you have to start all over if you want to change something, which can be obnoxious.
 - [x] Allow specifying custom chromaticity coordinates (currently limited to presets in a menu).
 - [x] Allow specifying a base template config, along with custom reference/working color space.
 - [x] Do reasonable gamut clipping on output transforms.
-- [ ] Do reasonable gamut clipping on input transforms.
+- [x] Do reasonable gamut clipping on input transforms.
 - [ ] Add a template for ACES "lite".  Essentially, the same as ACES except without the massive list of IDTs (since you'll be adding your own IDTs).
   - [x] "ACES Lite" template added, but not yet complete.
+- [ ] User-adjustable tone mappers (currently WIP).
 - [ ] Support for 3D LUTs.
-- [ ] Allow enabling gamut mapping for OCIO 2.1 configs (once OCIO 2.1 is released).
 
 
 # License
