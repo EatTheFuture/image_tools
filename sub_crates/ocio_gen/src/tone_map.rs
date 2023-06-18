@@ -154,6 +154,7 @@ impl Tonemapper {
         // luminance is and how saturated they are.
         let desat_factor = {
             let saturation = luma(vsub(rgb2, gray_point2)) / gray_point2[0];
+            // let saturation = saturation(rgb2, gray_point2).unwrap_or(0.0);
             let x = lm_tonemapped_slope.min(1.0);
             x.powf(lerp(0.3, 0.05, saturation.max(0.0).min(1.0).powf(0.2)))
         };
@@ -406,11 +407,8 @@ mod filmic {
 
 const SATURATION_THRESHOLD: f64 = 0.000_000_000_000_1;
 
-/// This isn't "saturation" in the typical sense.  It's basically a
-/// luminance-relative distance from the gray point.  This stands in
-/// well for most purposes, but it's worth being aware that the
-/// returned value has no relationship to the maximum possible
-/// saturation within the gamut (i.e. 1.0 != max saturation).
+/// Return value of 0.0 means on the achromatic axis, 1.0 means on the
+/// gamut boundary.
 #[inline(always)]
 fn saturation(rgb: [f64; 3], gray_point: [f64; 3]) -> Option<f64> {
     let vec = vsub(rgb, gray_point);
@@ -422,7 +420,7 @@ fn saturation(rgb: [f64; 3], gray_point: [f64; 3]) -> Option<f64> {
     } else if gp_len <= SATURATION_THRESHOLD {
         None
     } else {
-        Some(len / gp_len)
+        Some(1.0 / gamut_boundary_fac(gray_point, vec)?)
     }
 }
 
@@ -435,20 +433,34 @@ fn set_saturation(rgb: [f64; 3], gray_point: [f64; 3], saturation: f64) -> [f64;
     if len <= SATURATION_THRESHOLD || gp_len <= SATURATION_THRESHOLD {
         gray_point
     } else {
-        let sat = len / gp_len;
+        let sat = 1.0 / gamut_boundary_fac(gray_point, vec).unwrap();
         let scale = saturation / sat;
         vadd(gray_point, vscale(vec, scale))
     }
 }
 
-fn gamut_relative_length(vec: [f64; 3], gray_point: [f64; 3], closed_domain: bool) -> f64 {
-    let len = vlen(vec);
-    if len > SATURATION_THRESHOLD {
-        let distant = vadd(gray_point, vscale(vec, 1_000_000_000.0 / len));
-        let projected = rgb_gamut_intersect(distant, gray_point, closed_domain, true);
-        len / vlen(vsub(projected, gray_point))
+/// Returns the factor `dir` would need to be scaled by for
+/// `from + dir` to exactly hit the boundary of the gamut.
+fn gamut_boundary_fac(from: [f64; 3], dir: [f64; 3]) -> Option<f64> {
+    // If `from` is already on the boundary.
+    // This is actually to handle the case when `from` is on the boundary
+    // *and* `dir` is the zero vector.  If `dir` isn't zero, this special
+    // case isn't needed.  But it gives the right answer anyway, so we
+    // skip the checks on `dir`.
+    if from[0] == 0.0 || from[1] == 0.0 || from[2] == 0.0 {
+        return Some(0.0);
+    }
+
+    let ts = [-from[0] / dir[0], -from[1] / dir[1], -from[2] / dir[2]];
+    let t = ts.iter().fold(
+        f64::INFINITY,
+        |a, b| if *b >= 0.0 && *b < a { *b } else { a },
+    );
+
+    if t.is_finite() {
+        Some(t)
     } else {
-        0.0
+        None
     }
 }
 
