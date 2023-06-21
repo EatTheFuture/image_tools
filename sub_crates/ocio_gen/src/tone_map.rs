@@ -112,12 +112,10 @@ impl Tonemapper {
     }
 
     pub fn eval_rgb(&self, rgb: [f64; 3]) -> [f64; 3] {
-        // TODO: this luma function is poor, just using the general idea that
-        // green has the most influence.  In the future, allow the client code
-        // to pass its own luma function, so that it can be specific to the
-        // given color space and as sophisticated as needed.
         fn luma(rgb: [f64; 3]) -> f64 {
-            const LUMA_WEIGHTS: [f64; 3] = [1.0 / 6.0, 4.0 / 6.0, 1.0 / 6.0];
+            // TODO: in the future, let client code pass the luma weights so
+            // they can be properly adapted to the particular color space.
+            const LUMA_WEIGHTS: [f64; 3] = [1.0 / 13.0, 11.0 / 13.0, 1.0 / 13.0];
             ((rgb[0] * LUMA_WEIGHTS[0]) + (rgb[1] * LUMA_WEIGHTS[1]) + (rgb[2] * LUMA_WEIGHTS[2]))
                 / LUMA_WEIGHTS.iter().sum::<f64>()
         }
@@ -241,9 +239,9 @@ impl Tonemapper {
             Transform::FromHSV,
         ]);
 
-        // Imperceptibly desaturate the colors, for better behavior
-        // during tone mapping.  This ensures that even pathological
-        // colors eventually blow out to white at high enough exposures.
+        // Desaturate the colors to avoid artifacts at the edge of the
+        // 3D LUT.  Note that this is compensated for in the 3D LUT, so
+        // the final output is as if no desaturation was done at all.
         transforms.extend([Transform::MatrixTransform(matrix::to_4x4_f32(
             saturation_matrix(TMP_DESAT_FACTOR),
         ))]);

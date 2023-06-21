@@ -591,7 +591,7 @@ impl OCIOConfig {
         // because in practice they work plenty well, they're only
         // used for out-of-gamut colors, and this way we can re-use
         // the same luts for all gamuts.
-        let input_luminance_weights = [1.0 / 6.0, 4.0 / 6.0, 1.0 / 6.0];
+        let input_luminance_weights = [1.0 / 13.0, 11.0 / 13.0, 1.0 / 13.0];
         let output_luminance_weights = [1.0 / 6.0, 4.0 / 6.0, 1.0 / 6.0];
 
         self.search_path.insert(GAMUT_DIR.into());
