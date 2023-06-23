@@ -568,7 +568,7 @@ fn soft_gamut_clip(rgb: [f64; 3], gray_point: [f64; 3], softness: f64) -> [f64; 
 /// `x = 0` and at `x = s + 1`, and where `y = 1` at `x = 1`.
 /// Like this:
 ///
-/// ```
+/// ```text
 ///    /-_
 ///   /   -_
 ///  /  |   -_
