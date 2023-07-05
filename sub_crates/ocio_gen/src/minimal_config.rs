@@ -1,6 +1,6 @@
 use crate::{config::*, tone_map::Tonemapper};
 
-use colorbox::{chroma, matrix, matrix_compose};
+use colorbox::{chroma, matrix};
 
 /// Builds a config with just the bare basics.
 pub fn make_minimal(
@@ -8,7 +8,7 @@ pub fn make_minimal(
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
     // Tone mapping operators, used various places below.
-    let tonemap_normal = Tonemapper::new(0.90, 5.0, 0.18, None);
+    let tonemap_normal = Tonemapper::new(1.0, 5.0, 0.18, None);
     let tonemap_contrast = Tonemapper::new(1.1, 10.0, 0.18, None);
 
     //---------------------------------------------------------
@@ -231,7 +231,7 @@ pub fn make_minimal(
             from_reference: vec![
                 //---------------------
                 // Convert color gamut.
-                Transform::MatrixTransform(matrix::to_4x4_f32(matrix_compose!(
+                Transform::MatrixTransform(matrix::to_4x4_f32(matrix::compose(&[
                     matrix::rgb_to_xyz_matrix(config.reference_space_chroma),
                     matrix::xyz_chromatic_adaptation_matrix(
                         config.reference_space_chroma.w,
@@ -239,7 +239,7 @@ pub fn make_minimal(
                         whitepoint_adaptation_method,
                     ),
                     matrix::xyz_to_rgb_matrix(chroma::REC2020),
-                ))),
+                ]))),
                 //------------------------
                 // Gamut and tone mapping.
                 Transform::ToHSV,
@@ -337,14 +337,14 @@ pub fn make_minimal(
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
         from_reference: vec![Transform::MatrixTransform(matrix::to_4x4_f32(
-            matrix_compose!(
+            matrix::compose(&[
                 matrix::rgb_to_xyz_matrix(reference_space_chroma),
                 matrix::xyz_chromatic_adaptation_matrix(
                     reference_space_chroma.w,
                     chroma::WHITEPOINT_D65,
                     whitepoint_adaptation_method,
                 ),
-            ),
+            ]),
         ))],
         ..ColorSpace::default()
     });

@@ -8,7 +8,6 @@ use colorbox::{
     chroma::Chromaticities,
     lut::{Lut1D, Lut3D},
     matrix::{self, AdaptationMethod},
-    matrix_compose,
 };
 
 const GAMUT_DIR: &str = "gamut_handling";
@@ -435,7 +434,7 @@ impl OCIOConfig {
             to_reference_transforms.push(to_linear.clone());
         }
         to_reference_transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
-            matrix_compose!(
+            matrix::compose(&[
                 matrix::rgb_to_xyz_matrix(chromaticities),
                 matrix::xyz_chromatic_adaptation_matrix(
                     chromaticities.w,
@@ -443,7 +442,7 @@ impl OCIOConfig {
                     whitepoint_adaptation_method,
                 ),
                 matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
-            ),
+            ]),
         )));
         if use_gamut_clipping && !gamut_is_within_gamut(chromaticities, self.reference_space_chroma)
         {
@@ -462,7 +461,7 @@ impl OCIOConfig {
         // Build from-reference transforms.
         let mut from_reference_transforms = Vec::new();
         from_reference_transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
-            matrix::invert(matrix_compose!(
+            matrix::invert(matrix::compose(&[
                 matrix::rgb_to_xyz_matrix(chromaticities),
                 matrix::xyz_chromatic_adaptation_matrix(
                     chromaticities.w,
@@ -470,7 +469,7 @@ impl OCIOConfig {
                     whitepoint_adaptation_method,
                 ),
                 matrix::xyz_to_rgb_matrix(self.reference_space_chroma),
-            ))
+            ]))
             .unwrap(),
         )));
         if let Some(to_linear) = to_linear_transform {
@@ -520,7 +519,7 @@ impl OCIOConfig {
         let mut transforms = Vec::new();
 
         transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
-            matrix_compose!(
+            matrix::compose(&[
                 matrix::rgb_to_xyz_matrix(self.reference_space_chroma),
                 matrix::xyz_chromatic_adaptation_matrix(
                     self.reference_space_chroma.w,
@@ -528,7 +527,7 @@ impl OCIOConfig {
                     whitepoint_adaptation_method,
                 ),
                 matrix::xyz_to_rgb_matrix(chromaticities),
-            ),
+            ]),
         )));
 
         transforms.extend(tonemap_transforms);

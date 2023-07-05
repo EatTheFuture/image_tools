@@ -397,7 +397,7 @@ dependencies = [
 [[package]]
 name = "colorbox"
 version = "0.3.0"
-source = "git+https://github.com/cessen/colorbox?branch=master#b7447eef80aeb1ecc10bfac407365d28245b7a2d"
+source = "git+https://github.com/cessen/colorbox?branch=master#a36771930e2860f62fd2335765d65dc84c3d24d1"
 
 [[package]]
 name = "combine"

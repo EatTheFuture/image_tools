@@ -1,6 +1,6 @@
 use crate::config::*;
 
-use colorbox::{chroma, lut::Lut1D, matrix, matrix_compose};
+use colorbox::{chroma, lut::Lut1D, matrix};
 
 pub const REFERENCE_SPACE_CHROMA: chroma::Chromaticities = chroma::REC709;
 
@@ -171,7 +171,7 @@ pub fn make_blender_3_0() -> OCIOConfig {
         bitdepth: Some(BitDepth::F32),
         isdata: Some(false),
         from_reference: vec![Transform::MatrixTransform(matrix::to_4x4_f32(
-            matrix_compose!(
+            matrix::compose(&[
                 matrix::rgb_to_xyz_matrix(chroma::REC709),
                 matrix::xyz_chromatic_adaptation_matrix(
                     chroma::REC709.w,
@@ -179,7 +179,7 @@ pub fn make_blender_3_0() -> OCIOConfig {
                     matrix::AdaptationMethod::XYZScale,
                 ),
                 matrix::xyz_to_rgb_matrix(chroma::ACES_AP0),
-            ),
+            ]),
         ))],
         ..ColorSpace::default()
     });
