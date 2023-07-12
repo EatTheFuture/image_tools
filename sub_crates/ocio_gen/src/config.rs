@@ -607,13 +607,8 @@ impl OCIOConfig {
                     1.5,
                     |(h, s, v)| {
                         let rgb = hsv_to_rgb([h, s, v]);
-                        let rgb2 = crate::gamut_map::rgb_clip(
-                            rgb,
-                            None,
-                            true,
-                            input_luminance_weights,
-                            0.0,
-                        );
+                        let rgb2 =
+                            crate::gamut_map::rgb_clip(rgb, None, input_luminance_weights, 0.0);
                         let hsv2 = rgb_to_hsv(rgb2);
                         (hsv2[0], hsv2[1], hsv2[2])
                     },
@@ -635,9 +630,8 @@ impl OCIOConfig {
                         let rgb2 = crate::gamut_map::rgb_clip(
                             rgb,
                             Some(1.0),
-                            true,
                             output_luminance_weights,
-                            0.5,
+                            0.075,
                         );
                         let hsv2 = rgb_to_hsv(rgb2);
                         (hsv2[0], hsv2[1], hsv2[2])

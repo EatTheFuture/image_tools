@@ -1,7 +1,7 @@
 use colorbox::{
     lut::{Lut1D, Lut3D},
     matrix,
-    transforms::rgb_gamut_intersect,
+    transforms::rgb_gamut,
 };
 
 use crate::config::{ExponentLUTMapper, Interpolation, Transform};
@@ -126,7 +126,7 @@ impl Tonemapper {
             return [0.0; 3];
         }
         let gray_point1 = [lm; 3];
-        let rgb1 = rgb_gamut_intersect(rgb, gray_point1, false, true);
+        let rgb1 = rgb_gamut::open_domain_clip(rgb, lm);
         let lm_tonemapped = self.eval_1d(lm);
 
         // Slope of the tone mapping at the evaluated point.  This gives
@@ -159,7 +159,7 @@ impl Tonemapper {
         let rgb_final = vlerp(gray_point2, rgb2, desat_factor);
 
         // Clip to the closed-domain color gamut.
-        soft_gamut_clip(rgb_final, gray_point2, 0.125)
+        rgb_gamut::closed_domain_clip(rgb_final, lm_tonemapped, 0.125)
     }
 
     /// Generates a 1D and 3D LUT to apply the tone mapping.
@@ -535,78 +535,6 @@ fn reinhard_inv(x: f64, p: f64) -> f64 {
 
     // Actual generalized Reinhard inverse.
     (tmp - 1.0).powf(-p)
-}
-
-/// Does a soft gamut clip on a closed-domain color gamut.
-///
-/// Assumes all RGB channels are >= 0.
-///
-/// Ensures RGB channels are in the range [0.0, 1.0].
-fn soft_gamut_clip(rgb: [f64; 3], gray_point: [f64; 3], softness: f64) -> [f64; 3] {
-    let max_component = rgb[0].max(rgb[1]).max(rgb[2]);
-    if max_component <= 0.0 {
-        return [0.0; 3];
-    }
-
-    match saturation(rgb, gray_point) {
-        None | Some(0.0) => {
-            return rgb;
-        }
-        _ => {}
-    };
-
-    let t = soft_elbow(max_component, max_component / gray_point[0] - 1.0, softness);
-    vadd(gray_point, vscale(vsub(rgb, gray_point), t / max_component))
-}
-
-/// Basically a soft absolute value function, but parameterized in a
-/// specific way.
-///
-/// https://www.desmos.com/calculator/8tkkwoijpo
-///
-/// Conceptually, this creates a triangle function where `y = 0` at
-/// `x = 0` and at `x = s + 1`, and where `y = 1` at `x = 1`.
-/// Like this:
-///
-/// ```text
-///    /-_
-///   /   -_
-///  /  |   -_
-/// /   |     -_
-/// 0   1      s+1
-/// ```
-///
-/// However, the sharp angle at `x = 1` can be softened with the
-/// parameter `softness`.  When `softness = 0` it's perfectly sharp,
-/// like a piecewise linear function.  But for `softness > 0` it gets
-/// progressively softer, connecting the two line segments with a broader
-/// and broader continuous curve.
-///
-/// Importantly, as `softness` increases, the outputs (y) of the function
-/// only *decrease* in value to create the smooth transition, and the
-/// slopes of the lines stay roughly constant.
-///
-/// Reasonable values of `w` are generally in the 0.01 to 0.2 range.
-fn soft_elbow(x: f64, s: f64, softness: f64) -> f64 {
-    if x <= 0.0 {
-        0.0
-    } else if x >= (s + 1.0) {
-        0.0
-    } else {
-        // Remap w to give more consistent, controllable results.
-        let w = softness * (softness * softness + s).sqrt();
-
-        // Compute mapping values.
-        let w2 = w * w;
-        let s2 = s * s;
-        let a = (1.0 + w2).sqrt();
-        let b = (s2 + w2).sqrt();
-        let c = (b - a) / (s + 1.0);
-
-        // Actual formula.
-        let x1 = x - 1.0;
-        (-(x1 * x1 + w2).sqrt() + (x * c) + a) / (a + c)
-    }
 }
 
 fn smoothstep(x: f64) -> f64 {

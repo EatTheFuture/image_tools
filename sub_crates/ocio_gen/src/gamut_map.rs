@@ -10,38 +10,27 @@
 /// the maximum value each RGB channel can be in the output, and colors
 /// will be clipped to that as well.  This is typically useful for
 /// processing output colors (e.g. for display).
-use colorbox::transforms::rgb_gamut_intersect;
+use colorbox::transforms::rgb_gamut;
 
 /// A simple but reasonably robust approach that clips in RGB space.
 ///
 /// - `luminance_weights`: the relative amount that each RGB channel
 ///   contributes to luminance.  The three weights should add up to
 ///   1.0.
-/// - `rolloff`: It specifies how much to "cheat" the luminance
-///   mapping of out-of-gamut colors so that they stay saturated for
-///   longer before blowing out to white.  0.0 is no cheating, and
-///   larger values sacrifice luminance more and more.  Good values
-///   are generally in the [0.0, 2.0] range.
-///   Note: this is only meaningful when `channel_max` is not `None`.
+/// - `softness`: if there is a `channel_max`, this is the amount of
+///   "cheating" to do to make the transition blowing out to white
+///   smooth and pleasing.  0.0 is no cheating, but results in a
+///   possibly over-sharp transition.  Larger values cheat more to
+///   make the transition smoother.  Good values are generally
+///   between 0.05 and 0.2.
 pub fn rgb_clip(
     rgb: [f64; 3],
     channel_max: Option<f64>,
-    clip_negative_luminance: bool,
     luminance_weights: [f64; 3],
-    rolloff: f64,
+    softness: f64,
 ) -> [f64; 3] {
     // Early-out for in-gamut colors.
-    if let Some(m) = channel_max {
-        if rgb[0] >= 0.0
-            && rgb[1] >= 0.0
-            && rgb[2] >= 0.0
-            && rgb[0] <= m
-            && rgb[1] <= m
-            && rgb[2] <= m
-        {
-            return rgb;
-        }
-    } else if rgb[0] >= 0.0 && rgb[1] >= 0.0 && rgb[2] >= 0.0 {
+    if channel_max.is_none() && rgb[0] >= 0.0 && rgb[1] >= 0.0 && rgb[2] >= 0.0 {
         return rgb;
     };
 
@@ -50,49 +39,19 @@ pub fn rgb_clip(
         + (rgb[1] * luminance_weights[1])
         + (rgb[2] * luminance_weights[2]);
 
-    // Early out for zero or clipped negative luminance.
-    if l == 0.0 || (l < 0.0 && clip_negative_luminance) {
-        return [0.0, 0.0, 0.0];
-    }
-
-    // Clip with unbounded channels first.
-    let rgb = rgb_gamut_intersect(rgb, [l; 3], false, false);
-
-    // No further processing on negative-luminance colors.
-    if l < 0.0 {
-        return rgb;
-    }
-
-    // Clip with channel maximum if one is specified.
     if let Some(channel_max) = channel_max {
-        // Scale for the channel max.
-        let rgb = [
+        let rgb1 = [
             rgb[0] / channel_max,
             rgb[1] / channel_max,
             rgb[2] / channel_max,
         ];
-        let l = l / channel_max;
-
-        // Luminance rolloff for still out-of-gamut colors.
-        let l = {
-            let a = rolloff + 1.0;
-            1.0 - (1.0 - (l.min(a) / a)).powf(a)
-        };
-
-        // Early out for over-luminant colors.
-        if l > 1.0 {
-            return [channel_max; 3];
-        }
-
-        let rgb = rgb_gamut_intersect(rgb, [l; 3], true, true);
-
-        // Scale for the channel max.
+        let rgb2 = rgb_gamut::closed_domain_clip(rgb_gamut::open_domain_clip(rgb1, l), l, softness);
         [
-            rgb[0] * channel_max,
-            rgb[1] * channel_max,
-            rgb[2] * channel_max,
+            rgb2[0] * channel_max,
+            rgb2[1] * channel_max,
+            rgb2[2] * channel_max,
         ]
     } else {
-        rgb
+        rgb_gamut::open_domain_clip(rgb, l)
     }
 }
