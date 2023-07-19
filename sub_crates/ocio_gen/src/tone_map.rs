@@ -1,4 +1,5 @@
 use colorbox::{
+    chroma::Chromaticities,
     lut::{Lut1D, Lut3D},
     matrix,
     transforms::rgb_gamut,
@@ -10,6 +11,8 @@ const TMP_DESAT_FACTOR: f64 = 0.9;
 
 /// A filmic(ish) tonemapping operator.
 ///
+/// - `chromaticities`: the RGBW chromaticities of the target output
+///   color space.
 /// - `exposure`: input exposure adjustment before applying the tone mapping.
 ///   Input color values are simply multiplied by this.  Useful for tuning
 ///   different tone mappers to match general brightness without altering
@@ -29,6 +32,7 @@ const TMP_DESAT_FACTOR: f64 = 0.9;
 ///   beyond maybe 14 stops or so.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
+    chromaticities: Chromaticities,
     exposure: f64,
     k: f64,
     fixed_point: f64,
@@ -42,6 +46,7 @@ pub struct Tonemapper {
 impl Default for Tonemapper {
     fn default() -> Tonemapper {
         Tonemapper {
+            chromaticities: colorbox::chroma::REC709,
             exposure: 1.0,
             k: 0.0,
             fixed_point: 0.2,
@@ -56,6 +61,7 @@ impl Default for Tonemapper {
 
 impl Tonemapper {
     pub fn new(
+        chromaticities: Option<Chromaticities>,
         exposure: f64,
         contrast: f64,
         fixed_point: f64,
@@ -67,6 +73,7 @@ impl Tonemapper {
         let res_3d = 32 + 1;
 
         Tonemapper {
+            chromaticities: chromaticities.unwrap_or(colorbox::chroma::REC709),
             exposure: exposure,
             k: k,
             fixed_point: fixed_point,
@@ -150,16 +157,55 @@ impl Tonemapper {
 
         // Desaturate colors based on a combination of how compressed their
         // luminance is and how saturated they are.
-        let desat_factor = {
+        let rgb_desat = {
             let saturation = luma(vsub(rgb2, gray_point2)) / gray_point2[0];
             // let saturation = saturation(rgb2, gray_point2).unwrap_or(0.0);
             let x = lm_tonemapped_slope.min(1.0);
-            x.powf(lerp(0.3, 0.05, saturation.max(0.0).min(1.0).powf(0.2)))
+            let desat_factor = x.powf(lerp(0.3, 0.05, saturation.max(0.0).min(1.0).powf(0.2)));
+            vlerp(gray_point2, rgb2, desat_factor)
         };
-        let rgb_final = vlerp(gray_point2, rgb2, desat_factor);
 
         // Clip to the closed-domain color gamut.
-        rgb_gamut::closed_domain_clip(rgb_final, lm_tonemapped, 0.125)
+        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_desat, lm_tonemapped, 0.125);
+
+        // Adjust hue to account for the Abney effect.
+        let rgb_abney = {
+            use colorbox::{
+                chroma,
+                matrix::{
+                    compose, invert, rgb_to_xyz_matrix, transform_color,
+                    xyz_chromatic_adaptation_matrix, AdaptationMethod,
+                },
+                transforms::oklab,
+            };
+
+            let to_xyz_mat = compose(&[
+                rgb_to_xyz_matrix(self.chromaticities),
+                // Adapt to a D65 white point, since that's what OkLab uses.
+                xyz_chromatic_adaptation_matrix(
+                    self.chromaticities.w,
+                    (0.31272, 0.32903), // D65
+                    AdaptationMethod::Hunt,
+                ),
+            ]);
+            let from_xyz_mat = invert(to_xyz_mat).unwrap();
+
+            let lab1 = oklab::from_xyz_d65(transform_color(rgb, to_xyz_mat));
+            let len1 = ((lab1[1] * lab1[1]) + (lab1[2] * lab1[2])).sqrt();
+            let lab2 = oklab::from_xyz_d65(transform_color(rgb_clipped, to_xyz_mat));
+            let len2 = ((lab2[1] * lab2[1]) + (lab2[2] * lab2[2])).sqrt();
+
+            let lab3 = if len1 < 0.0000001 {
+                lab2
+            } else {
+                [lab2[0], lab1[1] / len1 * len2, lab1[2] / len1 * len2]
+            };
+
+            transform_color(oklab::to_xyz_d65(lab3), from_xyz_mat)
+        };
+
+        // A final basic gamut clip for safety, but it should do very little if anything.
+        rgb_gamut::closed_domain_clip(rgb_abney, lm_tonemapped, 0.0)
     }
 
     /// Generates a 1D and 3D LUT to apply the tone mapping.
