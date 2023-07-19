@@ -20,6 +20,9 @@ const TMP_DESAT_FACTOR: f64 = 0.9;
 /// - `contrast`: how "contrasty" the look should be.  Values between 1.0
 ///   and 4.0 give fairly normal looks, while higher starts to look more
 ///   high contrast.
+/// - `saturation`: determines the level of desaturation that happens as
+///   colors blow out. In [0.0, inf], with smaller values desaturating
+///   more and larger values less.  1.0 is a reasonable default.
 /// - `fixed_point`: the luminance that should approximately map to
 ///   itself.  For example, you might set this to 0.18 (18% gray) so that
 ///   colors of that brightness remain roughly the same.
@@ -34,6 +37,7 @@ const TMP_DESAT_FACTOR: f64 = 0.9;
 pub struct Tonemapper {
     chromaticities: Chromaticities,
     exposure: f64,
+    saturation: f64,
     k: f64,
     fixed_point: f64,
     luminance_ceiling: Option<f64>,
@@ -48,6 +52,7 @@ impl Default for Tonemapper {
         Tonemapper {
             chromaticities: colorbox::chroma::REC709,
             exposure: 1.0,
+            saturation: 1.0,
             k: 0.0,
             fixed_point: 0.2,
             luminance_ceiling: None,
@@ -64,6 +69,7 @@ impl Tonemapper {
         chromaticities: Option<Chromaticities>,
         exposure: f64,
         contrast: f64,
+        saturation: f64,
         fixed_point: f64,
         luminance_ceiling: Option<f64>,
     ) -> Self {
@@ -75,6 +81,7 @@ impl Tonemapper {
         Tonemapper {
             chromaticities: chromaticities.unwrap_or(colorbox::chroma::REC709),
             exposure: exposure,
+            saturation: saturation,
             k: k,
             fixed_point: fixed_point,
             luminance_ceiling: luminance_ceiling,
@@ -127,46 +134,50 @@ impl Tonemapper {
                 / LUMA_WEIGHTS.iter().sum::<f64>()
         }
 
-        // Luminance computations.
-        let lm = luma(rgb);
-        if lm <= 0.0 {
+        // Initial open-domain linear color value.
+        let lm_linear = luma(rgb);
+        if lm_linear <= 0.0 {
             return [0.0; 3];
         }
-        let gray_point1 = [lm; 3];
-        let rgb1 = rgb_gamut::open_domain_clip(rgb, lm);
-        let lm_tonemapped = self.eval_1d(lm);
+        let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear);
 
-        // Slope of the tone mapping at the evaluated point.  This gives
-        // us a measure of luminance compression.
-        let lm_tonemapped_slope = {
-            // We could do this with an analytic derivative, but we
-            // do it numerically instead because laziness.  And it's
-            // more than good enough anyway.
-            let lm_d = if lm.abs() > 0.000_000_1 {
-                lm * 1.00001
+        // Tone mapped color.
+        let lm_tonemapped = self.eval_1d(lm_linear);
+        let rgb_tonemapped = {
+            let rgb_scaled = vscale(rgb_linear, lm_tonemapped / lm_linear);
+
+            let saturation_factor = if lm_linear < 0.000_000_000_1 {
+                0.0
             } else {
-                lm + 0.000_000_000_1
-            };
-            let lm_d_tonemapped = self.eval_1d(lm_d);
-            (lm_d_tonemapped - lm_tonemapped) / (lm_d - lm)
+                // We compute derivatives numerically here because it's
+                // easier and more than good enough.  Here we compute
+                // the needed deltas.
+                let lm_linear_2 = lm_linear * 1.00001;
+                let lm_tonemapped_2 = self.eval_1d(lm_linear_2);
+
+                // Derivatives.
+                let lm_linear_dx = 1.0; // (lm_linear_2 - lm_linear) / (lm_linear_2 - lm_linear)
+                let lm_tonemapped_dx =
+                    (lm_tonemapped_2 - lm_tonemapped) / (lm_linear_2 - lm_linear);
+
+                // Use the derivatives to compute an appropriate desaturation.
+                (lm_tonemapped_dx / lm_tonemapped) / (lm_linear_dx / lm_linear)
+            }
+            .clamp(0.0, 1.0);
+
+            vlerp(
+                [lm_tonemapped; 3],
+                rgb_scaled,
+                saturation_factor.powf(if self.saturation <= 0.0 {
+                    0.0
+                } else {
+                    1.0 / self.saturation
+                }),
+            )
         };
 
-        // RGB and gray point adjusted to the tone mapped luminance.
-        let rgb2 = vscale(rgb1, lm_tonemapped / lm);
-        let gray_point2 = [lm_tonemapped; 3];
-
-        // Desaturate colors based on a combination of how compressed their
-        // luminance is and how saturated they are.
-        let rgb_desat = {
-            let saturation = luma(vsub(rgb2, gray_point2)) / gray_point2[0];
-            // let saturation = saturation(rgb2, gray_point2).unwrap_or(0.0);
-            let x = lm_tonemapped_slope.min(1.0);
-            let desat_factor = x.powf(lerp(0.3, 0.05, saturation.max(0.0).min(1.0).powf(0.2)));
-            vlerp(gray_point2, rgb2, desat_factor)
-        };
-
-        // Clip to the closed-domain color gamut.
-        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_desat, lm_tonemapped, 0.125);
+        // Soft-clip the tonemapped color to the closed-domain color gamut.
+        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.2);
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
@@ -204,7 +215,7 @@ impl Tonemapper {
             transform_color(oklab::to_xyz_d65(lab3), from_xyz_mat)
         };
 
-        // A final basic gamut clip for safety, but it should do very little if anything.
+        // A final hard gamut clip for safety, but it should do very little if anything.
         rgb_gamut::closed_domain_clip(rgb_abney, lm_tonemapped, 0.0)
     }
 
@@ -642,7 +653,7 @@ mod test {
 
     #[test]
     fn tonemap_1d_round_trip() {
-        let curve = Tonemapper::new(1.1, 2.0, 0.18, Some(5.0_f64.exp2()));
+        let curve = Tonemapper::new(None, 1.1, 2.0, 1.0, 0.18, Some(5.0_f64.exp2()));
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));

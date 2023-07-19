@@ -8,8 +8,8 @@ pub fn make_minimal(
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
     // Tone mapping operators, used various places below.
-    let tonemap_normal = Tonemapper::new(None, 1.0, 5.0, 0.18, None);
-    let tonemap_contrast = Tonemapper::new(None, 1.1, 10.0, 0.18, None);
+    let tonemap_normal = Tonemapper::new(None, 1.0, 5.0, 1.3, 0.18, None);
+    let tonemap_contrast = Tonemapper::new(None, 1.1, 10.0, 1.3, 0.18, None);
 
     //---------------------------------------------------------
 
