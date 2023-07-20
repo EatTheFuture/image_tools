@@ -21,7 +21,7 @@ const TMP_DESAT_FACTOR: f64 = 0.9;
 ///   and 4.0 give fairly normal looks, while higher starts to look more
 ///   high contrast.
 /// - `saturation`: determines the level of desaturation that happens as
-///   colors blow out. In [0.0, inf], with smaller values desaturating
+///   colors blow out. In [0.0, 2.0], with smaller values desaturating
 ///   more and larger values less.  1.0 is a reasonable default.
 /// - `fixed_point`: the luminance that should approximately map to
 ///   itself.  For example, you might set this to 0.18 (18% gray) so that
@@ -140,15 +140,18 @@ impl Tonemapper {
             return [0.0; 3];
         }
         let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear);
+        let saturation_linear = (1.0
+            - (rgb_linear[0].min(rgb_linear[1]).min(rgb_linear[2])
+                / rgb_linear[0].max(rgb_linear[1]).max(rgb_linear[2])))
+        .clamp(0.0, 1.0);
 
         // Tone mapped color.
         let lm_tonemapped = self.eval_1d(lm_linear);
-        let rgb_tonemapped = {
+        let rgb_tonemapped = if lm_linear < 0.000_000_000_1 || saturation_linear < 0.0001 {
+            [lm_tonemapped; 3]
+        } else {
             let rgb_scaled = vscale(rgb_linear, lm_tonemapped / lm_linear);
-
-            let saturation_factor = if lm_linear < 0.000_000_000_1 {
-                0.0
-            } else {
+            let saturation_factor = {
                 // We compute derivatives numerically here because it's
                 // easier and more than good enough.  Here we compute
                 // the needed deltas.
@@ -168,16 +171,14 @@ impl Tonemapper {
             vlerp(
                 [lm_tonemapped; 3],
                 rgb_scaled,
-                saturation_factor.powf(if self.saturation <= 0.0 {
-                    0.0
-                } else {
-                    1.0 / self.saturation
-                }),
+                bias(saturation_factor * saturation_linear, self.saturation * 0.5)
+                    / bias(saturation_linear, self.saturation * 0.5),
             )
         };
 
         // Soft-clip the tonemapped color to the closed-domain color gamut.
-        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.2);
+        // This is only really needed for extreme `self.saturation` settings.
+        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.05);
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
@@ -592,6 +593,14 @@ fn reinhard_inv(x: f64, p: f64) -> f64 {
 
     // Actual generalized Reinhard inverse.
     (tmp - 1.0).powf(-p)
+}
+
+/// `b` is in [0,1], with 0.5 being linear.
+///
+/// https://www.desmos.com/calculator/hz7k0njpyb
+#[inline(always)]
+fn bias(x: f64, b: f64) -> f64 {
+    x / ((((1.0 / b) - 2.0) * (1.0 - x)) + 1.0)
 }
 
 fn smoothstep(x: f64) -> f64 {
