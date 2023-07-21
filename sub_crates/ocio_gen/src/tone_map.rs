@@ -147,32 +147,32 @@ impl Tonemapper {
 
         // Tone mapped color.
         let lm_tonemapped = self.eval_1d(lm_linear);
-        let rgb_tonemapped = if lm_linear < 0.000_000_000_1 || saturation_linear < 0.0001 {
+        let rgb_tonemapped = if lm_linear.min(lm_tonemapped) < 1.0e-10 || saturation_linear < 1.0e-4
+        {
             [lm_tonemapped; 3]
         } else {
             let rgb_scaled = vscale(rgb_linear, lm_tonemapped / lm_linear);
             let saturation_factor = {
-                // We compute derivatives numerically here because it's
-                // easier and more than good enough.  Here we compute
-                // the needed deltas.
-                let lm_linear_2 = lm_linear * 1.00001;
-                let lm_tonemapped_2 = self.eval_1d(lm_linear_2);
+                // We compute the derivative numerically here because
+                // it's easier and more than good enough.
+                let lm_tonemapped_dx = {
+                    let lm_linear_2 = lm_linear * 1.00001;
+                    let lm_tonemapped_2 = self.eval_1d(lm_linear_2);
+                    (lm_tonemapped_2 - lm_tonemapped) / (lm_linear_2 - lm_linear)
+                };
 
-                // Derivatives.
-                let lm_linear_dx = 1.0; // (lm_linear_2 - lm_linear) / (lm_linear_2 - lm_linear)
-                let lm_tonemapped_dx =
-                    (lm_tonemapped_2 - lm_tonemapped) / (lm_linear_2 - lm_linear);
-
-                // Use the derivatives to compute an appropriate desaturation.
-                (lm_tonemapped_dx / lm_tonemapped) / (lm_linear_dx / lm_linear)
+                // Use the derivative to compute an appropriate desaturation.
+                lm_tonemapped_dx * (lm_linear / lm_tonemapped)
             }
             .clamp(0.0, 1.0);
 
             vlerp(
                 [lm_tonemapped; 3],
                 rgb_scaled,
-                bias(saturation_factor * saturation_linear, self.saturation * 0.5)
-                    / bias(saturation_linear, self.saturation * 0.5),
+                bias(
+                    saturation_factor,
+                    lerp(0.5, self.saturation * 0.5, saturation_linear),
+                ),
             )
         };
 
