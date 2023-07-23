@@ -13,34 +13,35 @@ const TMP_DESAT_FACTOR: f64 = 0.9;
 ///
 /// - `chromaticities`: the RGBW chromaticities of the target output
 ///   color space.
+/// - `fixed_point`: the luminance that should map to itself (aside from
+///   being affected by `exposure` below).  For example, you might set
+///   this to 0.18 (18% gray) so that colors of that brightness remain
+///   roughly the same.
 /// - `exposure`: input exposure adjustment before applying the tone mapping.
-///   Input color values are simply multiplied by this.  Useful for tuning
-///   different tone mappers to match general brightness without altering
-///   the actual tone mapping curve.
-/// - `contrast`: how "contrasty" the look should be.  Values between 1.0
-///   and 4.0 give fairly normal looks, while higher starts to look more
-///   high contrast.
-/// - `saturation`: determines the level of desaturation that happens as
-///   colors blow out. In [0.0, 2.0], with smaller values desaturating
-///   more and larger values less.  1.0 is a reasonable default.
-/// - `fixed_point`: the luminance that should approximately map to
-///   itself.  For example, you might set this to 0.18 (18% gray) so that
-///   colors of that brightness remain roughly the same.
-/// - `luminance_ceiling`: the luminance level that maps to 1.0 in the
-///   output.  Typically you want this to be a large-ish number
-///   (e.g. > 30), as it represents the top end of the dynamic range.
-///   It can be useful to think in terms of photographic stops: if you
-///   want 6 stops of dynamic range above 1.0, then this should be 2^6,
-///   or 64.  In practice, this doesn't have much impact on the look
-///   beyond maybe 14 stops or so.
+///   Input color values are simply multiplied by this, so 1.0 does nothing.
+///   Useful for tuning the over-all brightness of tone mappers.
+/// - `toe`: `(slope, strength)` pair that determines the look of the toe.
+///   The slope is in [-1, 1] with 0.0 being "normal", > 0.0 being  more
+///   contrasty, < 0.0 being less.  The strength determines how much
+///   effect the slope has, and is in [0, 1] with 0.0 being no effect and
+///   1.0 being maximum.
+/// - `shoulder`: `(slope, strength)` pair the determines the look of
+///   the shoulder.  Same parameterization as `toe`.
+/// - `saturation`: `[low, high]` pair that determines how quickly colors
+///   desaturate as they blow out.  Both elements are in [0, 1], with 0
+///   being fastest desaturation, 0.5 being linear desaturation, and 1.0
+///   being slowest desaturation.  The `low` element determines the
+///   desaturation rate for colors with already low saturation, and the
+///   high element for colors with already high saturation.  0.5 is
+///   usually what you want for `low` and somewhere in 0.6-0.8 is
+///   reasonable for `high`.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     chromaticities: Chromaticities,
     exposure: f64,
-    saturation: f64,
-    k: f64,
-    fixed_point: f64,
-    luminance_ceiling: Option<f64>,
+    toe: (f64, f64),      // (slope, strength)
+    shoulder: (f64, f64), // (slope, strength)
+    saturation: [f64; 2], // [low, high]
 
     res_1d: usize,
     res_3d: usize,
@@ -52,10 +53,9 @@ impl Default for Tonemapper {
         Tonemapper {
             chromaticities: colorbox::chroma::REC709,
             exposure: 1.0,
-            saturation: 1.0,
-            k: 0.0,
-            fixed_point: 0.2,
-            luminance_ceiling: None,
+            toe: (0.0, 1.0 / 3.0),
+            shoulder: (0.0, 1.0 / 3.0),
+            saturation: [0.5; 2],
 
             res_1d: 2,
             res_3d: 2,
@@ -67,24 +67,23 @@ impl Default for Tonemapper {
 impl Tonemapper {
     pub fn new(
         chromaticities: Option<Chromaticities>,
-        exposure: f64,
-        contrast: f64,
-        saturation: f64,
         fixed_point: f64,
-        luminance_ceiling: Option<f64>,
+        exposure: f64,
+        toe: (f64, f64),
+        shoulder: (f64, f64),
+        saturation: [f64; 2],
     ) -> Self {
-        let k = contrast.abs().sqrt() * contrast.signum();
-
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
 
+        let fixed_point_compensation = filmic::curve_inv(fixed_point, toe, shoulder) / fixed_point;
+
         Tonemapper {
             chromaticities: chromaticities.unwrap_or(colorbox::chroma::REC709),
-            exposure: exposure,
+            exposure: exposure * fixed_point_compensation,
+            toe: toe,
+            shoulder: shoulder,
             saturation: saturation,
-            k: k,
-            fixed_point: fixed_point,
-            luminance_ceiling: luminance_ceiling,
 
             res_1d: res_1d,
             res_3d: res_3d,
@@ -96,13 +95,7 @@ impl Tonemapper {
         if x <= 0.0 {
             0.0
         } else {
-            filmic::curve(
-                x * self.exposure,
-                self.k,
-                self.fixed_point,
-                self.luminance_ceiling,
-            )
-            .min(1.0)
+            filmic::curve(x * self.exposure, self.toe, self.shoulder).min(1.0)
         }
     }
 
@@ -110,18 +103,14 @@ impl Tonemapper {
         if y <= 0.0 {
             0.0
         } else if y >= 1.0 {
-            if let Some(ceil) = self.luminance_ceiling {
-                ceil
-            } else {
-                // Infinity would actually be correct here, but it leads
-                // to issues in the generated LUTs.  So instead we just
-                // choose an extremely large finite number that fits
-                // within an f32 (since later processing may be done in
-                // f32).
-                (f32::MAX / 2.0) as f64
-            }
+            // Infinity would actually be correct here, but it leads
+            // to issues in the generated LUTs.  So instead we just
+            // choose an extremely large finite number that fits
+            // within an f32 (since later processing may be done in
+            // f32).
+            (f32::MAX / 2.0) as f64
         } else {
-            filmic::curve_inv(y, self.k, self.fixed_point, self.luminance_ceiling) / self.exposure
+            filmic::curve_inv(y, self.toe, self.shoulder) / self.exposure
         }
     }
 
@@ -171,7 +160,11 @@ impl Tonemapper {
                 rgb_scaled,
                 bias(
                     saturation_factor,
-                    lerp(0.5, self.saturation * 0.5, saturation_linear),
+                    lerp(
+                        self.saturation[0],
+                        self.saturation[1],
+                        saturation_linear.powf(4.0),
+                    ),
                 ),
             )
         };
@@ -337,67 +330,36 @@ mod filmic {
     /// range.
     const REINHARD_P: f64 = 2.0;
 
+    /// The gamma space to do contrast adjustments in, to make it more
+    /// perceptually intuitive to adjust the parameters.
+    const GAMMA: f64 = 3.0;
+    const GAMMA_INV: f64 = 1.0 / GAMMA;
+
     /// `c`: contrast.  A value of zero creates the classic Reinhard
     ///      curve, larger values produce a more contrasty look, and
     ///      lower values less.
     /// `fixed_point`: the value of `x` that should map to itself.
     #[inline(always)]
-    pub fn curve(x: f64, c: f64, fixed_point: f64, luminance_ceiling: Option<f64>) -> f64 {
-        let b = fixed_point.log(0.5);
-        let reinhard_scale_x = reinhard_inv(fixed_point, REINHARD_P) / fixed_point;
-        let reinhard_scale_y = if let Some(ceil) = luminance_ceiling {
-            1.0 / reinhard(ceil, REINHARD_P)
-        } else {
-            1.0
-        };
-
+    pub fn curve(x: f64, toe: (f64, f64), shoulder: (f64, f64)) -> f64 {
         // Reinhard.
-        let r = reinhard(x * reinhard_scale_x, REINHARD_P) * reinhard_scale_y;
+        let r = reinhard(x, REINHARD_P);
 
         // Contrast sigmoid.
-        let n = r.powf(1.0 / b);
-        let m = contrast(n, c);
-        m.powf(b)
+        contrast(r.clamp(0.0, 1.0).powf(GAMMA_INV), toe, shoulder).powf(GAMMA)
     }
 
     #[inline(always)]
-    pub fn curve_inv(y: f64, c: f64, fixed_point: f64, luminance_ceiling: Option<f64>) -> f64 {
-        let b = fixed_point.log(0.5);
-        let reinhard_scale_x = reinhard_inv(fixed_point, REINHARD_P) / fixed_point;
-        let reinhard_scale_y = if let Some(ceil) = luminance_ceiling {
-            1.0 / reinhard(ceil, REINHARD_P)
-        } else {
-            1.0
-        };
-
+    pub fn curve_inv(y: f64, toe: (f64, f64), shoulder: (f64, f64)) -> f64 {
         // Contrast sigmoid.
-        let m = y.powf(1.0 / b);
-        let n = contrast(m, -c);
-        let r = n.powf(b);
+        let r = contrast(
+            y.powf(GAMMA_INV),
+            (-toe.0, toe.1),
+            (-shoulder.0, shoulder.1),
+        )
+        .powf(GAMMA);
 
         // Reinhard.
-        reinhard_inv(r / reinhard_scale_y, REINHARD_P) / reinhard_scale_x
-    }
-
-    /// A sigmoid based on the classic logistic function.
-    ///
-    /// Maps [-inf,+inf] to [-1,+1].
-    ///
-    /// `k` determines how sharp the mapping is.
-    #[inline(always)]
-    fn sigmoid(x: f64, k: f64) -> f64 {
-        (2.0 / (1.0 + (-k * x).exp())) - 1.0
-    }
-
-    #[inline(always)]
-    fn sigmoid_inv(x: f64, k: f64) -> f64 {
-        if x <= -1.0 {
-            -std::f64::INFINITY
-        } else if x >= 1.0 {
-            std::f64::INFINITY
-        } else {
-            ((2.0 / (x + 1.0)) - 1.0).ln() / -k
-        }
+        reinhard_inv(r, REINHARD_P)
     }
 
     /// Adjusts contrast in [0.0, 1.0] via a sigmoid function.
@@ -413,22 +375,24 @@ mod filmic {
     /// Note: this function is its own inverse by simply passing the negative
     /// of `c`.
     #[inline(always)]
-    fn contrast(x: f64, c: f64) -> f64 {
-        if c > -0.00001 && c < 0.00001 {
-            // Conceptually this is for when `c == 0.0`, but for numerical
-            // stability reasons we do it within a small range around 0.0.
-            x
-        } else {
-            let scale = 2.0 * sigmoid(1.0, c);
-            if c > 0.0 {
-                // Increase contrast.
-                sigmoid(2.0 * x - 1.0, c) / scale + 0.5
-            } else {
-                // Decrease contrast.
-                sigmoid_inv((x - 0.5) * -scale, -c) * 0.5 + 0.5
-            }
-        }
-        .clamp(0.0, 1.0)
+    fn contrast(x: f64, toe: (f64, f64), shoulder: (f64, f64)) -> f64 {
+        const Q_PI: f64 = std::f64::consts::PI / 4.0;
+
+        let p1 = {
+            let toe = (toe.0.clamp(-1.0, 1.0), toe.1.clamp(0.0, 1.0));
+            let angle = Q_PI + (-toe.0 * Q_PI);
+            [angle.cos() * toe.1, angle.sin() * toe.1]
+        };
+        let p2 = {
+            let shoulder = (shoulder.0.clamp(-1.0, 1.0), shoulder.1.clamp(0.0, 1.0));
+            let angle = Q_PI + (-shoulder.0 * Q_PI);
+            [
+                1.0 - (angle.cos() * shoulder.1),
+                1.0 - (angle.sin() * shoulder.1),
+            ]
+        };
+
+        crate::bezier::unit_cubic_bezier(x, p1, p2).clamp(0.0, 1.0)
     }
 
     #[cfg(test)]
@@ -437,23 +401,24 @@ mod filmic {
 
         #[test]
         fn contrast_round_trip() {
+            let toe = (0.8, 0.25);
+            let shoulder = (0.5, 0.33);
+            let toe_inv = (-0.8, 0.25);
+            let shoulder_inv = (-0.5, 0.33);
             for i in 0..17 {
                 let x = i as f64 / 16.0;
-                let x2 = contrast(contrast(x, 2.0), -2.0);
+                let x2 = contrast(contrast(x, toe, shoulder), toe_inv, shoulder_inv);
                 assert!((x - x2).abs() < 0.000_000_1);
             }
         }
 
         #[test]
         fn filmic_curve_round_trip() {
+            let toe = (0.8, 0.25);
+            let shoulder = (0.5, 0.33);
             for i in 0..17 {
                 let x = i as f64 / 16.0;
-                let x2 = curve(
-                    curve_inv(x, 2.0, 0.18, Some(2048.0)),
-                    2.0,
-                    0.18,
-                    Some(2048.0),
-                );
+                let x2 = curve(curve_inv(x, toe, shoulder), toe, shoulder);
                 assert!((x - x2).abs() < 0.000_001);
             }
         }
@@ -595,12 +560,24 @@ fn reinhard_inv(x: f64, p: f64) -> f64 {
     (tmp - 1.0).powf(-p)
 }
 
-/// `b` is in [0,1], with 0.5 being linear.
+/// A [0,1] -> [0,1] mapping, with 0.5 biased up or down.
 ///
-/// https://www.desmos.com/calculator/hz7k0njpyb
+/// `b` is what 0.5 maps to.  Setting it to 0.5 results in a linear
+/// mapping.
+///
+/// Note: `bias()` is its own inverse: simply passing `1.0 - b` instead
+/// of `b` gives the inverse.
+///
+/// https://www.desmos.com/calculator/prxpsydjug
 #[inline(always)]
 fn bias(x: f64, b: f64) -> f64 {
-    x / ((((1.0 / b) - 2.0) * (1.0 - x)) + 1.0)
+    if b <= 0.0 {
+        0.0
+    } else if b >= 1.0 {
+        1.0
+    } else {
+        x / ((((1.0 / b) - 2.0) * (1.0 - x)) + 1.0)
+    }
 }
 
 fn smoothstep(x: f64) -> f64 {
@@ -662,7 +639,9 @@ mod test {
 
     #[test]
     fn tonemap_1d_round_trip() {
-        let curve = Tonemapper::new(None, 1.1, 2.0, 1.0, 0.18, Some(5.0_f64.exp2()));
+        let toe = (0.8, 0.25);
+        let shoulder = (0.5, 0.33);
+        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, [0.5, 0.75]);
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));

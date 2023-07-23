@@ -2,6 +2,7 @@ pub mod blender_config;
 pub mod config;
 pub mod minimal_config;
 
+mod bezier;
 mod gamut_map;
 mod hsv_lut;
 mod tone_map;
