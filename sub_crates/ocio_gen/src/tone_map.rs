@@ -322,7 +322,7 @@ impl Tonemapper {
 /// the dynamic range, you should scale up and clamp the result by the
 /// appropriate amount.
 mod filmic {
-    use super::{reinhard, reinhard_inv};
+    use super::{offset_pow, offset_pow_inv, reinhard, reinhard_inv};
 
     /// How "gentle" our Reinhard function is.  1.0 is standard Reinhard,
     /// less than 1.0 is sharper, more than 1.0 is gentler.  Gentler
@@ -333,7 +333,7 @@ mod filmic {
     /// The gamma space to do contrast adjustments in, to make it more
     /// perceptually intuitive to adjust the parameters.
     const GAMMA: f64 = 3.0;
-    const GAMMA_INV: f64 = 1.0 / GAMMA;
+    const GAMMA_OFFSET: f64 = 0.1;
 
     /// `c`: contrast.  A value of zero creates the classic Reinhard
     ///      curve, larger values produce a more contrasty look, and
@@ -345,18 +345,29 @@ mod filmic {
         let r = reinhard(x, REINHARD_P);
 
         // Contrast sigmoid.
-        contrast(r.clamp(0.0, 1.0).powf(GAMMA_INV), toe, shoulder).powf(GAMMA)
+        offset_pow(
+            contrast(
+                offset_pow_inv(r, GAMMA, GAMMA_OFFSET).clamp(0.0, 1.0),
+                toe,
+                shoulder,
+            ),
+            GAMMA,
+            GAMMA_OFFSET,
+        )
     }
 
     #[inline(always)]
     pub fn curve_inv(y: f64, toe: (f64, f64), shoulder: (f64, f64)) -> f64 {
         // Contrast sigmoid.
-        let r = contrast(
-            y.powf(GAMMA_INV),
-            (-toe.0, toe.1),
-            (-shoulder.0, shoulder.1),
-        )
-        .powf(GAMMA);
+        let r = offset_pow(
+            contrast(
+                offset_pow_inv(y, GAMMA, GAMMA_OFFSET).clamp(0.0, 1.0),
+                (-toe.0, toe.1),
+                (-shoulder.0, shoulder.1),
+            ),
+            GAMMA,
+            GAMMA_OFFSET,
+        );
 
         // Reinhard.
         reinhard_inv(r, REINHARD_P)
@@ -578,6 +589,26 @@ fn bias(x: f64, b: f64) -> f64 {
     } else {
         x / ((((1.0 / b) - 2.0) * (1.0 - x)) + 1.0)
     }
+}
+
+/// A [0,1] -> [0,1] mapping based on a offset power function.
+///
+/// The offset keeps x = 0 from having zero slope.
+#[inline(always)]
+fn offset_pow(x: f64, power: f64, offset: f64) -> f64 {
+    let a = (x + offset).powf(power);
+    let b = offset.powf(power);
+    let c = (1.0 + offset).powf(power);
+
+    (a - b) / (c - b)
+}
+
+#[inline(always)]
+fn offset_pow_inv(x: f64, power: f64, offset: f64) -> f64 {
+    let b = offset.powf(power);
+    let c = (1.0 + offset).powf(power);
+
+    ((x * (c - b)) + b).powf(1.0 / power) - offset
 }
 
 fn smoothstep(x: f64) -> f64 {

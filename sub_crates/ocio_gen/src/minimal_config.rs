@@ -9,7 +9,7 @@ pub fn make_minimal(
 ) -> OCIOConfig {
     // Tone mapping operators, used various places below.
     let tonemap_normal = Tonemapper::new(None, 0.18, 1.0, (0.8, 0.45), (0.3, 0.33), [0.5, 0.8]);
-    let tonemap_contrast = Tonemapper::new(None, 0.18, 1.0, (0.9, 0.45), (0.9, 0.5), [0.5, 0.8]);
+    let tonemap_contrast = Tonemapper::new(None, 0.18, 1.0, (0.8, 0.45), (0.9, 0.5), [0.5, 0.8]);
 
     //---------------------------------------------------------
 
