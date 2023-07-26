@@ -7,9 +7,9 @@
 ///
 /// This basically serves as a tweakable sigmoid function.
 pub fn unit_cubic_bezier(x: f64, p2: [f64; 2], p3: [f64; 2]) -> f64 {
-    if x <= 0.0 {
+    if x <= 1.0e-10 {
         0.0
-    } else if x >= 1.0 {
+    } else if x >= 0.999_999_999 {
         1.0
     } else {
         let t = unit_cubic_bezier_1d_inv(x, p2[0], p3[0]);

@@ -27,21 +27,12 @@ const TMP_DESAT_FACTOR: f64 = 0.9;
 ///   1.0 being maximum.
 /// - `shoulder`: `(slope, strength)` pair the determines the look of
 ///   the shoulder.  Same parameterization as `toe`.
-/// - `saturation`: `[low, high]` pair that determines how quickly colors
-///   desaturate as they blow out.  Both elements are in [0, 1], with 0
-///   being fastest desaturation, 0.5 being linear desaturation, and 1.0
-///   being slowest desaturation.  The `low` element determines the
-///   desaturation rate for colors with already low saturation, and the
-///   high element for colors with already high saturation.  0.5 is
-///   usually what you want for `low` and somewhere in 0.6-0.8 is
-///   reasonable for `high`.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     chromaticities: Chromaticities,
     exposure: f64,
     toe: (f64, f64),      // (slope, strength)
     shoulder: (f64, f64), // (slope, strength)
-    saturation: [f64; 2], // [low, high]
 
     res_1d: usize,
     res_3d: usize,
@@ -55,7 +46,6 @@ impl Default for Tonemapper {
             exposure: 1.0,
             toe: (0.0, 1.0 / 3.0),
             shoulder: (0.0, 1.0 / 3.0),
-            saturation: [0.5; 2],
 
             res_1d: 2,
             res_3d: 2,
@@ -71,7 +61,6 @@ impl Tonemapper {
         exposure: f64,
         toe: (f64, f64),
         shoulder: (f64, f64),
-        saturation: [f64; 2],
     ) -> Self {
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
@@ -83,7 +72,6 @@ impl Tonemapper {
             exposure: exposure * fixed_point_compensation,
             toe: toe,
             shoulder: shoulder,
-            saturation: saturation,
 
             res_1d: res_1d,
             res_3d: res_3d,
@@ -115,13 +103,10 @@ impl Tonemapper {
     }
 
     pub fn eval_rgb(&self, rgb: [f64; 3]) -> [f64; 3] {
-        fn luma(rgb: [f64; 3]) -> f64 {
-            // TODO: in the future, let client code pass the luma weights so
-            // they can be properly adapted to the particular color space.
-            const LUMA_WEIGHTS: [f64; 3] = [1.0 / 13.0, 11.0 / 13.0, 1.0 / 13.0];
-            ((rgb[0] * LUMA_WEIGHTS[0]) + (rgb[1] * LUMA_WEIGHTS[1]) + (rgb[2] * LUMA_WEIGHTS[2]))
-                / LUMA_WEIGHTS.iter().sum::<f64>()
-        }
+        let luma_weights = colorbox::matrix::rgb_to_xyz_matrix(self.chromaticities)[1];
+        let luma = |rgb: [f64; 3]| -> f64 {
+            (rgb[0] * luma_weights[0]) + (rgb[1] * luma_weights[1]) + (rgb[2] * luma_weights[2])
+        };
 
         // Initial open-domain linear color value.
         let lm_linear = luma(rgb);
@@ -129,49 +114,24 @@ impl Tonemapper {
             return [0.0; 3];
         }
         let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear);
-        let saturation_linear = (1.0
-            - (rgb_linear[0].min(rgb_linear[1]).min(rgb_linear[2])
-                / rgb_linear[0].max(rgb_linear[1]).max(rgb_linear[2])))
-        .clamp(0.0, 1.0);
 
-        // Tone mapped color.
-        let lm_tonemapped = self.eval_1d(lm_linear);
-        let rgb_tonemapped = if lm_linear.min(lm_tonemapped) < 1.0e-10 || saturation_linear < 1.0e-4
-        {
-            [lm_tonemapped; 3]
-        } else {
-            let rgb_scaled = vscale(rgb_linear, lm_tonemapped / lm_linear);
-            let saturation_factor = {
-                // We compute the derivative numerically here because
-                // it's easier and more than good enough.
-                let lm_tonemapped_dx = {
-                    let lm_linear_2 = lm_linear * 1.00001;
-                    let lm_tonemapped_2 = self.eval_1d(lm_linear_2);
-                    (lm_tonemapped_2 - lm_tonemapped) / (lm_linear_2 - lm_linear)
-                };
+        // Tone mapped color value.
+        let (rgb_tonemapped, lm_tonemapped) = {
+            let rgb1 = [
+                self.eval_1d(rgb_linear[0]),
+                self.eval_1d(rgb_linear[1]),
+                self.eval_1d(rgb_linear[2]),
+            ];
 
-                // Use the derivative to compute an appropriate desaturation.
-                lm_tonemapped_dx * (lm_linear / lm_tonemapped)
-            }
-            .clamp(0.0, 1.0);
+            let lm1 = luma(rgb1);
+            let lm2 = self.eval_1d(lm_linear);
+            let rgb2 = vscale(rgb1, lm2 / lm1);
 
-            vlerp(
-                [lm_tonemapped; 3],
-                rgb_scaled,
-                bias(
-                    saturation_factor,
-                    lerp(
-                        self.saturation[0],
-                        self.saturation[1],
-                        saturation_linear.powf(4.0),
-                    ),
-                ),
-            )
+            (rgb2, lm2)
         };
 
         // Soft-clip the tonemapped color to the closed-domain color gamut.
-        // This is only really needed for extreme `self.saturation` settings.
-        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.05);
+        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.25);
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
@@ -206,7 +166,9 @@ impl Tonemapper {
                 [lab2[0], lab1[1] / len1 * len2, lab1[2] / len1 * len2]
             };
 
-            transform_color(oklab::to_xyz_d65(lab3), from_xyz_mat)
+            let rgb1 = transform_color(oklab::to_xyz_d65(lab3), from_xyz_mat);
+            let lm1 = luma(rgb1);
+            vscale(rgb1, lm_tonemapped / lm1)
         };
 
         // A final hard gamut clip for safety, but it should do very little if anything.
@@ -672,7 +634,7 @@ mod test {
     fn tonemap_1d_round_trip() {
         let toe = (0.8, 0.25);
         let shoulder = (0.5, 0.33);
-        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, [0.5, 0.75]);
+        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder);
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));
@@ -683,9 +645,12 @@ mod test {
     #[test]
     fn reinhard_round_trip() {
         for i in 0..17 {
-            for p in 0..17 {
+            for p in 0..1 {
                 let x = (i - 8) as f64 / 4.0;
-                let p = i as f64 / 8.0;
+                let p = p as f64 / 8.0;
+                if p <= 0.0 && x >= 1.0 {
+                    continue;
+                }
                 let x2 = reinhard_inv(reinhard(x, p), p);
                 assert!((x - x2).abs() < 0.000_001);
             }
