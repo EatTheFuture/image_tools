@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "egui_custom"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "job_queue",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "hdr"
-version = "0.3.1"
+version = "0.4.0"
 
 [[package]]
 name = "hermit-abi"
@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "image_fmt"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "fast_image_resize",
  "jpeg-decoder",
@@ -1235,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "image_tools"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "clap",
  "colorbox",
@@ -1298,7 +1298,7 @@ checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
 name = "job_queue"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "scheduled-thread-pool",
  "shared_data",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "ocio_gen"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "colorbox",
  "lzma-rs",
@@ -2129,7 +2129,7 @@ checksum = "58bc9567378fc7690d6b2addae4e60ac2eeea07becb2c64b9f218b53865cba2a"
 
 [[package]]
 name = "sensor_analysis"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "randomize",
  "rayon",
@@ -2194,7 +2194,7 @@ checksum = "ae1a47186c03a32177042e55dbc5fd5aee900b8e0069a8d70fba96a9375cd012"
 
 [[package]]
 name = "shared_data"
-version = "0.3.1"
+version = "0.4.0"
 
 [[package]]
 name = "shared_library"

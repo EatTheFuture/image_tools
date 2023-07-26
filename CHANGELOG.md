@@ -3,11 +3,22 @@
 
 ## [Unreleased]
 
+
+## [0.4.0] - 2023-07-27
+
+### New in OCIO Maker
+
+- Added a "Base Config" section, for configuring the general properties of the config.  Very sparse at the moment.
+- Added a custom tone mapper, included when using the "Custom" base config.
+
+### New in LUT Maker
+
+- Added a mode for adjusting existing LUT files.  This is particularly useful for tweaking the sensor noise floor of LUTs from camera manufacturers, which are unlikely to be calibrated for specific cameras.
+- Can now load 16-bit TIFF and PNG files, which is particularly useful for estimating the sensor noise floor of high-bit-depth footage accurately.
+- Now uses the selected/loaded transfer function in Generate and Modify modes when estimating the sensor noise floor from lens cap images.  This gives more accurate noise floor estimates in some cases.
+
 ### General improvements
 
-- LUT Maker now has a mode for adjusting existing LUT files.  This is particularly useful for tweaking the sensor noise floor of LUTs from camera manufacturers, which are unlikely to be calibrated for specific cameras.
-- LUT Maker can now load 16-bit TIFF and PNG files, which is particularly useful for estimating the sensor noise floor of high-bit-depth footage accurately.
-- LUT Maker now uses the selected/loaded transfer function in Generate and Modify modes when estimating the sensor noise floor from lens cap images.  This gives more accurate noise floor estimates in some cases.
 - LUT Maker and OCIO Maker can now load Davinci Resolve .cube files.  They could already load Iridas .cube files, which are a little different.
 
 
@@ -65,7 +76,8 @@
 First release!  Includes a basic HDRI merging tool.
 
 
-[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/EatTheFuture/image_tools/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/EatTheFuture/image_tools/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/EatTheFuture/image_tools/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/EatTheFuture/image_tools/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/EatTheFuture/image_tools/compare/v0.2.1...v0.2.2
