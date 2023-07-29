@@ -7,8 +7,6 @@ use colorbox::{
 
 use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
-const TMP_DESAT_FACTOR: f64 = 0.9;
-
 /// A filmic(ish) tonemapping operator.
 ///
 /// - `chromaticities`: the RGBW chromaticities of the target output
@@ -204,10 +202,6 @@ impl Tonemapper {
                     self.eval_1d_inv(rgb[2]),
                 ];
 
-                // Resaturate;
-                let rgb_linear =
-                    matrix::transform_color(rgb_linear, saturation_matrix(1.0 / TMP_DESAT_FACTOR));
-
                 // Figure out what it should map to.
                 let rgb_adjusted = self.eval_rgb(rgb_linear);
 
@@ -229,35 +223,15 @@ impl Tonemapper {
         let mut transforms = Vec::new();
 
         // Clip colors to 1.0 saturation, so they're within the range
-        // of our LUTs.
-        // TODO: this is a hack.  Replace with a "proper" gamut clip in
-        // the future.
-        transforms.extend([
-            Transform::ToHSV,
-            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
-                1.0,
-                1.0,
-                1.0 / 10_000_000.0,
-            ]))),
-            Transform::RangeTransform {
-                range_in: (0.0, 1.0),
-                range_out: (0.0, 1.0),
-                clamp: true,
-            },
-            Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
-                1.0,
-                1.0,
-                10_000_000.0,
-            ]))),
-            Transform::FromHSV,
-        ]);
-
-        // Desaturate the colors to avoid artifacts at the edge of the
-        // 3D LUT.  Note that this is compensated for in the 3D LUT, so
-        // the final output is as if no desaturation was done at all.
-        transforms.extend([Transform::MatrixTransform(matrix::to_4x4_f32(
-            saturation_matrix(TMP_DESAT_FACTOR),
-        ))]);
+        // of our LUTs.  This is a slight abuse of the ACES gamut mapper,
+        // which is intended for compression rather than clipping.  We
+        // use extreme parameters to make it behave like a clipper.
+        transforms.extend([Transform::ACESGamutMapTransform {
+            threshhold: [0.999, 0.999, 0.999],
+            limit: [10.0, 10.0, 10.0],
+            power: 4.0,
+            direction_inverse: false,
+        }]);
 
         // Apply tone map curve.
         transforms.extend([Transform::FileTransform {
