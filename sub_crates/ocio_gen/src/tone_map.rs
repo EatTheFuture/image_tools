@@ -111,7 +111,7 @@ impl Tonemapper {
         if lm_linear <= 0.0 {
             return [0.0; 3];
         }
-        let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear);
+        let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear, 0.0);
 
         // Tone mapped color value.
         let (rgb_tonemapped, lm_tonemapped) = {
@@ -170,7 +170,11 @@ impl Tonemapper {
         };
 
         // A final hard gamut clip for safety, but it should do very little if anything.
-        rgb_gamut::closed_domain_clip(rgb_abney, lm_tonemapped, 0.0)
+        rgb_gamut::closed_domain_clip(
+            rgb_gamut::open_domain_clip(rgb_abney, lm_tonemapped, 0.0),
+            lm_tonemapped,
+            0.0,
+        )
     }
 
     /// Generates a 1D and 3D LUT to apply the tone mapping.
