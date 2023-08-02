@@ -3,7 +3,6 @@ use crate::egui::{self, Ui};
 pub struct GeneratedTF {
     pub transfer_function_type: TransferFunction,
     pub transfer_function_resolution: usize,
-    pub normalize_transfer_function: bool,
     pub sensor_floor: [f32; 3],
     pub sensor_ceiling: [f32; 3],
 }
@@ -13,7 +12,6 @@ impl GeneratedTF {
         GeneratedTF {
             transfer_function_type: TransferFunction::sRGB,
             transfer_function_resolution: 4096,
-            normalize_transfer_function: false,
             sensor_floor: [0.0; 3],
             sensor_ceiling: [1.0; 3],
         }
@@ -61,13 +59,6 @@ pub fn generated_mode_ui(
                     .clamp_range(2..=(1 << 16))
                     .max_decimals(0)
                     .prefix("LUT resolution: "),
-            );
-            ui.add_enabled(
-                job_count == 0,
-                egui::widgets::Checkbox::new(
-                    &mut ui_data.generated.normalize_transfer_function,
-                    "Normalize",
-                ),
             );
         });
 

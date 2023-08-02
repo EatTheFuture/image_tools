@@ -152,16 +152,15 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
             let floor = ui_data.generated.sensor_floor;
             let ceiling = ui_data.generated.sensor_ceiling;
 
-            let normalize = ui_data.generated.normalize_transfer_function;
             let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
             let function = ui_data.generated.transfer_function_type;
 
             let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
-                a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
+                a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], false))
             });
             let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
-                a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], normalize))
+                a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], false))
             });
             let extent = range_max - range_min;
             transfer_function_graph(ui, None, |chan| {
@@ -170,7 +169,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     (
                         x,
                         function
-                            .from_linear_fc(x, floor[chan], ceiling[chan], normalize)
+                            .from_linear_fc(x, floor[chan], ceiling[chan], false)
                             .max(0.0)
                             .min(1.0),
                     )
@@ -182,7 +181,6 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
             let floor = ui_data.generated.sensor_floor;
             let ceiling = ui_data.generated.sensor_ceiling;
 
-            let normalize = ui_data.generated.normalize_transfer_function;
             let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
             let function = ui_data.generated.transfer_function_type;
@@ -192,7 +190,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     let x = i as f32 * res_norm;
                     (
                         x,
-                        function.to_linear_fc(x, floor[chan], ceiling[chan], normalize),
+                        function.to_linear_fc(x, floor[chan], ceiling[chan], false),
                     )
                 })
             });

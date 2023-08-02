@@ -6,7 +6,6 @@ use crate::egui::{self, Ui};
 
 pub struct ModifiedTF {
     pub loaded_lut: Option<(colorbox::lut::Lut1D, colorbox::lut::Lut1D, PathBuf)>, // (to linear, from linear, path)
-    pub normalize: bool,
     pub sensor_floor: (bool, [f32; 3]), // The bool is whether to do an adjustment at all.
     pub sensor_ceiling: (bool, [f32; 3]),
 }
@@ -15,7 +14,6 @@ impl ModifiedTF {
     pub fn new() -> ModifiedTF {
         ModifiedTF {
             loaded_lut: None,
-            normalize: false,
             sensor_floor: (false, [0.0; 3]),
             sensor_ceiling: (false, [1.0; 3]),
         }
@@ -77,11 +75,7 @@ impl ModifiedTF {
                 } else {
                     *lut.last().unwrap()
                 };
-                let out_norm = if self.normalize {
-                    1.0
-                } else {
-                    *lut.last().unwrap()
-                } / (out_ceil - out_floor);
+                let out_norm = *lut.last().unwrap() / (out_ceil - out_floor);
 
                 (out_floor, out_norm)
             };
@@ -193,8 +187,6 @@ pub fn modified_mode_ui(
                         std::mem::swap(lut1, lut2);
                     }
                 }
-
-                ui.checkbox(&mut app.ui_data.lock_mut().modified.normalize, "Normalize");
             } else {
                 ui.horizontal(|ui| {
                     if ui

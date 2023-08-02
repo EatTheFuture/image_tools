@@ -632,14 +632,13 @@ impl AppMain {
                 }
 
                 AppMode::Generate => {
-                    let (function, floor, ceiling, resolution, normalize) = {
+                    let (function, floor, ceiling, resolution) = {
                         let ui_data = ui_data.lock();
                         (
                             ui_data.generated.transfer_function_type,
                             ui_data.generated.sensor_floor,
                             ui_data.generated.sensor_ceiling,
                             ui_data.generated.transfer_function_resolution,
-                            ui_data.generated.normalize_transfer_function,
                         )
                     };
 
@@ -665,7 +664,7 @@ impl AppMain {
                                                 i as f32 * norm,
                                                 floor[chan],
                                                 ceiling[chan],
-                                                normalize,
+                                                false,
                                             )
                                         })
                                         .collect()
@@ -675,10 +674,10 @@ impl AppMain {
                     } else {
                         // Fixed function, from linear.
                         let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
-                            a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], normalize))
+                            a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], false))
                         });
                         let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
-                            a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], normalize))
+                            a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], false))
                         });
                         let norm = (range_max - range_min) / (resolution - 1) as f32;
 
@@ -691,7 +690,7 @@ impl AppMain {
                                                 range_min + (i as f32 * norm),
                                                 floor[chan],
                                                 ceiling[chan],
-                                                normalize,
+                                                false,
                                             )
                                             .max(0.0)
                                             .min(1.0)
