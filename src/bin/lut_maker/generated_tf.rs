@@ -3,8 +3,8 @@ use crate::egui::{self, Ui};
 pub struct GeneratedTF {
     pub transfer_function_type: TransferFunction,
     pub transfer_function_resolution: usize,
-    pub sensor_floor: [f32; 3],
-    pub sensor_ceiling: [f32; 3],
+    pub sensor_floor: (bool, [f32; 3]), // The bool is whether to do an adjustment at all.
+    pub sensor_ceiling: (bool, [f32; 3]),
 }
 
 impl GeneratedTF {
@@ -12,8 +12,8 @@ impl GeneratedTF {
         GeneratedTF {
             transfer_function_type: TransferFunction::sRGB,
             transfer_function_resolution: 4096,
-            sensor_floor: [0.0; 3],
-            sensor_ceiling: [1.0; 3],
+            sensor_floor: (false, [0.0; 3]),
+            sensor_ceiling: (false, [1.0; 3]),
         }
     }
 }
@@ -63,17 +63,22 @@ pub fn generated_mode_ui(
         });
 
         ui.add_space(48.0);
-
         // Sensor floor controls.
+        let adjust_floor = app.ui_data.lock().generated.sensor_floor.0;
         ui.vertical(|ui| {
             ui.set_width(sub_area_width);
 
             ui.horizontal(|ui| {
-                ui.label("Sensor Noise Floor");
+                ui.checkbox(
+                    &mut app.ui_data.lock_mut().generated.sensor_floor.0,
+                    "Adjust Noise Floor",
+                );
                 ui.add_space(4.0);
                 if ui
                     .add_enabled(
-                        job_count == 0 && (total_bracket_images > 0 || total_dark_images > 0),
+                        job_count == 0
+                            && adjust_floor
+                            && (total_bracket_images > 0 || total_dark_images > 0),
                         egui::widgets::Button::new("Estimate"),
                     )
                     .clicked()
@@ -84,12 +89,12 @@ pub fn generated_mode_ui(
             ui.add_space(4.0);
             for (label, value) in ["R: ", "G: ", "B: "]
                 .iter()
-                .zip(app.ui_data.lock_mut().generated.sensor_floor.iter_mut())
+                .zip(app.ui_data.lock_mut().generated.sensor_floor.1.iter_mut())
             {
                 ui.horizontal(|ui| {
                     ui.label(*label);
                     ui.add_enabled(
-                        job_count == 0,
+                        job_count == 0 && adjust_floor,
                         egui::widgets::Slider::new(value, 0.0..=1.0)
                             .max_decimals(5)
                             .min_decimals(5),
@@ -101,15 +106,19 @@ pub fn generated_mode_ui(
         ui.add_space(0.0);
 
         // Sensor ceiling controls.
+        let adjust_ceiling = app.ui_data.lock().generated.sensor_ceiling.0;
         ui.vertical(|ui| {
             ui.set_width(sub_area_width);
 
             ui.horizontal(|ui| {
-                ui.label("Sensor Ceiling");
+                ui.checkbox(
+                    &mut app.ui_data.lock_mut().generated.sensor_ceiling.0,
+                    "Adjust Ceiling",
+                );
                 ui.add_space(4.0);
                 if ui
                     .add_enabled(
-                        job_count == 0 && total_bracket_images > 0,
+                        job_count == 0 && adjust_ceiling && total_bracket_images > 0,
                         egui::widgets::Button::new("Estimate"),
                     )
                     .clicked()
@@ -120,12 +129,12 @@ pub fn generated_mode_ui(
             ui.add_space(4.0);
             for (label, value) in ["R: ", "G: ", "B: "]
                 .iter()
-                .zip(app.ui_data.lock_mut().generated.sensor_ceiling.iter_mut())
+                .zip(app.ui_data.lock_mut().generated.sensor_ceiling.1.iter_mut())
             {
                 ui.horizontal(|ui| {
                     ui.label(*label);
                     ui.add_enabled(
-                        job_count == 0,
+                        job_count == 0 && adjust_ceiling,
                         egui::widgets::Slider::new(value, 0.0..=1.0)
                             .max_decimals(5)
                             .min_decimals(5),
@@ -185,10 +194,16 @@ pub const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
 ];
 
 impl TransferFunction {
-    pub fn to_linear_fc(&self, n: f32, floor: f32, ceil: f32, normalize: bool) -> f32 {
-        let (_, _, _, linear_top, _) = self.constants();
-        let out_floor = self.to_linear(floor);
-        let out_ceil = self.to_linear(ceil);
+    pub fn to_linear_fc(
+        &self,
+        n: f32,
+        floor: Option<f32>,
+        ceil: Option<f32>,
+        normalize: bool,
+    ) -> f32 {
+        let (nonlinear_black, nonlinear_max, _, linear_top, _) = self.constants();
+        let out_floor = self.to_linear(floor.unwrap_or(nonlinear_black));
+        let out_ceil = self.to_linear(ceil.unwrap_or(nonlinear_max));
 
         let mut out = self.to_linear(n);
         out = (out - out_floor) / (out_ceil - out_floor);
@@ -199,10 +214,16 @@ impl TransferFunction {
         out
     }
 
-    pub fn from_linear_fc(&self, mut n: f32, floor: f32, ceil: f32, normalize: bool) -> f32 {
-        let (_, _, _, linear_top, _) = self.constants();
-        let in_floor = self.to_linear(floor);
-        let in_ceil = self.to_linear(ceil);
+    pub fn from_linear_fc(
+        &self,
+        mut n: f32,
+        floor: Option<f32>,
+        ceil: Option<f32>,
+        normalize: bool,
+    ) -> f32 {
+        let (nonlinear_black, nonlinear_max, _, linear_top, _) = self.constants();
+        let in_floor = self.to_linear(floor.unwrap_or(nonlinear_black));
+        let in_ceil = self.to_linear(ceil.unwrap_or(nonlinear_max));
 
         if !normalize {
             n /= linear_top;

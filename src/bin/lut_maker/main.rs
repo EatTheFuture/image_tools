@@ -414,7 +414,7 @@ impl AppMain {
                 let mut ui_data = ui_data.lock_mut();
                 match mode {
                     AppMode::Generate => {
-                        ui_data.generated.sensor_floor = floor;
+                        ui_data.generated.sensor_floor.1 = floor;
                     }
 
                     AppMode::Modify => {
@@ -470,7 +470,7 @@ impl AppMain {
                 match ui_data.mode {
                     AppMode::Generate => {
                         for i in 0..3 {
-                            ui_data.generated.sensor_ceiling[i] = ceiling[i].unwrap_or(1.0);
+                            ui_data.generated.sensor_ceiling.1[i] = ceiling[i].unwrap_or(1.0);
                         }
                     }
 
@@ -636,20 +636,19 @@ impl AppMain {
                         let ui_data = ui_data.lock();
                         (
                             ui_data.generated.transfer_function_type,
-                            ui_data.generated.sensor_floor,
-                            ui_data.generated.sensor_ceiling,
+                            if ui_data.generated.sensor_floor.0 {
+                                Some(ui_data.generated.sensor_floor.1)
+                            } else {
+                                None
+                            },
+                            if ui_data.generated.sensor_ceiling.0 {
+                                Some(ui_data.generated.sensor_ceiling.1)
+                            } else {
+                                None
+                            },
                             ui_data.generated.transfer_function_resolution,
                         )
                     };
-
-                    if floor.iter().zip(ceiling.iter()).any(|(a, b)| *a >= *b) {
-                        status.lock_mut().log_error(
-                            "cannot write a valid LUT file when the sensor floor \
-                             has equal or greater values than the ceiling."
-                                .into(),
-                        );
-                        return;
-                    }
 
                     if to_linear {
                         // Fixed function, to linear.
@@ -662,8 +661,8 @@ impl AppMain {
                                         .map(|i| {
                                             function.to_linear_fc(
                                                 i as f32 * norm,
-                                                floor[chan],
-                                                ceiling[chan],
+                                                floor.map(|f| f[chan]),
+                                                ceiling.map(|c| c[chan]),
                                                 false,
                                             )
                                         })
@@ -674,10 +673,20 @@ impl AppMain {
                     } else {
                         // Fixed function, from linear.
                         let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
-                            a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], false))
+                            a.min(function.to_linear_fc(
+                                0.0,
+                                floor.map(|f| f[i]),
+                                ceiling.map(|c| c[i]),
+                                false,
+                            ))
                         });
                         let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
-                            a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], false))
+                            a.max(function.to_linear_fc(
+                                1.0,
+                                floor.map(|f| f[i]),
+                                ceiling.map(|c| c[i]),
+                                false,
+                            ))
                         });
                         let norm = (range_max - range_min) / (resolution - 1) as f32;
 
@@ -688,8 +697,8 @@ impl AppMain {
                                         function
                                             .from_linear_fc(
                                                 range_min + (i as f32 * norm),
-                                                floor[chan],
-                                                ceiling[chan],
+                                                floor.map(|f| f[chan]),
+                                                ceiling.map(|c| c[chan]),
                                                 false,
                                             )
                                             .max(0.0)

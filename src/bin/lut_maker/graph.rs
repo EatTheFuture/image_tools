@@ -37,8 +37,16 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
 
     match (ui_data.preview_mode, ui_data.mode) {
         (PreviewMode::ExposureMappings, AppMode::Generate) => {
-            let floor = ui_data.generated.sensor_floor;
-            let ceiling = ui_data.generated.sensor_ceiling;
+            let floor = if ui_data.generated.sensor_floor.0 {
+                Some(ui_data.generated.sensor_floor.1)
+            } else {
+                None
+            };
+            let ceiling = if ui_data.generated.sensor_ceiling.0 {
+                Some(ui_data.generated.sensor_ceiling.1)
+            } else {
+                None
+            };
 
             // Normalized to-linear luts.
             let luts: Vec<(Vec<f32>, f32, f32)> = {
@@ -52,8 +60,8 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                                     let x = i as f32 * res_norm;
                                     ui_data.generated.transfer_function_type.to_linear_fc(
                                         x,
-                                        floor[chan],
-                                        ceiling[chan],
+                                        floor.map(|f| f[chan]),
+                                        ceiling.map(|c| c[chan]),
                                         true,
                                     )
                                 })
@@ -149,18 +157,26 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
         }
 
         (PreviewMode::FromLinear, AppMode::Generate) => {
-            let floor = ui_data.generated.sensor_floor;
-            let ceiling = ui_data.generated.sensor_ceiling;
+            let floor = if ui_data.generated.sensor_floor.0 {
+                Some(ui_data.generated.sensor_floor.1)
+            } else {
+                None
+            };
+            let ceiling = if ui_data.generated.sensor_ceiling.0 {
+                Some(ui_data.generated.sensor_ceiling.1)
+            } else {
+                None
+            };
 
             let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
             let function = ui_data.generated.transfer_function_type;
 
             let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
-                a.min(function.to_linear_fc(0.0, floor[i], ceiling[i], false))
+                a.min(function.to_linear_fc(0.0, floor.map(|f| f[i]), ceiling.map(|c| c[i]), false))
             });
             let range_max = (0..3).fold(-std::f32::INFINITY, |a, i| {
-                a.max(function.to_linear_fc(1.0, floor[i], ceiling[i], false))
+                a.max(function.to_linear_fc(1.0, floor.map(|f| f[i]), ceiling.map(|c| c[i]), false))
             });
             let extent = range_max - range_min;
             transfer_function_graph(ui, None, |chan| {
@@ -169,7 +185,12 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     (
                         x,
                         function
-                            .from_linear_fc(x, floor[chan], ceiling[chan], false)
+                            .from_linear_fc(
+                                x,
+                                floor.map(|f| f[chan]),
+                                ceiling.map(|c| c[chan]),
+                                false,
+                            )
                             .max(0.0)
                             .min(1.0),
                     )
@@ -178,8 +199,16 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
         }
 
         (PreviewMode::ToLinear, AppMode::Generate) => {
-            let floor = ui_data.generated.sensor_floor;
-            let ceiling = ui_data.generated.sensor_ceiling;
+            let floor = if ui_data.generated.sensor_floor.0 {
+                Some(ui_data.generated.sensor_floor.1)
+            } else {
+                None
+            };
+            let ceiling = if ui_data.generated.sensor_ceiling.0 {
+                Some(ui_data.generated.sensor_ceiling.1)
+            } else {
+                None
+            };
 
             let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
@@ -190,7 +219,12 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                     let x = i as f32 * res_norm;
                     (
                         x,
-                        function.to_linear_fc(x, floor[chan], ceiling[chan], false),
+                        function.to_linear_fc(
+                            x,
+                            floor.map(|f| f[chan]),
+                            ceiling.map(|c| c[chan]),
+                            false,
+                        ),
                     )
                 })
             });
