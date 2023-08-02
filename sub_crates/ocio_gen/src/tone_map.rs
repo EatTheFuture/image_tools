@@ -114,22 +114,27 @@ impl Tonemapper {
         let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear, 0.0);
 
         // Tone mapped color value.
-        let (rgb_tonemapped, lm_tonemapped) = {
-            let rgb1 = [
-                self.eval_1d(rgb_linear[0]),
-                self.eval_1d(rgb_linear[1]),
-                self.eval_1d(rgb_linear[2]),
-            ];
+        let lm_tonemapped = self.eval_1d(lm_linear);
+        let rgb_tonemapped = {
+            let rgb_linear_min = rgb_linear[0].min(rgb_linear[1]).min(rgb_linear[2]);
+            let rgb_linear_max = rgb_linear[0].max(rgb_linear[1]).max(rgb_linear[2]);
 
-            let lm1 = luma(rgb1);
-            let lm2 = self.eval_1d(lm_linear);
-            let rgb2 = vscale(rgb1, lm2 / lm1);
-
-            (rgb2, lm2)
+            if rgb_linear_max <= 0.0 || rgb_linear_min == rgb_linear_max {
+                [lm_tonemapped; 3]
+            } else {
+                let saturation_linear = 1.0 - (rgb_linear_min / rgb_linear_max);
+                let saturation_tm =
+                    1.0 - (self.eval_1d(rgb_linear_min) / self.eval_1d(rgb_linear_max));
+                vlerp(
+                    [lm_tonemapped; 3],
+                    vscale(rgb_linear, lm_tonemapped / lm_linear),
+                    saturation_tm / saturation_linear,
+                )
+            }
         };
 
         // Soft-clip the tonemapped color to the closed-domain color gamut.
-        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.25);
+        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.3);
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
