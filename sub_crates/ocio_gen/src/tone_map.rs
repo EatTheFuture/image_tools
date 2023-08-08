@@ -112,29 +112,34 @@ impl Tonemapper {
             return [0.0; 3];
         }
         let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear, 0.0);
+        let rgb_linear_min = rgb_linear[0].min(rgb_linear[1]).min(rgb_linear[2]);
+        let rgb_linear_max = rgb_linear[0].max(rgb_linear[1]).max(rgb_linear[2]);
 
         // Tone mapped color value.
         let lm_tonemapped = self.eval_1d(lm_linear);
         let rgb_tonemapped = {
-            let rgb_linear_min = rgb_linear[0].min(rgb_linear[1]).min(rgb_linear[2]);
-            let rgb_linear_max = rgb_linear[0].max(rgb_linear[1]).max(rgb_linear[2]);
-
             if rgb_linear_max <= 0.0 || rgb_linear_min == rgb_linear_max {
                 [lm_tonemapped; 3]
             } else {
-                let saturation_linear = 1.0 - (rgb_linear_min / rgb_linear_max);
-                let saturation_tm =
-                    1.0 - (self.eval_1d(rgb_linear_min) / self.eval_1d(rgb_linear_max));
+                let desaturate_factor = {
+                    const STEP: f64 = 1.00001;
+                    let a = lm_linear;
+                    let b = lm_linear * STEP;
+                    let c = self.eval_1d(a);
+                    let d = self.eval_1d(b);
+                    // Equivalent to: `((d - c) / c) / ((b - a) / a)`
+                    ((d / c) - 1.0) / (STEP - 1.0)
+                };
                 vlerp(
                     [lm_tonemapped; 3],
                     vscale(rgb_linear, lm_tonemapped / lm_linear),
-                    saturation_tm / saturation_linear,
+                    desaturate_factor.powf(0.6),
                 )
             }
         };
 
         // Soft-clip the tonemapped color to the closed-domain color gamut.
-        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.3);
+        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.2);
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
