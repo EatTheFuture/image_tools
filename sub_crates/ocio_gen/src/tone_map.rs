@@ -14,23 +14,30 @@ use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 /// - `fixed_point`: the luminance that should map to itself (aside from
 ///   being affected by `exposure` below).  For example, you might set
 ///   this to 0.18 (18% gray) so that colors of that brightness remain
-///   roughly the same.
+///   roughly the same.  Note that large-size toes (> 1.0) can impact
+///   the fixed point, making it not quite fixed.
 /// - `exposure`: input exposure adjustment before applying the tone mapping.
 ///   Input color values are simply multiplied by this, so 1.0 does nothing.
 ///   Useful for tuning the over-all brightness of tone mappers.
-/// - `toe`: `(slope, strength)` pair that determines the look of the toe.
-///   The slope is in [-1, 1] with 0.0 being "normal", > 0.0 being  more
-///   contrasty, < 0.0 being less.  The strength determines how much
-///   effect the slope has, and is in [0, 1] with 0.0 being no effect and
-///   1.0 being maximum.
-/// - `shoulder`: `(slope, strength)` pair the determines the look of
-///   the shoulder.  Same parameterization as `toe`.
+/// - `toe`: `(slope, size)` pair that determines the look of the toe.
+///   `slope` is in [0, infinity], and determines the slope of the toe at
+///   `x = 0`.  0.0 gives maximum contrast, 1.0 is neutral, and > 1.0 is
+///   washed out.  `size` is how far the toe extends out of the darks,
+///   with 0.0 disabling the toe, and larger values growing its effects
+///   out from the darks into the mids and brights.  A `size` of 1.0
+///   means that only colors below the fixed point will be noticeably
+///   impacted by the toe.
+/// - `shoulder`: the strength of the shoulder.  0.0 is equivalent to
+///   a linear clamped shoulder, and larger values make the shoulder
+///   progressively softer and higher dynamic range.  1.0 is a reasonable
+///   default.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     chromaticities: Chromaticities,
+    fixed_point: f64,
     exposure: f64,
-    toe: (f64, f64),      // (slope, strength)
-    shoulder: (f64, f64), // (slope, strength)
+    toe: (f64, f64), // (slope, size)
+    shoulder: f64,
 
     res_1d: usize,
     res_3d: usize,
@@ -41,9 +48,10 @@ impl Default for Tonemapper {
     fn default() -> Tonemapper {
         Tonemapper {
             chromaticities: colorbox::chroma::REC709,
+            fixed_point: 0.18,
             exposure: 1.0,
-            toe: (0.0, 1.0 / 3.0),
-            shoulder: (0.0, 1.0 / 3.0),
+            toe: (0.0, 1.0),
+            shoulder: 1.0,
 
             res_1d: 2,
             res_3d: 2,
@@ -58,16 +66,15 @@ impl Tonemapper {
         fixed_point: f64,
         exposure: f64,
         toe: (f64, f64),
-        shoulder: (f64, f64),
+        shoulder: f64,
     ) -> Self {
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
 
-        let fixed_point_compensation = filmic::curve_inv(fixed_point, toe, shoulder) / fixed_point;
-
         Tonemapper {
             chromaticities: chromaticities.unwrap_or(colorbox::chroma::REC709),
-            exposure: exposure * fixed_point_compensation,
+            fixed_point: fixed_point,
+            exposure: exposure,
             toe: toe,
             shoulder: shoulder,
 
@@ -81,7 +88,14 @@ impl Tonemapper {
         if x <= 0.0 {
             0.0
         } else {
-            filmic::curve(x * self.exposure, self.toe, self.shoulder).min(1.0)
+            filmic::curve(
+                x * self.exposure,
+                self.fixed_point,
+                self.toe.0,
+                self.toe.1,
+                self.shoulder,
+            )
+            .min(1.0)
         }
     }
 
@@ -96,7 +110,8 @@ impl Tonemapper {
             // f32).
             (f32::MAX / 2.0) as f64
         } else {
-            filmic::curve_inv(y, self.toe, self.shoulder) / self.exposure
+            filmic::curve_inv(y, self.fixed_point, self.toe.0, self.toe.1, self.shoulder)
+                / self.exposure
         }
     }
 
@@ -263,97 +278,147 @@ impl Tonemapper {
 
 /// A "filmic" tone mapping curve.
 ///
-/// The basic idea behind this is to layer a sigmoid contrast function
-/// on top of a generalized Reinhard function.  This has no particular
-/// basis in anything, but in practice produces pleasing results that
-/// are easy to adjust for different looks.
+/// The basic idea behind this is to layer a toe function underneath
+/// a generalized Reinhard function.  This has no particular basis in
+/// anything, but in practice produces pleasing results that are easy
+/// to adjust for different looks.
 ///
-/// Note: this maps [0.0, inf] to [0.0, 1.0].  So if you want to limit
-/// the dynamic range, you should scale up and clamp the result by the
-/// appropriate amount.
+/// Note: this maps [0.0, inf] to [0.0, 1.0].
+///
+/// https://www.desmos.com/calculator/pfzvawfekp
 mod filmic {
-    use super::{offset_pow, offset_pow_inv, reinhard, reinhard_inv};
+    use super::{reinhard, reinhard_inv};
 
-    /// How "gentle" our Reinhard function is.  1.0 is standard Reinhard,
-    /// less than 1.0 is sharper, more than 1.0 is gentler.  Gentler
-    /// seems to give more flexibility in terms of effective dynamic
-    /// range.
-    const REINHARD_P: f64 = 2.0;
-
-    /// The gamma space to do contrast adjustments in, to make it more
-    /// perceptually intuitive to adjust the parameters.
-    const GAMMA: f64 = 3.0;
-    const GAMMA_OFFSET: f64 = 0.1;
-
-    /// `c`: contrast.  A value of zero creates the classic Reinhard
-    ///      curve, larger values produce a more contrasty look, and
-    ///      lower values less.
-    /// `fixed_point`: the value of `x` that should map to itself.
+    /// - `fixed_point`: the value of `x` that should approximately map
+    ///   to itself.  Generally this should be luminance level of a
+    ///   medium gray.  Note that extreme toes will cause the fixed point
+    ///   to not actually be quite fixed.
+    /// - `toe_slope`: the slope of the toe at `x = 0`.  0.0 is max
+    ///   contrast, 1.0 is neutral, and > 1.0 washes things out.
+    /// - `toe_size`: how far the toe extends out of the darks.  Zero
+    ///   disables the toe, and larger values grow its effects
+    ///   progressively from the darks into the mids and brights.  1.0 is
+    ///   a reasonable value, and means that only colors below the fixed
+    ///   point will be noticeably impacted by the toe.
+    /// - `shoulder`: the strength of the shoulder.  0.0 is equivalent to
+    ///   a linear clamped shoulder, and larger values make the shoulder
+    ///   progressively softer and higher dynamic range. 1.0 is a
+    ///   reasonable default.
     #[inline(always)]
-    pub fn curve(x: f64, toe: (f64, f64), shoulder: (f64, f64)) -> f64 {
-        // Reinhard.
-        let r = reinhard(x, REINHARD_P);
+    pub fn curve(x: f64, fixed_point: f64, toe_slope: f64, toe_size: f64, shoulder: f64) -> f64 {
+        assert!(toe_slope >= 0.0);
+        assert!(toe_size >= 0.0);
+        assert!(shoulder >= 0.0);
 
-        // Contrast sigmoid.
-        offset_pow(
-            contrast(
-                offset_pow_inv(r, GAMMA, GAMMA_OFFSET).clamp(0.0, 1.0),
-                toe,
-                shoulder,
-            ),
-            GAMMA,
-            GAMMA_OFFSET,
-        )
+        if x <= 0.0 {
+            x * toe_slope
+        } else {
+            let fixed_point_compensation = reinhard_inv(fixed_point, shoulder) / fixed_point;
+
+            let t = toe(
+                x,
+                toe_slope / fixed_point_compensation,
+                toe_size * fixed_point,
+            );
+            reinhard(t * fixed_point_compensation, shoulder)
+        }
     }
 
     #[inline(always)]
-    pub fn curve_inv(y: f64, toe: (f64, f64), shoulder: (f64, f64)) -> f64 {
-        // Contrast sigmoid.
-        let r = offset_pow(
-            contrast(
-                offset_pow_inv(y, GAMMA, GAMMA_OFFSET).clamp(0.0, 1.0),
-                (-toe.0, toe.1),
-                (-shoulder.0, shoulder.1),
-            ),
-            GAMMA,
-            GAMMA_OFFSET,
-        );
+    pub fn curve_inv(
+        x: f64,
+        fixed_point: f64,
+        toe_slope: f64,
+        toe_size: f64,
+        shoulder: f64,
+    ) -> f64 {
+        assert!(toe_slope >= 0.0);
+        assert!(toe_size >= 0.0);
+        assert!(shoulder >= 0.0);
 
-        // Reinhard.
-        reinhard_inv(r, REINHARD_P)
+        if x <= 0.0 {
+            if toe_slope > 0.0 {
+                x / toe_slope
+            } else {
+                -f64::INFINITY
+            }
+        } else if x >= 1.0 {
+            f64::INFINITY
+        } else {
+            let fixed_point_compensation = reinhard_inv(fixed_point, shoulder) / fixed_point;
+
+            let t = reinhard_inv(x, shoulder) / fixed_point_compensation;
+            toe_inv(
+                t,
+                toe_slope / fixed_point_compensation,
+                toe_size * fixed_point,
+            )
+        }
     }
 
-    /// Adjusts contrast in [0.0, 1.0] via a sigmoid function.
-    ///
-    /// Unlike simply multiplying `v` by some constant with a pivot around
-    /// 0.5, this function uses a sigmoid to compress/expand the values near
-    /// 0.0 and 1.0, which avoids pushing any values outside of [0.0, 1.0].
-    ///
-    /// `x`: value to adjust.
-    /// `c`: amount of contrast adjustment. 0 is no adjustment, > 0 increases
-    ///      contrast, < 0 decreases contrast.
-    ///
-    /// Note: this function is its own inverse by simply passing the negative
-    /// of `c`.
-    #[inline(always)]
-    fn contrast(x: f64, toe: (f64, f64), shoulder: (f64, f64)) -> f64 {
-        const Q_PI: f64 = std::f64::consts::PI / 4.0;
+    /// Point beyond which we assume the toe is linear.  The toe
+    /// goes linear very quickly, so this doesn't need to be super
+    /// large.
+    const TOE_LINEAR_POINT: f64 = 1.0e+4;
 
-        let p1 = {
-            let toe = (toe.0.clamp(-1.0, 1.0), toe.1.clamp(0.0, 1.0));
-            let angle = Q_PI + (-toe.0 * Q_PI);
-            [angle.cos() * toe.1, angle.sin() * toe.1]
-        };
-        let p2 = {
-            let shoulder = (shoulder.0.clamp(-1.0, 1.0), shoulder.1.clamp(0.0, 1.0));
-            let angle = Q_PI + (-shoulder.0 * Q_PI);
-            [
-                1.0 - (angle.cos() * shoulder.1),
-                1.0 - (angle.sin() * shoulder.1),
-            ]
-        };
+    /// - `slope`: the slope of the toe at `x = 0`.
+    /// - `size`: how far the toe extends out of the darks.  Zero is no
+    ///   effect at all (not even on darks), and larger values grow its
+    ///   effects progressively further from the darks into the mids and
+    ///   eventually to the brights.
+    fn toe(x: f64, slope: f64, size: f64) -> f64 {
+        // Special cases and validation.
+        if x < 0.0 {
+            return x * slope;
+        } else if size <= 0.0 || x > TOE_LINEAR_POINT {
+            return x;
+        }
 
-        crate::bezier::unit_cubic_bezier(x, p1, p2).clamp(0.0, 1.0)
+        // Convert slope to factor.
+        let n = 1.0 - slope.max(0.0);
+
+        // The 0.125 factor is to make the contrast adjustment only
+        // noticeably affect values < 1.0.  This makes scaling work
+        // fairly intuitively, where you know anything over your scale
+        // factor won't be affected.
+        let w = size * 0.125;
+
+        let x = x / w;
+        (x - (n * x * (-x).exp2())) * w
+    }
+
+    /// Inverse of `toe()`.  There is no analytic inverse, so we do it
+    /// numerically.
+    fn toe_inv(x: f64, slope: f64, size: f64) -> f64 {
+        // Special cases and validation.
+        if x < 0.0 {
+            return x / slope;
+        } else if x > TOE_LINEAR_POINT {
+            // Really far out it's close enough to linear to not matter.
+            return x;
+        }
+
+        // A binary search with a capped number of iterations.
+        // Something like newton iteration would be faster, but I
+        // can't be bothered to figure that out right now, and this
+        // isn't performance critical.
+        const RELATIVE_ERROR_THRESHOLD: f64 = 1.0e-8;
+        let mut min = 0.0;
+        let mut max = TOE_LINEAR_POINT;
+        for _ in 0..64 {
+            let y = (min + max) * 0.5;
+            let x2 = toe(y, slope, size);
+            if x >= x2 {
+                min = y;
+                if ((x - x2) / x) <= RELATIVE_ERROR_THRESHOLD {
+                    break;
+                }
+            } else {
+                max = y;
+            }
+        }
+
+        min
     }
 
     #[cfg(test)]
@@ -361,25 +426,51 @@ mod filmic {
         use super::*;
 
         #[test]
-        fn contrast_round_trip() {
-            let toe = (0.8, 0.25);
-            let shoulder = (0.5, 0.33);
-            let toe_inv = (-0.8, 0.25);
-            let shoulder_inv = (-0.5, 0.33);
-            for i in 0..17 {
-                let x = i as f64 / 16.0;
-                let x2 = contrast(contrast(x, toe, shoulder), toe_inv, shoulder_inv);
-                assert!((x - x2).abs() < 0.000_000_1);
+        fn toe_round_trip() {
+            let size = 2.0;
+            for slope in [0.0, 0.5, 1.0, 1.5, 2.0] {
+                for i in 0..4096 {
+                    // Non-linear mapping for x so we test both very
+                    // small and very large values.
+                    let x = ((i as f64 / 100.0).exp2() - 1.0) / 10000.0;
+
+                    // Forward.
+                    let y = toe(x, slope, size);
+                    let x2 = toe_inv(y, slope, size);
+                    if x == 0.0 {
+                        assert!(x2 == 0.0);
+                    } else {
+                        assert!(((x - x2).abs() / x) < 0.000_000_1);
+                    }
+
+                    // Reverse.
+                    let y = toe_inv(x, slope, size);
+                    let x2 = toe(y, slope, size);
+                    if x == 0.0 {
+                        assert!(x2 == 0.0);
+                    } else {
+                        assert!(((x - x2).abs() / x) < 0.000_000_1);
+                    }
+                }
             }
         }
 
         #[test]
         fn filmic_curve_round_trip() {
-            let toe = (0.8, 0.25);
-            let shoulder = (0.5, 0.33);
-            for i in 0..17 {
-                let x = i as f64 / 16.0;
-                let x2 = curve(curve_inv(x, toe, shoulder), toe, shoulder);
+            let fixed_point = 0.18;
+            let toe = (0.25, 0.8);
+            let shoulder = 1.4;
+            for i in 0..4096 {
+                // Forward.
+                let x = i as f64 / 64.0;
+                let y = curve(x, fixed_point, toe.0, toe.1, shoulder);
+                let x2 = curve_inv(y, fixed_point, toe.0, toe.1, shoulder);
+                assert!((x - x2).abs() < 0.000_001);
+
+                // Reverse.
+                let x = i as f64 / 4096.0;
+                let y = curve_inv(x, fixed_point, toe.0, toe.1, shoulder);
+                let x2 = curve(y, fixed_point, toe.0, toe.1, shoulder);
                 assert!((x - x2).abs() < 0.000_001);
             }
         }
@@ -470,20 +561,14 @@ fn reinhard(x: f64, p: f64) -> f64 {
     }
 
     // Special case so we get linear at `p == 0` instead of undefined.
-    // Negative `p` is unsupported, so clamp.
+    // Negative `p` is unsupported, so treat like zero as well.
     if p <= 0.0 {
-        if x >= 1.0 {
-            return 1.0;
-        } else {
-            return x;
-        }
+        return x.min(1.0);
     }
 
     let tmp = x.powf(-1.0 / p);
 
     // Special cases for numerical stability.
-    // Note that for the supported values of `p`, `tmp > 1.0` implies
-    // `x < 1.0` and vice versa.
     if tmp > 1.0e15 {
         return x;
     } else if tmp < 1.0e-15 {
@@ -621,7 +706,7 @@ mod test {
     #[test]
     fn tonemap_1d_round_trip() {
         let toe = (0.8, 0.25);
-        let shoulder = (0.5, 0.33);
+        let shoulder = 1.4;
         let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder);
         for i in 0..17 {
             let x = i as f64 / 16.0;
