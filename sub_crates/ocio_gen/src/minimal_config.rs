@@ -8,8 +8,8 @@ pub fn make_minimal(
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
     // Tone mapping operators, used various places below.
-    let tonemap_normal = Tonemapper::new(None, 0.18, 1.0, (0.9, 1.0), 1.2);
-    let tonemap_contrast = Tonemapper::new(None, 0.18, 1.0, (0.4, 1.0), 0.7);
+    let toney_neutral = Tonemapper::new(None, 0.18, 1.0, (1.0, 4.0), 1.3, 0.6);
+    let toney_filmic = Tonemapper::new(None, 0.18, 1.1, (0.4, 2.0), 1.0, 0.4);
 
     //---------------------------------------------------------
 
@@ -52,11 +52,8 @@ pub fn make_minimal(
         name: "sRGB".into(),
         views: vec![
             ("Standard".into(), "sRGB Gamut Clipped".into()),
-            ("Tone Map".into(), "sRGB Gamut Clipped Filmic".into()),
-            (
-                "Tone Map Punchy".into(),
-                "sRGB Gamut Clipped Filmic Contrast".into(),
-            ),
+            ("Toney (Neutral)".into(), "sRGB Toney Neutral".into()),
+            ("Toney (Filmic)".into(), "sRGB Toney Filmic".into()),
             ("Raw".into(), "Raw".into()),
         ],
     });
@@ -136,8 +133,8 @@ pub fn make_minimal(
 
     config.active_views = vec![
         "Standard".into(),
-        "Tone Map".into(),
-        "Tone Map Punchy".into(),
+        "Toney (Neutral)".into(),
+        "Toney (Filmic)".into(),
         "Raw".into(),
     ];
 
@@ -159,13 +156,13 @@ pub fn make_minimal(
     );
 
     config.add_display_colorspace(
-        "sRGB Gamut Clipped Filmic".into(),
+        "sRGB Toney Neutral".into(),
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        tonemap_normal.tone_map_transforms(
-            "omkr__tonemap_curve_normal_inv.spi1d",
-            "omkr__tonemap_chroma_normal.cube",
+        toney_neutral.tone_map_transforms(
+            "omkr__toney_neutral_curve_inv.spi1d",
+            "omkr__toney_neutral_chroma.cube",
         ),
         Transform::ExponentWithLinearTransform {
             gamma: 2.4,
@@ -176,13 +173,13 @@ pub fn make_minimal(
     );
 
     config.add_display_colorspace(
-        "sRGB Gamut Clipped Filmic Contrast".into(),
+        "sRGB Toney Filmic".into(),
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        tonemap_contrast.tone_map_transforms(
-            "omkr__tonemap_curve_contrast_inv.spi1d",
-            "omkr__tonemap_chroma_contrast.cube",
+        toney_filmic.tone_map_transforms(
+            "omkr__toney_filmic_curve_inv.spi1d",
+            "omkr__toney_filmic_chroma.cube",
         ),
         Transform::ExponentWithLinearTransform {
             gamma: 2.4,
@@ -419,24 +416,24 @@ pub fn make_minimal(
 
     // Tone mapping LUTs.
     {
-        let (tone_1d_normal, tone_3d_normal) = tonemap_normal.generate_luts();
-        let (tone_1d_contrast, tone_3d_contrast) = tonemap_contrast.generate_luts();
+        let (toney_neutral_1d, toney_neutral_3d) = toney_neutral.generate_luts();
+        let (toney_filmic_1d, toney_filmic_3d) = toney_filmic.generate_luts();
         config.output_files.extend([
             (
-                "luts/omkr__tonemap_curve_normal_inv.spi1d".into(),
-                OutputFile::Lut1D(tone_1d_normal),
+                "luts/omkr__toney_neutral_curve_inv.spi1d".into(),
+                OutputFile::Lut1D(toney_neutral_1d),
             ),
             (
-                "luts/omkr__tonemap_chroma_normal.cube".into(),
-                OutputFile::Lut3D(tone_3d_normal),
+                "luts/omkr__toney_neutral_chroma.cube".into(),
+                OutputFile::Lut3D(toney_neutral_3d),
             ),
             (
-                "luts/omkr__tonemap_curve_contrast_inv.spi1d".into(),
-                OutputFile::Lut1D(tone_1d_contrast),
+                "luts/omkr__toney_filmic_curve_inv.spi1d".into(),
+                OutputFile::Lut1D(toney_filmic_1d),
             ),
             (
-                "luts/omkr__tonemap_chroma_contrast.cube".into(),
-                OutputFile::Lut3D(tone_3d_contrast),
+                "luts/omkr__toney_filmic_chroma.cube".into(),
+                OutputFile::Lut3D(toney_filmic_3d),
             ),
         ]);
     }

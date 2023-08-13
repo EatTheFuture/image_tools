@@ -31,6 +31,10 @@ use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 ///   a linear clamped shoulder, and larger values make the shoulder
 ///   progressively softer and higher dynamic range.  1.0 is a reasonable
 ///   default.
+/// - `desaturate_power`: how aggressively to desaturate colors as they
+///   blow out to white.  0.0 is minimum desaturation (maintains
+///   saturation as much as possible) and larger values desaturate more
+///   aggressively.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     chromaticities: Chromaticities,
@@ -38,6 +42,7 @@ pub struct Tonemapper {
     exposure: f64,
     toe: (f64, f64), // (slope, size)
     shoulder: f64,
+    desaturate_power: f64,
 
     res_1d: usize,
     res_3d: usize,
@@ -52,6 +57,7 @@ impl Default for Tonemapper {
             exposure: 1.0,
             toe: (0.0, 1.0),
             shoulder: 1.0,
+            desaturate_power: 0.5,
 
             res_1d: 2,
             res_3d: 2,
@@ -67,6 +73,7 @@ impl Tonemapper {
         exposure: f64,
         toe: (f64, f64),
         shoulder: f64,
+        desaturate_power: f64,
     ) -> Self {
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
@@ -77,6 +84,7 @@ impl Tonemapper {
             exposure: exposure,
             toe: toe,
             shoulder: shoulder,
+            desaturate_power: desaturate_power,
 
             res_1d: res_1d,
             res_3d: res_3d,
@@ -122,39 +130,19 @@ impl Tonemapper {
         };
 
         // Initial open-domain linear color value.
+        let rgb_linear = rgb_gamut::open_domain_clip(
+            rgb,
+            luma([rgb[0].max(0.0), rgb[1].max(0.0), rgb[2].max(0.0)]),
+            0.1,
+        );
         let lm_linear = luma(rgb);
-        if lm_linear <= 0.0 {
-            return [0.0; 3];
-        }
-        let rgb_linear = rgb_gamut::open_domain_clip(rgb, lm_linear, 0.0);
-        let rgb_linear_min = rgb_linear[0].min(rgb_linear[1]).min(rgb_linear[2]);
-        let rgb_linear_max = rgb_linear[0].max(rgb_linear[1]).max(rgb_linear[2]);
 
         // Tone mapped color value.
         let lm_tonemapped = self.eval_1d(lm_linear);
         let rgb_tonemapped = {
-            if rgb_linear_max <= 0.0 || rgb_linear_min == rgb_linear_max {
-                [lm_tonemapped; 3]
-            } else {
-                let desaturate_factor = {
-                    const STEP: f64 = 1.00001;
-                    let a = lm_linear;
-                    let b = lm_linear * STEP;
-                    let c = self.eval_1d(a);
-                    let d = self.eval_1d(b);
-                    // Equivalent to: `((d - c) / c) / ((b - a) / a)`
-                    ((d / c) - 1.0) / (STEP - 1.0)
-                };
-                vlerp(
-                    [lm_tonemapped; 3],
-                    vscale(rgb_linear, lm_tonemapped / lm_linear),
-                    desaturate_factor.powf(0.6),
-                )
-            }
+            let rgb_scaled = vscale(rgb_linear, lm_tonemapped / lm_linear);
+            rgb_gamut::closed_domain_clip(rgb_scaled, lm_tonemapped, self.desaturate_power)
         };
-
-        // Soft-clip the tonemapped color to the closed-domain color gamut.
-        let rgb_clipped = rgb_gamut::closed_domain_clip(rgb_tonemapped, lm_tonemapped, 0.2);
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
@@ -180,18 +168,16 @@ impl Tonemapper {
 
             let lab1 = oklab::from_xyz_d65(transform_color(rgb, to_xyz_mat));
             let len1 = ((lab1[1] * lab1[1]) + (lab1[2] * lab1[2])).sqrt();
-            let lab2 = oklab::from_xyz_d65(transform_color(rgb_clipped, to_xyz_mat));
+            let lab2 = oklab::from_xyz_d65(transform_color(rgb_tonemapped, to_xyz_mat));
             let len2 = ((lab2[1] * lab2[1]) + (lab2[2] * lab2[2])).sqrt();
 
-            let lab3 = if len1 < 0.0000001 {
+            let lab3 = if len1 < 1.0e-10 {
                 lab2
             } else {
                 [lab2[0], lab1[1] / len1 * len2, lab1[2] / len1 * len2]
             };
 
-            let rgb1 = transform_color(oklab::to_xyz_d65(lab3), from_xyz_mat);
-            let lm1 = luma(rgb1);
-            vscale(rgb1, lm_tonemapped / lm1)
+            transform_color(oklab::to_xyz_d65(lab3), from_xyz_mat)
         };
 
         // A final hard gamut clip for safety, but it should do very little if anything.
@@ -707,7 +693,7 @@ mod test {
     fn tonemap_1d_round_trip() {
         let toe = (0.8, 0.25);
         let shoulder = 1.4;
-        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder);
+        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, 0.5);
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));
