@@ -34,7 +34,8 @@ use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 /// - `desaturate_power`: how aggressively to desaturate colors as they
 ///   blow out to white.  0.0 is minimum desaturation (maintains
 ///   saturation as much as possible) and larger values desaturate more
-///   aggressively.
+///   aggressively.  The first of the pair is for originally less
+///   saturated colors, and the second is for originally more saturated.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     chromaticities: Chromaticities,
@@ -42,7 +43,7 @@ pub struct Tonemapper {
     exposure: f64,
     toe: (f64, f64), // (slope, size)
     shoulder: f64,
-    desaturate_power: f64,
+    desaturate_power: (f64, f64), // (faded, pure)
 
     res_1d: usize,
     res_3d: usize,
@@ -57,7 +58,7 @@ impl Default for Tonemapper {
             exposure: 1.0,
             toe: (0.0, 1.0),
             shoulder: 1.0,
-            desaturate_power: 0.5,
+            desaturate_power: (0.5, 0.5),
 
             res_1d: 2,
             res_3d: 2,
@@ -73,7 +74,7 @@ impl Tonemapper {
         exposure: f64,
         toe: (f64, f64),
         shoulder: f64,
-        desaturate_power: f64,
+        desaturate_power: (f64, f64),
     ) -> Self {
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
@@ -124,37 +125,72 @@ impl Tonemapper {
     }
 
     pub fn eval_rgb(&self, rgb: [f64; 3]) -> [f64; 3] {
-        let luma_weights = colorbox::matrix::rgb_to_xyz_matrix(self.chromaticities)[1];
-        let luma = |rgb: [f64; 3]| -> f64 {
-            (rgb[0] * luma_weights[0]) + (rgb[1] * luma_weights[1]) + (rgb[2] * luma_weights[2])
+        use colorbox::{
+            chroma,
+            matrix::{
+                compose, invert, rgb_to_rgb_matrix, rgb_to_xyz_matrix, transform_color,
+                xyz_chromatic_adaptation_matrix, xyz_to_rgb_matrix, AdaptationMethod, Matrix,
+            },
+            transforms::oklab,
         };
 
-        // Initial open-domain linear color value.
-        let rgb_linear = rgb_gamut::open_domain_clip(
-            rgb,
-            luma([rgb[0].max(0.0), rgb[1].max(0.0), rgb[2].max(0.0)]),
-            0.1,
-        );
-        let lm_linear = luma(rgb);
+        // Define the parent RGB space.
+        let parent_rgb_chroma = Chromaticities {
+            r: wavelength_to_xy(630.0),
+            g: wavelength_to_xy(520.0),
+            b: wavelength_to_xy(460.0),
+            w: self.chromaticities.w,
+        };
+        let to_parent_rgb_mat = rgb_to_rgb_matrix(self.chromaticities, parent_rgb_chroma);
+        let parent_luma_weights = {
+            let tmp = colorbox::matrix::rgb_to_xyz_matrix(parent_rgb_chroma)[1];
+            [tmp[0] * 0.5, tmp[1] + tmp[0] * 0.5, tmp[2]]
+        };
 
-        // Tone mapped color value.
-        let lm_tonemapped = self.eval_1d(lm_linear);
+        // Get color in parent RGB space.
+        let rgb_par = transform_color(rgb, to_parent_rgb_mat);
+
+        // Compute luma, both linear and tone mapped, in parent RGB space.
+        let luma_linear = (rgb_par[0].max(0.0) * parent_luma_weights[0])
+            + (rgb_par[1].max(0.0) * parent_luma_weights[1])
+            + (rgb_par[2].max(0.0) * parent_luma_weights[2]);
+        let luma_tonemapped = self.eval_1d(luma_linear);
+
+        // Compute saturation in parent RGB space.
+        let saturation_par = {
+            let min = rgb_par[0].min(rgb_par[1]).min(rgb_par[2]).max(0.0);
+            let max = rgb_par[0].max(rgb_par[1]).max(rgb_par[2]);
+            if max < 1.0e-14 {
+                0.0
+            } else {
+                1.0 - (min / max)
+            }
+        }
+        .clamp(0.0, 1.0);
+
+        // Compute the tone mapped color value.  We do this in the target
+        // RGB space, rather than parent RGB space.  But we use the
+        // values computed in parent RGB space to drive it.
         let rgb_tonemapped = {
-            let rgb_scaled = vscale(rgb_linear, lm_tonemapped / lm_linear);
-            rgb_gamut::closed_domain_clip(rgb_scaled, lm_tonemapped, self.desaturate_power)
+            let rgb_linear = rgb_gamut::open_domain_clip(rgb, luma_linear, 0.0);
+            let rgb_scaled = vscale(rgb_linear, luma_tonemapped / luma_linear);
+
+            rgb_gamut::closed_domain_clip(
+                rgb_scaled,
+                luma_tonemapped,
+                // We use the range [0.3, 1.0] and smoothstep below because
+                // it works well in practice, but there's no particular
+                // principle behind it.
+                lerp(
+                    self.desaturate_power.0,
+                    self.desaturate_power.1,
+                    smoothstep((saturation_par - 0.3) / (1.0 - 0.3)),
+                ),
+            )
         };
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
-            use colorbox::{
-                chroma,
-                matrix::{
-                    compose, invert, rgb_to_xyz_matrix, transform_color,
-                    xyz_chromatic_adaptation_matrix, AdaptationMethod,
-                },
-                transforms::oklab,
-            };
-
             let to_xyz_mat = compose(&[
                 rgb_to_xyz_matrix(self.chromaticities),
                 // Adapt to a D65 white point, since that's what OkLab uses.
@@ -182,8 +218,8 @@ impl Tonemapper {
 
         // A final hard gamut clip for safety, but it should do very little if anything.
         rgb_gamut::closed_domain_clip(
-            rgb_gamut::open_domain_clip(rgb_abney, lm_tonemapped, 0.0),
-            lm_tonemapped,
+            rgb_gamut::open_domain_clip(rgb_abney, luma_tonemapped, 0.0),
+            luma_tonemapped,
             0.0,
         )
     }
@@ -463,63 +499,33 @@ mod filmic {
     }
 }
 
-const SATURATION_THRESHOLD: f64 = 0.000_000_000_000_1;
+/// Computes the CIE xy chromaticity coordinates of a pure wavelength of light.
+///
+/// `wavelength` is given in nanometers.
+fn wavelength_to_xy(wavelength: f64) -> (f64, f64) {
+    use colorbox::{tables::cie_1931_xyz as xyz, transforms::xyz_to_xyy};
 
-/// Return value of 0.0 means on the achromatic axis, 1.0 means on the
-/// gamut boundary.
-#[inline(always)]
-fn saturation(rgb: [f64; 3], gray_point: [f64; 3]) -> Option<f64> {
-    let vec = vsub(rgb, gray_point);
-    let len = vlen(vec);
-    let gp_len = vlen(gray_point);
+    let t = ((wavelength - xyz::MIN_WAVELENGTH as f64)
+        / (xyz::MAX_WAVELENGTH as f64 - xyz::MIN_WAVELENGTH as f64))
+        .clamp(0.0, 1.0);
+    let ti = t * (xyz::X.len() - 1) as f64;
 
-    if len <= SATURATION_THRESHOLD {
-        Some(0.0)
-    } else if gp_len <= SATURATION_THRESHOLD {
-        None
+    let i1 = ti as usize;
+    let i2 = (i1 + 1).min(xyz::X.len() - 1);
+    let a = if i1 == i2 {
+        0.0
     } else {
-        Some(1.0 / gamut_boundary_fac(gray_point, vec)?)
+        (ti - i1 as f64) / (i2 - i1) as f64
     }
-}
+    .clamp(0.0, 1.0) as f32;
 
-#[inline(always)]
-fn set_saturation(rgb: [f64; 3], gray_point: [f64; 3], saturation: f64) -> [f64; 3] {
-    let vec = vsub(rgb, gray_point);
-    let len = vlen(vec);
-    let gp_len = vlen(gray_point);
+    let x = (xyz::X[i1] * (1.0 - a)) + (xyz::X[i2] * a);
+    let y = (xyz::Y[i1] * (1.0 - a)) + (xyz::Y[i2] * a);
+    let z = (xyz::Z[i1] * (1.0 - a)) + (xyz::Z[i2] * a);
 
-    if len <= SATURATION_THRESHOLD || gp_len <= SATURATION_THRESHOLD {
-        gray_point
-    } else {
-        let sat = 1.0 / gamut_boundary_fac(gray_point, vec).unwrap();
-        let scale = saturation / sat;
-        vadd(gray_point, vscale(vec, scale))
-    }
-}
+    let xyy = xyz_to_xyy([x as f64, y as f64, z as f64]);
 
-/// Returns the factor `dir` would need to be scaled by for
-/// `from + dir` to exactly hit the boundary of the gamut.
-fn gamut_boundary_fac(from: [f64; 3], dir: [f64; 3]) -> Option<f64> {
-    // If `from` is already on the boundary.
-    // This is actually to handle the case when `from` is on the boundary
-    // *and* `dir` is the zero vector.  If `dir` isn't zero, this special
-    // case isn't needed.  But it gives the right answer anyway, so we
-    // skip the checks on `dir`.
-    if from[0] == 0.0 || from[1] == 0.0 || from[2] == 0.0 {
-        return Some(0.0);
-    }
-
-    let ts = [-from[0] / dir[0], -from[1] / dir[1], -from[2] / dir[2]];
-    let t = ts.iter().fold(
-        f64::INFINITY,
-        |a, b| if *b >= 0.0 && *b < a { *b } else { a },
-    );
-
-    if t.is_finite() {
-        Some(t)
-    } else {
-        None
-    }
+    (xyy[0], xyy[1])
 }
 
 /// Generates a matrix that does a simplistic saturation adjustment.
@@ -660,6 +666,10 @@ fn vsub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
+fn vdiv(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] / b[0], a[1] / b[1], a[2] / b[2]]
+}
+
 fn vscale(a: [f64; 3], scale: f64) -> [f64; 3] {
     [a[0] * scale, a[1] * scale, a[2] * scale]
 }
@@ -693,7 +703,8 @@ mod test {
     fn tonemap_1d_round_trip() {
         let toe = (0.8, 0.25);
         let shoulder = 1.4;
-        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, 0.5);
+        let desat = (0.4, 0.6);
+        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, desat);
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));
