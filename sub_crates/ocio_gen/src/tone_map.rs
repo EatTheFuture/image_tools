@@ -31,11 +31,11 @@ use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 ///   a linear clamped shoulder, and larger values make the shoulder
 ///   progressively softer and higher dynamic range.  1.0 is a reasonable
 ///   default.
-/// - `desaturate_power`: how aggressively to desaturate colors as they
-///   blow out to white.  0.0 is minimum desaturation (maintains
-///   saturation as much as possible) and larger values desaturate more
-///   aggressively.  The first of the pair is for originally less
-///   saturated colors, and the second is for originally more saturated.
+/// - `saturation_power`: how aggressively to hold onto the saturation of
+///   colors as they blow out to white.  In [0.0, 1.0].  0.0 barely holds
+///   on at all, and 1.0 holds on as much as possible.  The first of the
+///   pair is for originally less saturated colors, and the second is for
+///   originally more saturated.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     chromaticities: Chromaticities,
@@ -43,7 +43,7 @@ pub struct Tonemapper {
     exposure: f64,
     toe: (f64, f64), // (slope, size)
     shoulder: f64,
-    desaturate_power: (f64, f64), // (faded, pure)
+    saturation_power: (f64, f64), // (faded, pure)
 
     res_1d: usize,
     res_3d: usize,
@@ -58,7 +58,7 @@ impl Default for Tonemapper {
             exposure: 1.0,
             toe: (0.0, 1.0),
             shoulder: 1.0,
-            desaturate_power: (0.5, 0.5),
+            saturation_power: (0.5, 1.0),
 
             res_1d: 2,
             res_3d: 2,
@@ -74,7 +74,7 @@ impl Tonemapper {
         exposure: f64,
         toe: (f64, f64),
         shoulder: f64,
-        desaturate_power: (f64, f64),
+        saturation_power: (f64, f64),
     ) -> Self {
         let res_1d = 1 << 12;
         let res_3d = 32 + 1;
@@ -85,7 +85,7 @@ impl Tonemapper {
             exposure: exposure,
             toe: toe,
             shoulder: shoulder,
-            desaturate_power: desaturate_power,
+            saturation_power: saturation_power,
 
             res_1d: res_1d,
             res_3d: res_3d,
@@ -175,17 +175,38 @@ impl Tonemapper {
             let rgb_linear = rgb_gamut::open_domain_clip(rgb, luma_linear, 0.0);
             let rgb_scaled = vscale(rgb_linear, luma_tonemapped / luma_linear);
 
-            rgb_gamut::closed_domain_clip(
+            // Saturation based on soft gamut clipping.
+            let sat_1 = {
+                let clipped = rgb_gamut::closed_domain_clip(rgb_scaled, luma_tonemapped, 0.3);
+                let len1 = vlen(vsub(clipped, [luma_tonemapped; 3]));
+                let len2 = vlen(vsub(rgb_scaled, [luma_tonemapped; 3]));
+
+                if len2 < 1.0e-14 {
+                    0.0
+                } else {
+                    len1 / len2
+                }
+            };
+
+            // Saturation based on luminance compression.
+            let sat_2 = if luma_tonemapped < 1.0e-14 {
+                0.0
+            } else {
+                let step = 1.0
+                    - bias_pow(
+                        saturation_par,
+                        self.saturation_power.0 / self.saturation_power.1,
+                    ) * self.saturation_power.1;
+                let step = step.clamp(0.0, 0.99999);
+                (1.0 - (self.eval_1d(luma_linear * step) / luma_tonemapped)) / (1.0 - step)
+            };
+
+            // Do the desaturation based on the minimum of the two above
+            // approaches.
+            vlerp(
+                [luma_tonemapped; 3],
                 rgb_scaled,
-                luma_tonemapped,
-                // We use the range [0.3, 1.0] and smoothstep below because
-                // it works well in practice, but there's no particular
-                // principle behind it.
-                lerp(
-                    self.desaturate_power.0,
-                    self.desaturate_power.1,
-                    smoothstep((saturation_par - 0.3) / (1.0 - 0.3)),
-                ),
+                soft_min(sat_1, sat_2, 0.05),
             )
         };
 
@@ -618,6 +639,12 @@ fn bias(x: f64, b: f64) -> f64 {
     }
 }
 
+/// Same as bias, but uses a simple power function to accomplish the bias.
+fn bias_pow(x: f64, b: f64) -> f64 {
+    let p = b.ln() / 0.5_f64.ln();
+    x.powf(p)
+}
+
 /// A [0,1] -> [0,1] mapping based on a offset power function.
 ///
 /// The offset keeps x = 0 from having zero slope.
@@ -656,6 +683,11 @@ fn smootherstep(x: f64) -> f64 {
     } else {
         (6.0 * x * x * x * x * x) - (15.0 * x * x * x * x) + (10.0 * x * x * x)
     }
+}
+
+fn soft_min(a: f64, b: f64, softness: f64) -> f64 {
+    let tmp = -a + b;
+    (-a - b + ((tmp * tmp) + (softness * softness)).sqrt()) * -0.5
 }
 
 fn vadd(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
