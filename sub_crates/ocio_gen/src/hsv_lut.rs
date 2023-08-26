@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use colorbox::lut::Lut3D;
 
 /// Note: `convert` receives and should produce HSV values according

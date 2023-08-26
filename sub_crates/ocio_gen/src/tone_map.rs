@@ -1,7 +1,6 @@
 use colorbox::{
     chroma::Chromaticities,
     lut::{Lut1D, Lut3D},
-    matrix,
     transforms::rgb_gamut,
 };
 
@@ -31,11 +30,15 @@ use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 ///   a linear clamped shoulder, and larger values make the shoulder
 ///   progressively softer and higher dynamic range.  1.0 is a reasonable
 ///   default.
-/// - `saturation_power`: how aggressively to hold onto the saturation of
-///   colors as they blow out to white.  In [0.0, 1.0].  0.0 barely holds
-///   on at all, and 1.0 holds on as much as possible.  The first of the
-///   pair is for originally less saturated colors, and the second is for
-///   originally more saturated.
+/// - `saturation_effect`: how much the filmic curve affects the saturation
+///   of colors.  The first number is the effect for fully saturated colors,
+///   and the second is the bias for half-saturated input colors.  Both are
+///   in [0.0, 1.0].  0.0 gives the least effect, and 1.0 the most.  A piar
+///   of (0.0, 0.5) is in some sense "correct", but in practice neither
+///   number should be zero.  (0.1, 0.7) is a pretty reasonable default.
+/// - `minimum_desaturation_smoothness`: ensures a minimum smoothness of
+///   the desaturation transition as colors start to blow out.  0.25 is a
+///   reasonable default.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     chromaticities: Chromaticities,
@@ -43,7 +46,8 @@ pub struct Tonemapper {
     exposure: f64,
     toe: (f64, f64), // (slope, size)
     shoulder: f64,
-    saturation_power: (f64, f64), // (faded, pure)
+    saturation_effect: (f64, f64), // (effect, bias)
+    minimum_desaturation_smoothness: f64,
 
     res_1d: usize,
     res_3d: usize,
@@ -58,11 +62,12 @@ impl Default for Tonemapper {
             exposure: 1.0,
             toe: (0.0, 1.0),
             shoulder: 1.0,
-            saturation_power: (0.5, 1.0),
+            saturation_effect: (0.0, 0.5),
+            minimum_desaturation_smoothness: 0.25,
 
-            res_1d: 2,
-            res_3d: 2,
-            mapper_3d: ExponentLUTMapper::new(1.0, 2, 1.0, [false, false, true], true),
+            res_1d: 1 << 12,
+            res_3d: 31 + 1,
+            mapper_3d: ExponentLUTMapper::new(1.5, 1.0, [true, true, true], true),
         }
     }
 }
@@ -74,22 +79,19 @@ impl Tonemapper {
         exposure: f64,
         toe: (f64, f64),
         shoulder: f64,
-        saturation_power: (f64, f64),
+        saturation_effect: (f64, f64),
+        minimum_desaturation_smoothness: f64,
     ) -> Self {
-        let res_1d = 1 << 12;
-        let res_3d = 32 + 1;
-
         Tonemapper {
             chromaticities: chromaticities.unwrap_or(colorbox::chroma::REC709),
             fixed_point: fixed_point,
             exposure: exposure,
             toe: toe,
             shoulder: shoulder,
-            saturation_power: saturation_power,
+            saturation_effect: saturation_effect,
+            minimum_desaturation_smoothness: minimum_desaturation_smoothness,
 
-            res_1d: res_1d,
-            res_3d: res_3d,
-            mapper_3d: ExponentLUTMapper::new(1.5, res_3d, 1.0, [true, true, true], true),
+            ..Self::default()
         }
     }
 
@@ -126,10 +128,9 @@ impl Tonemapper {
 
     pub fn eval_rgb(&self, rgb: [f64; 3]) -> [f64; 3] {
         use colorbox::{
-            chroma,
             matrix::{
                 compose, invert, rgb_to_rgb_matrix, rgb_to_xyz_matrix, transform_color,
-                xyz_chromatic_adaptation_matrix, xyz_to_rgb_matrix, AdaptationMethod, Matrix,
+                xyz_chromatic_adaptation_matrix, AdaptationMethod,
             },
             transforms::oklab,
         };
@@ -142,10 +143,7 @@ impl Tonemapper {
             w: self.chromaticities.w,
         };
         let to_parent_rgb_mat = rgb_to_rgb_matrix(self.chromaticities, parent_rgb_chroma);
-        let parent_luma_weights = {
-            let tmp = colorbox::matrix::rgb_to_xyz_matrix(parent_rgb_chroma)[1];
-            [tmp[0] * 0.5, tmp[1] + tmp[0] * 0.5, tmp[2]]
-        };
+        let parent_luma_weights = colorbox::matrix::rgb_to_xyz_matrix(parent_rgb_chroma)[1];
 
         // Get color in parent RGB space.
         let rgb_par = transform_color(rgb, to_parent_rgb_mat);
@@ -171,43 +169,51 @@ impl Tonemapper {
         // Compute the tone mapped color value.  We do this in the target
         // RGB space, rather than parent RGB space.  But we use the
         // values computed in parent RGB space to drive it.
-        let rgb_tonemapped = {
+        let rgb_tonemapped = if saturation_par < 1.0e-10 {
+            [luma_tonemapped; 3]
+        } else {
             let rgb_linear = rgb_gamut::open_domain_clip(rgb, luma_linear, 0.0);
             let rgb_scaled = vscale(rgb_linear, luma_tonemapped / luma_linear);
 
-            // Saturation based on soft gamut clipping.
-            let sat_1 = {
-                let clipped = rgb_gamut::closed_domain_clip(rgb_scaled, luma_tonemapped, 0.3);
-                let len1 = vlen(vsub(clipped, [luma_tonemapped; 3]));
-                let len2 = vlen(vsub(rgb_scaled, [luma_tonemapped; 3]));
+            const BLEND: f64 = 0.05;
+            let minc = rgb_scaled[0].min(rgb_scaled[1]).min(rgb_scaled[2]);
+            let maxc = rgb_scaled[0].max(rgb_scaled[1]).max(rgb_scaled[2]);
 
-                if len2 < 1.0e-14 {
-                    0.0
-                } else {
-                    len1 / len2
-                }
-            };
-
-            // Saturation based on luminance compression.
-            let sat_2 = if luma_tonemapped < 1.0e-14 {
+            // Filmic desaturation.
+            let sat0 = if luma_tonemapped < 1.0e-14 {
                 0.0
             } else {
                 let step = 1.0
-                    - bias_pow(
-                        saturation_par,
-                        self.saturation_power.0 / self.saturation_power.1,
-                    ) * self.saturation_power.1;
+                    - bias(saturation_par, 1.0 - self.saturation_effect.1)
+                        * (1.0 - self.saturation_effect.0);
                 let step = step.clamp(0.0, 0.99999);
-                (1.0 - (self.eval_1d(luma_linear * step) / luma_tonemapped)) / (1.0 - step)
+                let sat =
+                    (1.0 - (self.eval_1d(luma_linear * step) / luma_tonemapped)) / (1.0 - step);
+
+                // Ensure it's within the open-domain gamut.
+                let limit = 1.0 / (1.0 - (minc / luma_tonemapped));
+                soft_min(sat, limit, BLEND)
+            };
+
+            // Gamut-ceiling-based desaturation.
+            let sat1 = {
+                let tmp = soft_max(sat0, 1.0, BLEND);
+                let new_maxc = lerp(luma_tonemapped, maxc, tmp);
+                if new_maxc < 1.0e-14 {
+                    1.0e+15
+                } else {
+                    let clamped_new_maxc = reinhard(new_maxc, self.minimum_desaturation_smoothness);
+                    let a = clamped_new_maxc / new_maxc;
+                    let b = luma_tonemapped / (new_maxc - (clamped_new_maxc * luma_tonemapped));
+                    let fac = ((a - 1.0) * b + a).clamp(0.0, 1.0);
+                    fac * tmp
+                }
             };
 
             // Do the desaturation based on the minimum of the two above
             // approaches.
-            vlerp(
-                [luma_tonemapped; 3],
-                rgb_scaled,
-                soft_min(sat_1, sat_2, 0.05),
-            )
+            let t = (soft_min(sat0, sat1, BLEND) + (BLEND * 0.5)).max(0.0);
+            vlerp([luma_tonemapped; 3], rgb_scaled, t)
         };
 
         // Adjust hue to account for the Abney effect.
@@ -250,9 +256,6 @@ impl Tonemapper {
     /// The LUTs should be applied with the transforms yielded by
     /// `tone_map_transforms()` further below.
     pub fn generate_luts(&self) -> (Lut1D, Lut3D) {
-        use crate::hsv_lut::make_hsv_lut;
-        use colorbox::transforms::ocio::{hsv_to_rgb, rgb_to_hsv};
-
         let lut_1d = Lut1D::from_fn_1(self.res_1d, 0.0, 1.0, |n| self.eval_1d_inv(n as f64) as f32);
 
         // The 3d LUT is generated to compensate for the missing bits
@@ -549,17 +552,6 @@ fn wavelength_to_xy(wavelength: f64) -> (f64, f64) {
     (xyy[0], xyy[1])
 }
 
-/// Generates a matrix that does a simplistic saturation adjustment.
-///
-/// Note: only use this for very tiny adjustments.  It's poorly suited
-/// for anything else.
-fn saturation_matrix(factor: f64) -> matrix::Matrix {
-    let a = (factor * 2.0 + 1.0) / 3.0;
-    let b = (1.0 - a) / 2.0;
-
-    [[a, b, b], [b, a, b], [b, b, a]]
-}
-
 /// Generalized Reinhard curve.
 ///
 /// `p`: a tweaking parameter that affects the shape of the curve,
@@ -639,79 +631,18 @@ fn bias(x: f64, b: f64) -> f64 {
     }
 }
 
-/// Same as bias, but uses a simple power function to accomplish the bias.
-fn bias_pow(x: f64, b: f64) -> f64 {
-    let p = b.ln() / 0.5_f64.ln();
-    x.powf(p)
-}
-
-/// A [0,1] -> [0,1] mapping based on a offset power function.
-///
-/// The offset keeps x = 0 from having zero slope.
-#[inline(always)]
-fn offset_pow(x: f64, power: f64, offset: f64) -> f64 {
-    let a = (x + offset).powf(power);
-    let b = offset.powf(power);
-    let c = (1.0 + offset).powf(power);
-
-    (a - b) / (c - b)
-}
-
-#[inline(always)]
-fn offset_pow_inv(x: f64, power: f64, offset: f64) -> f64 {
-    let b = offset.powf(power);
-    let c = (1.0 + offset).powf(power);
-
-    ((x * (c - b)) + b).powf(1.0 / power) - offset
-}
-
-fn smoothstep(x: f64) -> f64 {
-    if x <= 0.0 {
-        0.0
-    } else if x >= 1.0 {
-        1.0
-    } else {
-        (3.0 * x * x) - (2.0 * x * x * x)
-    }
-}
-
-fn smootherstep(x: f64) -> f64 {
-    if x <= 0.0 {
-        0.0
-    } else if x >= 1.0 {
-        1.0
-    } else {
-        (6.0 * x * x * x * x * x) - (15.0 * x * x * x * x) + (10.0 * x * x * x)
-    }
-}
-
 fn soft_min(a: f64, b: f64, softness: f64) -> f64 {
     let tmp = -a + b;
     (-a - b + ((tmp * tmp) + (softness * softness)).sqrt()) * -0.5
 }
 
-fn vadd(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-
-fn vsub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn vdiv(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] / b[0], a[1] / b[1], a[2] / b[2]]
+fn soft_max(a: f64, b: f64, softness: f64) -> f64 {
+    let tmp = a - b;
+    (a + b + ((tmp * tmp) + (softness * softness)).sqrt()) * 0.5
 }
 
 fn vscale(a: [f64; 3], scale: f64) -> [f64; 3] {
     [a[0] * scale, a[1] * scale, a[2] * scale]
-}
-
-fn vlen(a: [f64; 3]) -> f64 {
-    ((a[0] * a[0]) + (a[1] * a[1]) + (a[2] * a[2])).sqrt()
-}
-
-fn vmax(a: [f64; 3]) -> f64 {
-    a[0].max(a[1]).max(a[2])
 }
 
 fn vlerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
@@ -735,8 +666,9 @@ mod test {
     fn tonemap_1d_round_trip() {
         let toe = (0.8, 0.25);
         let shoulder = 1.4;
-        let desat = (0.4, 0.6);
-        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, desat);
+        let satfx = (0.4, 0.6);
+        let min_smooth = 0.25;
+        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, satfx, min_smooth);
         for i in 0..17 {
             let x = i as f64 / 16.0;
             let x2 = curve.eval_1d(curve.eval_1d_inv(x));

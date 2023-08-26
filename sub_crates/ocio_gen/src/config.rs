@@ -1147,7 +1147,6 @@ fn gamut_is_within_gamut(g1: Chromaticities, g2: Chromaticities) -> bool {
 pub struct ExponentLUTMapper {
     to_linear_exp: f64,
     linear_max: f64,
-    lut_points: usize,
     channels: [bool; 3],
     use_tetrahedral_interpolation: bool,
 }
@@ -1156,12 +1155,10 @@ impl ExponentLUTMapper {
     /// - `to_linear_exp`: the exponent to use for mapping, in the
     ///   to-linear direction.
     /// - `linear_max`: the linear value that the max lut point should map to.
-    /// - `lut_points`: the number of sample points the lut has.
     /// - `channels`: which channels the mapping is used for (the rest
     ///   are left alone).
     pub fn new(
         to_linear_exp: f64,
-        lut_points: usize,
         linear_max: f64,
         channels: [bool; 3],
         use_tetrahedral_interpolation: bool,
@@ -1169,7 +1166,6 @@ impl ExponentLUTMapper {
         Self {
             to_linear_exp: to_linear_exp,
             linear_max: linear_max,
-            lut_points: lut_points,
             channels: channels,
             use_tetrahedral_interpolation: use_tetrahedral_interpolation,
         }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// A cubic bezier curve in the unit square, with the first and last
 /// control points implicitly being (0,0) and (1,1).
 ///
