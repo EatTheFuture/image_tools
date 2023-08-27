@@ -1,35 +1,25 @@
 use colorbox::{
     chroma::Chromaticities,
     lut::{Lut1D, Lut3D},
+    matrix::{
+        compose, invert, rgb_to_rgb_matrix, rgb_to_xyz_matrix, transform_color,
+        xyz_chromatic_adaptation_matrix, AdaptationMethod, Matrix,
+    },
     transforms::rgb_gamut,
 };
 
 use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
+const PARENT_SPACE_WL: [f64; 3] = [630.0, 520.0, 460.0];
+
 /// A filmic(ish) tonemapping operator.
 ///
-/// - `chromaticities`: the RGBW chromaticities of the target output
-///   color space.
-/// - `fixed_point`: the luminance that should map to itself (aside from
-///   being affected by `exposure` below).  For example, you might set
-///   this to 0.18 (18% gray) so that colors of that brightness remain
-///   roughly the same.  Note that large-size toes (> 1.0) can impact
-///   the fixed point, making it not quite fixed.
 /// - `exposure`: input exposure adjustment before applying the tone mapping.
 ///   Input color values are simply multiplied by this, so 1.0 does nothing.
 ///   Useful for tuning the over-all brightness of tone mappers.
-/// - `toe`: `(slope, size)` pair that determines the look of the toe.
-///   `slope` is in [0, infinity], and determines the slope of the toe at
-///   `x = 0`.  0.0 gives maximum contrast, 1.0 is neutral, and > 1.0 is
-///   washed out.  `size` is how far the toe extends out of the darks,
-///   with 0.0 disabling the toe, and larger values growing its effects
-///   out from the darks into the mids and brights.  A `size` of 1.0
-///   means that only colors below the fixed point will be noticeably
-///   impacted by the toe.
-/// - `shoulder`: the strength of the shoulder.  0.0 is equivalent to
-///   a linear clamped shoulder, and larger values make the shoulder
-///   progressively softer and higher dynamic range.  1.0 is a reasonable
-///   default.
+/// - `tone_curve`: the tone mapping curve to use.
+/// - `chromaticities`: the RGBW chromaticities of the tone mapping color
+///   space.  This is used for both input and output colors.
 /// - `saturation_effect`: how much the filmic curve affects the saturation
 ///   of colors.  The first number is the effect for fully saturated colors,
 ///   and the second is the bias for half-saturated input colors.  Both are
@@ -41,13 +31,15 @@ use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 ///   reasonable default.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
-    chromaticities: Chromaticities,
-    fixed_point: f64,
     exposure: f64,
-    toe: (f64, f64), // (slope, size)
-    shoulder: f64,
+    tone_curve: ToneCurve,
     saturation_effect: (f64, f64), // (effect, bias)
     minimum_desaturation_smoothness: f64,
+
+    to_xyz_mat: Matrix,
+    from_xyz_mat: Matrix,
+    to_parent_rgb_mat: Matrix,
+    parent_rgb_luma_weights: [f64; 3],
 
     res_1d: usize,
     res_3d: usize,
@@ -56,14 +48,24 @@ pub struct Tonemapper {
 
 impl Default for Tonemapper {
     fn default() -> Tonemapper {
+        let to_xyz_mat = rgb_to_xyz_matrix(colorbox::chroma::REC709);
+        let parent_rgb_chroma = Chromaticities {
+            r: wavelength_to_xy(PARENT_SPACE_WL[0]),
+            g: wavelength_to_xy(PARENT_SPACE_WL[1]),
+            b: wavelength_to_xy(PARENT_SPACE_WL[2]),
+            w: colorbox::chroma::REC709.w,
+        };
+
         Tonemapper {
-            chromaticities: colorbox::chroma::REC709,
-            fixed_point: 0.18,
             exposure: 1.0,
-            toe: (0.0, 1.0),
-            shoulder: 1.0,
+            tone_curve: ToneCurve::new(0.18, 0.0, 1.0, 1.0),
             saturation_effect: (0.0, 0.5),
             minimum_desaturation_smoothness: 0.25,
+
+            to_xyz_mat: to_xyz_mat,
+            from_xyz_mat: invert(to_xyz_mat).unwrap(),
+            to_parent_rgb_mat: rgb_to_rgb_matrix(colorbox::chroma::REC709, parent_rgb_chroma),
+            parent_rgb_luma_weights: rgb_to_xyz_matrix(parent_rgb_chroma)[1],
 
             res_1d: 1 << 12,
             res_3d: 31 + 1,
@@ -74,104 +76,80 @@ impl Default for Tonemapper {
 
 impl Tonemapper {
     pub fn new(
-        chromaticities: Option<Chromaticities>,
-        fixed_point: f64,
         exposure: f64,
-        toe: (f64, f64),
-        shoulder: f64,
+        tone_curve: ToneCurve,
+        chromaticities: Option<Chromaticities>,
         saturation_effect: (f64, f64),
         minimum_desaturation_smoothness: f64,
     ) -> Self {
+        let chromaticities = chromaticities.unwrap_or(colorbox::chroma::REC709);
+
+        let to_xyz_mat = compose(&[
+            rgb_to_xyz_matrix(chromaticities),
+            // Since this is just used for converting to OkLab, we adapt
+            // to a D65 white point, which is what OkLab uses.
+            xyz_chromatic_adaptation_matrix(
+                chromaticities.w,
+                (0.31272, 0.32903), // D65
+                AdaptationMethod::Hunt,
+            ),
+        ]);
+
+        // The "parent" RGB space is used to very approximately compute
+        // the spectral purity of colors.  It uses fixed RGB
+        // chromaticities on the spectral locus, but uses the same white
+        // point as the processing space.
+        let parent_rgb_chroma = Chromaticities {
+            r: wavelength_to_xy(PARENT_SPACE_WL[0]),
+            g: wavelength_to_xy(PARENT_SPACE_WL[1]),
+            b: wavelength_to_xy(PARENT_SPACE_WL[2]),
+            w: chromaticities.w,
+        };
+
         Tonemapper {
-            chromaticities: chromaticities.unwrap_or(colorbox::chroma::REC709),
-            fixed_point: fixed_point,
             exposure: exposure,
-            toe: toe,
-            shoulder: shoulder,
+            tone_curve: tone_curve,
             saturation_effect: saturation_effect,
             minimum_desaturation_smoothness: minimum_desaturation_smoothness,
+
+            to_xyz_mat: to_xyz_mat,
+            from_xyz_mat: invert(to_xyz_mat).unwrap(),
+            to_parent_rgb_mat: rgb_to_rgb_matrix(colorbox::chroma::REC709, parent_rgb_chroma),
+            parent_rgb_luma_weights: rgb_to_xyz_matrix(parent_rgb_chroma)[1],
 
             ..Self::default()
         }
     }
 
-    pub fn eval_1d(&self, x: f64) -> f64 {
-        if x <= 0.0 {
-            0.0
-        } else {
-            filmic::curve(
-                x * self.exposure,
-                self.fixed_point,
-                self.toe.0,
-                self.toe.1,
-                self.shoulder,
-            )
-            .min(1.0)
-        }
-    }
-
-    pub fn eval_1d_inv(&self, y: f64) -> f64 {
-        if y <= 0.0 {
-            0.0
-        } else if y >= 1.0 {
-            // Infinity would actually be correct here, but it leads
-            // to issues in the generated LUTs.  So instead we just
-            // choose an extremely large finite number that fits
-            // within an f32 (since later processing may be done in
-            // f32).
-            (f32::MAX / 2.0) as f64
-        } else {
-            filmic::curve_inv(y, self.fixed_point, self.toe.0, self.toe.1, self.shoulder)
-                / self.exposure
-        }
-    }
-
-    pub fn eval_rgb(&self, rgb: [f64; 3]) -> [f64; 3] {
-        use colorbox::{
-            matrix::{
-                compose, invert, rgb_to_rgb_matrix, rgb_to_xyz_matrix, transform_color,
-                xyz_chromatic_adaptation_matrix, AdaptationMethod,
-            },
-            transforms::oklab,
-        };
-
-        // Define the parent RGB space.
-        let parent_rgb_chroma = Chromaticities {
-            r: wavelength_to_xy(630.0),
-            g: wavelength_to_xy(520.0),
-            b: wavelength_to_xy(460.0),
-            w: self.chromaticities.w,
-        };
-        let to_parent_rgb_mat = rgb_to_rgb_matrix(self.chromaticities, parent_rgb_chroma);
-        let parent_luma_weights = colorbox::matrix::rgb_to_xyz_matrix(parent_rgb_chroma)[1];
-
-        // Get color in parent RGB space.
-        let rgb_par = transform_color(rgb, to_parent_rgb_mat);
-
-        // Compute luma, both linear and tone mapped, in parent RGB space.
-        let luma_linear = (rgb_par[0].max(0.0) * parent_luma_weights[0])
-            + (rgb_par[1].max(0.0) * parent_luma_weights[1])
-            + (rgb_par[2].max(0.0) * parent_luma_weights[2]);
-        let luma_tonemapped = self.eval_1d(luma_linear);
-
-        // Compute saturation in parent RGB space.
-        let saturation_par = {
+    /// The main tone mapping function.
+    ///
+    /// Takes an input open-domain "scene linear" RGB value, and returns
+    /// a tone mapped closed-domain "display linear" RGB value.
+    pub fn eval(&self, rgb: [f64; 3]) -> [f64; 3] {
+        // Compute luma and approximate spectral purity (saturation) of
+        // the color.
+        let (luma_linear, purity) = {
+            let rgb_par = transform_color(rgb, self.to_parent_rgb_mat);
             let min = rgb_par[0].min(rgb_par[1]).min(rgb_par[2]).max(0.0);
             let max = rgb_par[0].max(rgb_par[1]).max(rgb_par[2]);
-            if max < 1.0e-14 {
+
+            let luma_linear = (rgb_par[0].max(0.0) * self.parent_rgb_luma_weights[0])
+                + (rgb_par[1].max(0.0) * self.parent_rgb_luma_weights[1])
+                + (rgb_par[2].max(0.0) * self.parent_rgb_luma_weights[2]);
+
+            let purity = if max < 1.0e-25 {
                 0.0
             } else {
                 1.0 - (min / max)
             }
-        }
-        .clamp(0.0, 1.0);
+            .clamp(0.0, 1.0);
 
-        // Compute the tone mapped color value.  We do this in the target
-        // RGB space, rather than parent RGB space.  But we use the
-        // values computed in parent RGB space to drive it.
-        let rgb_tonemapped = if saturation_par < 1.0e-10 {
-            [luma_tonemapped; 3]
-        } else {
+            (luma_linear, purity)
+        };
+
+        // Compute the tone mapped color value.
+        let luma_tonemapped = self.eval_1d(luma_linear);
+        let rgb_tonemapped = {
             let rgb_linear = rgb_gamut::open_domain_clip(rgb, luma_linear, 0.0);
             let rgb_scaled = vscale(rgb_linear, luma_tonemapped / luma_linear);
 
@@ -184,7 +162,7 @@ impl Tonemapper {
                 0.0
             } else {
                 let step = 1.0
-                    - bias(saturation_par, 1.0 - self.saturation_effect.1)
+                    - bias(purity, 1.0 - self.saturation_effect.1)
                         * (1.0 - self.saturation_effect.0);
                 let step = step.clamp(0.0, 0.99999);
                 let sat =
@@ -218,20 +196,11 @@ impl Tonemapper {
 
         // Adjust hue to account for the Abney effect.
         let rgb_abney = {
-            let to_xyz_mat = compose(&[
-                rgb_to_xyz_matrix(self.chromaticities),
-                // Adapt to a D65 white point, since that's what OkLab uses.
-                xyz_chromatic_adaptation_matrix(
-                    self.chromaticities.w,
-                    (0.31272, 0.32903), // D65
-                    AdaptationMethod::Hunt,
-                ),
-            ]);
-            let from_xyz_mat = invert(to_xyz_mat).unwrap();
+            use colorbox::transforms::oklab;
 
-            let lab1 = oklab::from_xyz_d65(transform_color(rgb, to_xyz_mat));
+            let lab1 = oklab::from_xyz_d65(transform_color(rgb, self.to_xyz_mat));
             let len1 = ((lab1[1] * lab1[1]) + (lab1[2] * lab1[2])).sqrt();
-            let lab2 = oklab::from_xyz_d65(transform_color(rgb_tonemapped, to_xyz_mat));
+            let lab2 = oklab::from_xyz_d65(transform_color(rgb_tonemapped, self.to_xyz_mat));
             let len2 = ((lab2[1] * lab2[1]) + (lab2[2] * lab2[2])).sqrt();
 
             let lab3 = if len1 < 1.0e-10 {
@@ -240,7 +209,7 @@ impl Tonemapper {
                 [lab2[0], lab1[1] / len1 * len2, lab1[2] / len1 * len2]
             };
 
-            transform_color(oklab::to_xyz_d65(lab3), from_xyz_mat)
+            transform_color(oklab::to_xyz_d65(lab3), self.from_xyz_mat)
         };
 
         // A final hard gamut clip for safety, but it should do very little if anything.
@@ -278,7 +247,7 @@ impl Tonemapper {
                 ];
 
                 // Figure out what it should map to.
-                let rgb_adjusted = self.eval_rgb(rgb_linear);
+                let rgb_adjusted = self.eval(rgb_linear);
 
                 // Convert back to LUT space.
                 let abc_final = self.mapper_3d.to_lut(rgb_adjusted);
@@ -294,6 +263,9 @@ impl Tonemapper {
         (lut_1d, lut_3d)
     }
 
+    /// Generates the OCIO transforms needed for this tone mapper.
+    ///
+    /// Should be used together with `generate_luts()`, above.
     pub fn tone_map_transforms(&self, lut_1d_path: &str, lut_3d_path: &str) -> Vec<Transform> {
         let mut transforms = Vec::new();
 
@@ -308,7 +280,7 @@ impl Tonemapper {
             direction_inverse: false,
         }]);
 
-        // Apply tone map curve.
+        // Apply tone curve.
         transforms.extend([Transform::FileTransform {
             src: lut_1d_path.into(),
             interpolation: Interpolation::Linear,
@@ -319,6 +291,32 @@ impl Tonemapper {
         transforms.extend(self.mapper_3d.transforms_lut_3d(lut_3d_path));
 
         transforms
+    }
+
+    //------------
+    // Internals.
+
+    fn eval_1d(&self, x: f64) -> f64 {
+        if x <= 0.0 {
+            0.0
+        } else {
+            self.tone_curve.eval(x * self.exposure).min(1.0)
+        }
+    }
+
+    fn eval_1d_inv(&self, y: f64) -> f64 {
+        if y <= 0.0 {
+            0.0
+        } else if y >= 1.0 {
+            // Infinity would actually be correct here, but it leads
+            // to issues in the generated LUTs.  So instead we just
+            // choose an extremely large finite number that fits
+            // within an f32 (since later processing may be done in
+            // f32).
+            (f32::MAX / 2.0) as f64
+        } else {
+            self.tone_curve.eval_inv(y) / self.exposure
+        }
     }
 }
 
@@ -332,9 +330,16 @@ impl Tonemapper {
 /// Note: this maps [0.0, inf] to [0.0, 1.0].
 ///
 /// https://www.desmos.com/calculator/pfzvawfekp
-mod filmic {
-    use super::{reinhard, reinhard_inv};
+#[derive(Debug, Copy, Clone)]
+pub struct ToneCurve {
+    fixed_point_compensation: f64,
+    toe_slope: f64,
+    toe_n: f64,
+    toe_w: f64,
+    shoulder_pow: f64,
+}
 
+impl ToneCurve {
     /// - `fixed_point`: the value of `x` that should approximately map
     ///   to itself.  Generally this should be luminance level of a
     ///   medium gray.  Note that extreme toes will cause the fixed point
@@ -350,98 +355,69 @@ mod filmic {
     ///   a linear clamped shoulder, and larger values make the shoulder
     ///   progressively softer and higher dynamic range. 1.0 is a
     ///   reasonable default.
-    #[inline(always)]
-    pub fn curve(x: f64, fixed_point: f64, toe_slope: f64, toe_size: f64, shoulder: f64) -> f64 {
+    pub fn new(fixed_point: f64, toe_slope: f64, toe_size: f64, shoulder: f64) -> ToneCurve {
         assert!(toe_slope >= 0.0);
         assert!(toe_size >= 0.0);
         assert!(shoulder >= 0.0);
 
-        if x <= 0.0 {
-            x * toe_slope
-        } else {
-            let fixed_point_compensation = reinhard_inv(fixed_point, shoulder) / fixed_point;
+        let fixed_point_compensation = reinhard_inv(fixed_point, shoulder) / fixed_point;
 
-            let t = toe(
-                x,
-                toe_slope / fixed_point_compensation,
-                toe_size * fixed_point,
-            );
-            reinhard(t * fixed_point_compensation, shoulder)
+        ToneCurve {
+            fixed_point_compensation: fixed_point_compensation,
+            toe_slope: toe_slope,
+            toe_n: 1.0 - (toe_slope / fixed_point_compensation),
+            toe_w: toe_size * 0.125 * fixed_point,
+            shoulder_pow: shoulder,
         }
     }
 
-    #[inline(always)]
-    pub fn curve_inv(
-        x: f64,
-        fixed_point: f64,
-        toe_slope: f64,
-        toe_size: f64,
-        shoulder: f64,
-    ) -> f64 {
-        assert!(toe_slope >= 0.0);
-        assert!(toe_size >= 0.0);
-        assert!(shoulder >= 0.0);
-
+    pub fn eval(&self, x: f64) -> f64 {
         if x <= 0.0 {
-            if toe_slope > 0.0 {
-                x / toe_slope
-            } else {
-                -f64::INFINITY
-            }
-        } else if x >= 1.0 {
-            f64::INFINITY
+            x * self.toe_slope
         } else {
-            let fixed_point_compensation = reinhard_inv(fixed_point, shoulder) / fixed_point;
-
-            let t = reinhard_inv(x, shoulder) / fixed_point_compensation;
-            toe_inv(
-                t,
-                toe_slope / fixed_point_compensation,
-                toe_size * fixed_point,
+            reinhard(
+                self.toe(x) * self.fixed_point_compensation,
+                self.shoulder_pow,
             )
         }
     }
 
-    /// Point beyond which we assume the toe is linear.  The toe
-    /// goes linear very quickly, so this doesn't need to be super
-    /// large.
+    pub fn eval_inv(&self, x: f64) -> f64 {
+        if x <= 0.0 {
+            x / self.toe_slope
+        } else if x >= 1.0 {
+            f64::INFINITY
+        } else {
+            self.toe_inv(reinhard_inv(x, self.shoulder_pow) / self.fixed_point_compensation)
+        }
+    }
+
+    //------------
+    // Internals.
+
     const TOE_LINEAR_POINT: f64 = 1.0e+4;
 
-    /// - `slope`: the slope of the toe at `x = 0`.
-    /// - `size`: how far the toe extends out of the darks.  Zero is no
-    ///   effect at all (not even on darks), and larger values grow its
-    ///   effects progressively further from the darks into the mids and
-    ///   eventually to the brights.
-    fn toe(x: f64, slope: f64, size: f64) -> f64 {
+    fn toe(&self, x: f64) -> f64 {
         // Special cases and validation.
         if x < 0.0 {
-            return x * slope;
-        } else if size <= 0.0 || x > TOE_LINEAR_POINT {
+            return x * self.toe_slope;
+        } else if self.toe_w <= 0.0 || x > Self::TOE_LINEAR_POINT {
             return x;
         }
 
-        // Convert slope to factor.
-        let n = 1.0 - slope.max(0.0);
-
-        // The 0.125 factor is to make the contrast adjustment only
-        // noticeably affect values < 1.0.  This makes scaling work
-        // fairly intuitively, where you know anything over your scale
-        // factor won't be affected.
-        let w = size * 0.125;
-
-        let x = x / w;
-        (x - (n * x * (-x).exp2())) * w
+        let x = x / self.toe_w;
+        (x - (self.toe_n * x * (-x).exp2())) * self.toe_w
     }
 
     /// Inverse of `toe()`.  There is no analytic inverse, so we do it
     /// numerically.
-    fn toe_inv(x: f64, slope: f64, size: f64) -> f64 {
+    fn toe_inv(&self, y: f64) -> f64 {
         // Special cases and validation.
-        if x < 0.0 {
-            return x / slope;
-        } else if x > TOE_LINEAR_POINT {
+        if y < 0.0 {
+            return y / self.toe_slope;
+        } else if y > Self::TOE_LINEAR_POINT {
             // Really far out it's close enough to linear to not matter.
-            return x;
+            return y;
         }
 
         // A binary search with a capped number of iterations.
@@ -450,76 +426,21 @@ mod filmic {
         // isn't performance critical.
         const RELATIVE_ERROR_THRESHOLD: f64 = 1.0e-8;
         let mut min = 0.0;
-        let mut max = TOE_LINEAR_POINT;
+        let mut max = Self::TOE_LINEAR_POINT;
         for _ in 0..64 {
-            let y = (min + max) * 0.5;
-            let x2 = toe(y, slope, size);
-            if x >= x2 {
-                min = y;
-                if ((x - x2) / x) <= RELATIVE_ERROR_THRESHOLD {
+            let x = (min + max) * 0.5;
+            let y2 = self.toe(x);
+            if y >= y2 {
+                min = x;
+                if ((y - y2) / y) <= RELATIVE_ERROR_THRESHOLD {
                     break;
                 }
             } else {
-                max = y;
+                max = x;
             }
         }
 
         min
-    }
-
-    #[cfg(test)]
-    mod test {
-        use super::*;
-
-        #[test]
-        fn toe_round_trip() {
-            let size = 2.0;
-            for slope in [0.0, 0.5, 1.0, 1.5, 2.0] {
-                for i in 0..4096 {
-                    // Non-linear mapping for x so we test both very
-                    // small and very large values.
-                    let x = ((i as f64 / 100.0).exp2() - 1.0) / 10000.0;
-
-                    // Forward.
-                    let y = toe(x, slope, size);
-                    let x2 = toe_inv(y, slope, size);
-                    if x == 0.0 {
-                        assert!(x2 == 0.0);
-                    } else {
-                        assert!(((x - x2).abs() / x) < 0.000_000_1);
-                    }
-
-                    // Reverse.
-                    let y = toe_inv(x, slope, size);
-                    let x2 = toe(y, slope, size);
-                    if x == 0.0 {
-                        assert!(x2 == 0.0);
-                    } else {
-                        assert!(((x - x2).abs() / x) < 0.000_000_1);
-                    }
-                }
-            }
-        }
-
-        #[test]
-        fn filmic_curve_round_trip() {
-            let fixed_point = 0.18;
-            let toe = (0.25, 0.8);
-            let shoulder = 1.4;
-            for i in 0..4096 {
-                // Forward.
-                let x = i as f64 / 64.0;
-                let y = curve(x, fixed_point, toe.0, toe.1, shoulder);
-                let x2 = curve_inv(y, fixed_point, toe.0, toe.1, shoulder);
-                assert!((x - x2).abs() < 0.000_001);
-
-                // Reverse.
-                let x = i as f64 / 4096.0;
-                let y = curve_inv(x, fixed_point, toe.0, toe.1, shoulder);
-                let x2 = curve(y, fixed_point, toe.0, toe.1, shoulder);
-                assert!((x - x2).abs() < 0.000_001);
-            }
-        }
     }
 }
 
@@ -663,15 +584,64 @@ mod test {
     use super::*;
 
     #[test]
+    fn tone_toe_round_trip() {
+        let size = 2.0;
+        for slope in [0.0, 0.5, 1.0, 1.5, 2.0] {
+            let tc = ToneCurve::new(0.18, slope, size, 1.4);
+
+            for i in 0..4096 {
+                // Non-linear mapping for x so we test both very
+                // small and very large values.
+                let x = ((i as f64 / 100.0).exp2() - 1.0) / 10000.0;
+
+                // Forward.
+                let y = tc.toe(x);
+                let x2 = tc.toe_inv(y);
+                if x == 0.0 {
+                    assert!(x2 == 0.0);
+                } else {
+                    assert!(((x - x2).abs() / x) < 0.000_000_1);
+                }
+
+                // Reverse.
+                let y = tc.toe_inv(x);
+                let x2 = tc.toe(y);
+                if x == 0.0 {
+                    assert!(x2 == 0.0);
+                } else {
+                    assert!(((x - x2).abs() / x) < 0.000_000_1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tone_curve_round_trip() {
+        let tc = ToneCurve::new(0.18, 0.25, 1.2, 1.4);
+        for i in 0..4096 {
+            // Forward.
+            let x = i as f64 / 64.0;
+            let y = tc.eval(x);
+            let x2 = tc.eval_inv(y);
+            assert!((x - x2).abs() < 0.000_001);
+
+            // Reverse.
+            let x = i as f64 / 4096.0;
+            let y = tc.eval_inv(x);
+            let x2 = tc.eval(y);
+            assert!((x - x2).abs() < 0.000_001);
+        }
+    }
+
+    #[test]
     fn tonemap_1d_round_trip() {
-        let toe = (0.8, 0.25);
-        let shoulder = 1.4;
+        let tone_curve = ToneCurve::new(0.18, 0.8, 1.2, 1.4);
         let satfx = (0.4, 0.6);
         let min_smooth = 0.25;
-        let curve = Tonemapper::new(None, 0.18, 1.1, toe, shoulder, satfx, min_smooth);
+        let tm = Tonemapper::new(1.1, tone_curve, None, satfx, min_smooth);
         for i in 0..17 {
             let x = i as f64 / 16.0;
-            let x2 = curve.eval_1d(curve.eval_1d_inv(x));
+            let x2 = tm.eval_1d(tm.eval_1d_inv(x));
             assert!((x - x2).abs() < 0.000_001);
         }
     }

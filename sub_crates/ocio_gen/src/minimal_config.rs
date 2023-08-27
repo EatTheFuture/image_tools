@@ -1,4 +1,7 @@
-use crate::{config::*, tone_map::Tonemapper};
+use crate::{
+    config::*,
+    tone_map::{ToneCurve, Tonemapper},
+};
 
 use colorbox::{chroma, matrix};
 
@@ -8,8 +11,20 @@ pub fn make_minimal(
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
     // Tone mapping operators, used various places below.
-    let toney_neutral = Tonemapper::new(None, 0.18, 1.0, (1.0, 4.0), 1.3, (0.15, 0.7), 0.25);
-    let toney_filmic = Tonemapper::new(None, 0.18, 1.0, (0.5, 2.5), 1.1, (0.15, 0.7), 0.25);
+    let toney_neutral = Tonemapper::new(
+        1.0,
+        ToneCurve::new(0.18, 1.0, 4.0, 1.3),
+        None,
+        (0.15, 0.7),
+        0.25,
+    );
+    let toney_filmic = Tonemapper::new(
+        1.0,
+        ToneCurve::new(0.18, 0.5, 2.5, 1.1),
+        None,
+        (0.15, 0.7),
+        0.25,
+    );
 
     //---------------------------------------------------------
 
