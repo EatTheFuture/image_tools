@@ -10,18 +10,35 @@ pub fn make_minimal(
     reference_space_chroma: chroma::Chromaticities,
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
+    let toney_neutral_ldr_curve = ToneCurve::new(0.18, 1.0, 4.0, 1.3);
+    let toney_filmic_ldr_curve = ToneCurve::new(0.18, 0.5, 2.5, 1.1);
+
     // Tone mapping operators, used various places below.
-    let toney_neutral = Tonemapper::new(
+    let toney_neutral_rec709 = Tonemapper::new(
         1.0,
-        ToneCurve::new(0.18, 1.0, 4.0, 1.3),
-        None,
+        toney_neutral_ldr_curve,
+        Some(chroma::REC709),
         (0.15, 0.7),
         0.25,
     );
-    let toney_filmic = Tonemapper::new(
+    let toney_filmic_rec709 = Tonemapper::new(
         1.0,
-        ToneCurve::new(0.18, 0.5, 2.5, 1.1),
-        None,
+        toney_filmic_ldr_curve,
+        Some(chroma::REC709),
+        (0.15, 0.7),
+        0.25,
+    );
+    let toney_neutral_rec2020 = Tonemapper::new(
+        1.0,
+        toney_neutral_ldr_curve,
+        Some(chroma::REC2020),
+        (0.15, 0.7),
+        0.25,
+    );
+    let toney_filmic_rec2020 = Tonemapper::new(
+        1.0,
+        toney_filmic_ldr_curve,
+        Some(chroma::REC2020),
         (0.15, 0.7),
         0.25,
     );
@@ -78,6 +95,8 @@ pub fn make_minimal(
         name: "Rec.709".into(),
         views: vec![
             ("Standard".into(), "Rec.709 Gamut Clipped".into()),
+            ("Toney (Neutral)".into(), "Rec.709 Toney Neutral".into()),
+            ("Toney (Filmic)".into(), "Rec.709 Toney Filmic".into()),
             ("Raw".into(), "Raw".into()),
         ],
     });
@@ -87,6 +106,8 @@ pub fn make_minimal(
         name: "Rec.2020".into(),
         views: vec![
             ("Standard".into(), "Rec.2020 Gamut Clipped".into()),
+            ("Toney (Neutral)".into(), "Rec.2020 Toney Neutral".into()),
+            ("Toney (Filmic)".into(), "Rec.2020 Toney Filmic".into()),
             ("Raw".into(), "Raw".into()),
         ],
     });
@@ -156,6 +177,9 @@ pub fn make_minimal(
     //---------------------------------------------------------
     // Display color spaces.
 
+    //---------
+    // sRGB
+
     config.add_display_colorspace(
         "sRGB Gamut Clipped".into(),
         None,
@@ -175,9 +199,9 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        toney_neutral.tone_map_transforms(
-            "omkr__toney_neutral_curve_inv.spi1d",
-            "omkr__toney_neutral_chroma.cube",
+        toney_neutral_rec709.tone_map_transforms(
+            "omkr__toney_neutral_ldr_curve_inv.spi1d",
+            "omkr__toney_neutral_rec709_chroma.cube",
         ),
         Transform::ExponentWithLinearTransform {
             gamma: 2.4,
@@ -192,9 +216,9 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        toney_filmic.tone_map_transforms(
-            "omkr__toney_filmic_curve_inv.spi1d",
-            "omkr__toney_filmic_chroma.cube",
+        toney_filmic_rec709.tone_map_transforms(
+            "omkr__toney_filmic_ldr_curve_inv.spi1d",
+            "omkr__toney_filmic_rec709_chroma.cube",
         ),
         Transform::ExponentWithLinearTransform {
             gamma: 2.4,
@@ -203,6 +227,9 @@ pub fn make_minimal(
         },
         false,
     );
+
+    //---------
+    // Rec.709
 
     config.add_display_colorspace(
         "Rec.709 Gamut Clipped".into(),
@@ -219,6 +246,43 @@ pub fn make_minimal(
     );
 
     config.add_display_colorspace(
+        "Rec.709 Toney Neutral".into(),
+        None,
+        chroma::REC709,
+        whitepoint_adaptation_method,
+        toney_neutral_rec709.tone_map_transforms(
+            "omkr__toney_neutral_ldr_curve_inv.spi1d",
+            "omkr__toney_neutral_rec709_chroma.cube",
+        ),
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        false,
+    );
+
+    config.add_display_colorspace(
+        "Rec.709 Toney Filmic".into(),
+        None,
+        chroma::REC709,
+        whitepoint_adaptation_method,
+        toney_filmic_rec709.tone_map_transforms(
+            "omkr__toney_filmic_ldr_curve_inv.spi1d",
+            "omkr__toney_filmic_rec709_chroma.cube",
+        ),
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        false,
+    );
+
+    //----------
+    // Rec.2020
+
+    config.add_display_colorspace(
         "Rec.2020 Gamut Clipped".into(),
         None,
         chroma::REC2020,
@@ -231,6 +295,43 @@ pub fn make_minimal(
         },
         true,
     );
+
+    config.add_display_colorspace(
+        "Rec.2020 Toney Neutral".into(),
+        None,
+        chroma::REC2020,
+        whitepoint_adaptation_method,
+        toney_neutral_rec2020.tone_map_transforms(
+            "omkr__toney_neutral_ldr_curve_inv.spi1d",
+            "omkr__toney_neutral_rec2020_chroma.cube",
+        ),
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        false,
+    );
+
+    config.add_display_colorspace(
+        "Rec.2020 Toney Filmic".into(),
+        None,
+        chroma::REC2020,
+        whitepoint_adaptation_method,
+        toney_filmic_rec2020.tone_map_transforms(
+            "omkr__toney_filmic_ldr_curve_inv.spi1d",
+            "omkr__toney_filmic_rec2020_chroma.cube",
+        ),
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        false,
+    );
+
+    //----------
+    // Rec.2100
 
     config.generate_gamut_clipping_luts();
     for nits in [100, 1000, 10000] {
@@ -431,24 +532,37 @@ pub fn make_minimal(
 
     // Tone mapping LUTs.
     {
-        let (toney_neutral_1d, toney_neutral_3d) = toney_neutral.generate_luts();
-        let (toney_filmic_1d, toney_filmic_3d) = toney_filmic.generate_luts();
+        let (toney_neutral_1d, toney_neutral_rec709_3d) = toney_neutral_rec709.generate_luts();
+        let (toney_filmic_1d, toney_filmic_rec709_3d) = toney_filmic_rec709.generate_luts();
+        let (_, toney_neutral_rec2020_3d) = toney_neutral_rec2020.generate_luts();
+        let (_, toney_filmic_rec2020_3d) = toney_filmic_rec2020.generate_luts();
+
         config.output_files.extend([
+            // sRGB / Rec.709
             (
-                "luts/omkr__toney_neutral_curve_inv.spi1d".into(),
+                "luts/omkr__toney_neutral_ldr_curve_inv.spi1d".into(),
                 OutputFile::Lut1D(toney_neutral_1d),
             ),
             (
-                "luts/omkr__toney_neutral_chroma.cube".into(),
-                OutputFile::Lut3D(toney_neutral_3d),
+                "luts/omkr__toney_neutral_rec709_chroma.cube".into(),
+                OutputFile::Lut3D(toney_neutral_rec709_3d),
             ),
             (
-                "luts/omkr__toney_filmic_curve_inv.spi1d".into(),
+                "luts/omkr__toney_filmic_ldr_curve_inv.spi1d".into(),
                 OutputFile::Lut1D(toney_filmic_1d),
             ),
             (
-                "luts/omkr__toney_filmic_chroma.cube".into(),
-                OutputFile::Lut3D(toney_filmic_3d),
+                "luts/omkr__toney_filmic_rec709_chroma.cube".into(),
+                OutputFile::Lut3D(toney_filmic_rec709_3d),
+            ),
+            // Rec.2020 (reuses the 1D curves from Rec.709)
+            (
+                "luts/omkr__toney_neutral_rec2020_chroma.cube".into(),
+                OutputFile::Lut3D(toney_neutral_rec2020_3d),
+            ),
+            (
+                "luts/omkr__toney_filmic_rec2020_chroma.cube".into(),
+                OutputFile::Lut3D(toney_filmic_rec2020_3d),
             ),
         ]);
     }
