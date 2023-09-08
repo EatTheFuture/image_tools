@@ -58,7 +58,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                             (0..res)
                                 .map(|i| {
                                     let x = i as f32 * res_norm;
-                                    ui_data.generated.transfer_function_type.to_linear_fc(
+                                    ui_data.generated.transfer_function.to_linear_fc(
                                         x,
                                         floor.map(|f| f[chan]),
                                         ceiling.map(|c| c[chan]),
@@ -170,7 +170,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
 
             let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
-            let function = ui_data.generated.transfer_function_type;
+            let function = ui_data.generated.transfer_function;
 
             let range_min = (0..3).fold(std::f32::INFINITY, |a, i| {
                 a.min(function.to_linear_fc(0.0, floor.map(|f| f[i]), ceiling.map(|c| c[i]), false))
@@ -212,7 +212,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
 
             let res = ui_data.generated.transfer_function_resolution;
             let res_norm = 1.0 / (res - 1) as f32;
-            let function = ui_data.generated.transfer_function_type;
+            let function = ui_data.generated.transfer_function;
 
             transfer_function_graph(ui, None, |chan| {
                 (0..res).map(move |i| {

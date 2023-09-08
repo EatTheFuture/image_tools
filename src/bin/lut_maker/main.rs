@@ -310,7 +310,7 @@ impl AppMain {
                         match mode {
                             AppMode::Estimate => n,
                             AppMode::Generate => {
-                                ui_data.lock().generated.transfer_function_type.to_linear(n)
+                                ui_data.lock().generated.transfer_function.to_linear(n)
                             }
                             AppMode::Modify => {
                                 if let Some((lut, _, _)) = &ui_data.lock().modified.loaded_lut {
@@ -331,7 +331,7 @@ impl AppMain {
                             AppMode::Generate => ui_data
                                 .lock()
                                 .generated
-                                .transfer_function_type
+                                .transfer_function
                                 .from_linear(n),
                             AppMode::Modify => {
                                 if let Some((lut, _, _)) = &ui_data.lock().modified.loaded_lut {
@@ -635,7 +635,7 @@ impl AppMain {
                     let (function, floor, ceiling, resolution) = {
                         let ui_data = ui_data.lock();
                         (
-                            ui_data.generated.transfer_function_type,
+                            ui_data.generated.transfer_function,
                             if ui_data.generated.sensor_floor.0 {
                                 Some(ui_data.generated.sensor_floor.1)
                             } else {

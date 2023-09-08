@@ -1,7 +1,7 @@
 use crate::egui::{self, Ui};
 
 pub struct GeneratedTF {
-    pub transfer_function_type: TransferFunction,
+    pub transfer_function: TransferFunction,
     pub transfer_function_resolution: usize,
     pub sensor_floor: (bool, [f32; 3]), // The bool is whether to do an adjustment at all.
     pub sensor_ceiling: (bool, [f32; 3]),
@@ -10,7 +10,7 @@ pub struct GeneratedTF {
 impl GeneratedTF {
     pub fn new() -> GeneratedTF {
         GeneratedTF {
-            transfer_function_type: TransferFunction::sRGB,
+            transfer_function: Default::default(),
             transfer_function_resolution: 4096,
             sensor_floor: (false, [0.0; 3]),
             sensor_ceiling: (false, [1.0; 3]),
@@ -40,18 +40,40 @@ pub fn generated_mode_ui(
                     .width(180.0)
                     .selected_text(format!(
                         "{}",
-                        ui_data.generated.transfer_function_type.ui_text()
+                        ui_data.generated.transfer_function.id.ui_text()
                     ))
                     .show_ui(ui, |ui| {
-                        for tf in TRANSFER_FUNCTIONS.iter() {
+                        for tf in TRANSFER_FUNCTION_IDS.iter() {
                             ui.selectable_value(
-                                &mut ui_data.generated.transfer_function_type,
+                                &mut ui_data.generated.transfer_function.id,
                                 *tf,
                                 tf.ui_text(),
                             );
                         }
                     })
             });
+            if ui_data.generated.transfer_function.id == TransferFunctionID::ARRILogC3 {
+                ui.add_space(4.0);
+                ui.add_enabled_ui(job_count == 0, |ui| {
+                    egui::ComboBox::from_id_source("Exposure Index")
+                        .width(180.0)
+                        .selected_text(format!(
+                            "{}",
+                            arri_logc3_ei_ui_text(
+                                ui_data.generated.transfer_function.arri_logc3_ei
+                            )
+                        ))
+                        .show_ui(ui, |ui| {
+                            for ei in ARRI_LOGC3_EIS.iter() {
+                                ui.selectable_value(
+                                    &mut ui_data.generated.transfer_function.arri_logc3_ei,
+                                    *ei,
+                                    arri_logc3_ei_ui_text(*ei),
+                                );
+                            }
+                        })
+                });
+            }
             ui.add_space(4.0);
             ui.add_enabled(
                 job_count == 0,
@@ -145,10 +167,18 @@ pub fn generated_mode_ui(
     });
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct TransferFunction {
+    pub id: TransferFunctionID,
+    arri_logc3_ei: colorbox::transfer_functions::arri::logc3::EI,
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum TransferFunction {
+pub enum TransferFunctionID {
     Linear,
+    ARRILogC3,
+    ARRILogC4,
     BlackmagicFilmGen5,
     DavinciIntermediate,
     CanonLog1,
@@ -168,26 +198,37 @@ pub enum TransferFunction {
     sRGB,
 }
 
-pub const TRANSFER_FUNCTIONS: &[TransferFunction] = &[
-    TransferFunction::Linear,
-    TransferFunction::sRGB,
-    TransferFunction::Rec709,
-    TransferFunction::HLG,
-    TransferFunction::PQ,
-    TransferFunction::BlackmagicFilmGen5,
-    TransferFunction::DavinciIntermediate,
-    TransferFunction::CanonLog1,
-    TransferFunction::CanonLog2,
-    TransferFunction::CanonLog3,
-    TransferFunction::DJIDlog,
-    TransferFunction::FujifilmFlog,
-    TransferFunction::NikonNlog,
-    TransferFunction::PanasonicVlog,
-    TransferFunction::RedLog3G10,
-    TransferFunction::SonySlog1,
-    TransferFunction::SonySlog2,
-    TransferFunction::SonySlog3,
+pub const TRANSFER_FUNCTION_IDS: &[TransferFunctionID] = &[
+    TransferFunctionID::Linear,
+    TransferFunctionID::sRGB,
+    TransferFunctionID::Rec709,
+    TransferFunctionID::HLG,
+    TransferFunctionID::PQ,
+    TransferFunctionID::ARRILogC3,
+    TransferFunctionID::ARRILogC4,
+    TransferFunctionID::BlackmagicFilmGen5,
+    TransferFunctionID::DavinciIntermediate,
+    TransferFunctionID::CanonLog1,
+    TransferFunctionID::CanonLog2,
+    TransferFunctionID::CanonLog3,
+    TransferFunctionID::DJIDlog,
+    TransferFunctionID::FujifilmFlog,
+    TransferFunctionID::NikonNlog,
+    TransferFunctionID::PanasonicVlog,
+    TransferFunctionID::RedLog3G10,
+    TransferFunctionID::SonySlog1,
+    TransferFunctionID::SonySlog2,
+    TransferFunctionID::SonySlog3,
 ];
+
+impl Default for TransferFunction {
+    fn default() -> TransferFunction {
+        TransferFunction {
+            id: TransferFunctionID::sRGB,
+            arri_logc3_ei: colorbox::transfer_functions::arri::logc3::EI::Ei800,
+        }
+    }
+}
 
 impl TransferFunction {
     pub fn to_linear_fc(
@@ -231,10 +272,12 @@ impl TransferFunction {
 
     pub fn to_linear(&self, n: f32) -> f32 {
         use colorbox::transfer_functions::*;
-        use TransferFunction::*;
-        match *self {
+        use TransferFunctionID::*;
+        match self.id {
             Linear => n,
 
+            ARRILogC3 => arri::logc3::to_linear(n, true, self.arri_logc3_ei),
+            ARRILogC4 => arri::logc4::to_linear(n),
             BlackmagicFilmGen5 => blackmagic::film_gen5::to_linear(n),
             DavinciIntermediate => blackmagic::davinci_intermediate::to_linear(n),
             CanonLog1 => canon::log1::to_linear(n),
@@ -257,10 +300,12 @@ impl TransferFunction {
 
     pub fn from_linear(&self, n: f32) -> f32 {
         use colorbox::transfer_functions::*;
-        use TransferFunction::*;
-        match *self {
+        use TransferFunctionID::*;
+        match self.id {
             Linear => n,
 
+            ARRILogC3 => arri::logc3::from_linear(n, true, self.arri_logc3_ei),
+            ARRILogC4 => arri::logc4::from_linear(n),
             BlackmagicFilmGen5 => blackmagic::film_gen5::from_linear(n),
             DavinciIntermediate => blackmagic::davinci_intermediate::from_linear(n),
             CanonLog1 => canon::log1::from_linear(n),
@@ -296,10 +341,24 @@ impl TransferFunction {
     #[inline(always)]
     pub fn constants(&self) -> (f32, f32, f32, f32, f32) {
         use colorbox::transfer_functions::*;
-        use TransferFunction::*;
-        match *self {
+        use TransferFunctionID::*;
+        match self.id {
             Linear => (0.0, 1.0, 0.0, 1.0, 1.0),
 
+            ARRILogC3 => {
+                use arri::logc3::*;
+                (
+                    from_linear(0.0, true, self.arri_logc3_ei),
+                    1.0,
+                    to_linear(0.0, true, self.arri_logc3_ei),
+                    to_linear(1.0, true, self.arri_logc3_ei),
+                    to_linear(1.0, true, self.arri_logc3_ei),
+                )
+            }
+            ARRILogC4 => {
+                use arri::logc4::*;
+                (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
+            }
             BlackmagicFilmGen5 => {
                 use blackmagic::film_gen5::*;
                 (NONLINEAR_BLACK, 1.0, LINEAR_MIN, LINEAR_MAX, LINEAR_MAX)
@@ -376,12 +435,16 @@ impl TransferFunction {
             sRGB => (0.0, 1.0, 0.0, 1.0, 1.0),
         }
     }
+}
 
+impl TransferFunctionID {
     pub fn ui_text(&self) -> &'static str {
-        use TransferFunction::*;
+        use TransferFunctionID::*;
         match *self {
             Linear => "Linear",
 
+            ARRILogC3 => "ARRI LogC3 / ALEXA LogC v3",
+            ARRILogC4 => "ARRI LogC4",
             BlackmagicFilmGen5 => "BMD Film Gen5",
             DavinciIntermediate => "DaVinci Intermediate",
             CanonLog1 => "Canon Log",
@@ -400,5 +463,36 @@ impl TransferFunction {
             SonySlog3 => "Sony S-Log3",
             sRGB => "sRGB",
         }
+    }
+}
+
+pub const ARRI_LOGC3_EIS: &[colorbox::transfer_functions::arri::logc3::EI] = &[
+    colorbox::transfer_functions::arri::logc3::EI::Ei160,
+    colorbox::transfer_functions::arri::logc3::EI::Ei200,
+    colorbox::transfer_functions::arri::logc3::EI::Ei250,
+    colorbox::transfer_functions::arri::logc3::EI::Ei320,
+    colorbox::transfer_functions::arri::logc3::EI::Ei400,
+    colorbox::transfer_functions::arri::logc3::EI::Ei500,
+    colorbox::transfer_functions::arri::logc3::EI::Ei640,
+    colorbox::transfer_functions::arri::logc3::EI::Ei800,
+    colorbox::transfer_functions::arri::logc3::EI::Ei1000,
+    colorbox::transfer_functions::arri::logc3::EI::Ei1280,
+    colorbox::transfer_functions::arri::logc3::EI::Ei1600,
+];
+
+fn arri_logc3_ei_ui_text(ei: colorbox::transfer_functions::arri::logc3::EI) -> &'static str {
+    use colorbox::transfer_functions::arri::logc3::EI::*;
+    match ei {
+        Ei160 => "Exposure Index 160",
+        Ei200 => "Exposure Index 200",
+        Ei250 => "Exposure Index 250",
+        Ei320 => "Exposure Index 320",
+        Ei400 => "Exposure Index 400",
+        Ei500 => "Exposure Index 500",
+        Ei640 => "Exposure Index 640",
+        Ei800 => "Exposure Index 800",
+        Ei1000 => "Exposure Index 1000",
+        Ei1280 => "Exposure Index 1280",
+        Ei1600 => "Exposure Index 1600",
     }
 }
