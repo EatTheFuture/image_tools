@@ -31,13 +31,14 @@ pub fn generated_mode_ui(
     ui.horizontal(|ui| {
         // Transfer function controls.
         ui.vertical(|ui| {
+            ui.set_width(sub_area_width);
             let mut ui_data = app.ui_data.lock_mut();
 
             ui.label("Transfer Function");
             ui.add_space(4.0);
             ui.add_enabled_ui(job_count == 0, |ui| {
                 egui::ComboBox::from_id_source("Transfer Function Type")
-                    .width(180.0)
+                    .width(200.0)
                     .selected_text(format!(
                         "{}",
                         ui_data.generated.transfer_function.id.ui_text()
@@ -84,7 +85,8 @@ pub fn generated_mode_ui(
             );
         });
 
-        ui.add_space(48.0);
+        ui.add_space(8.0);
+
         // Sensor floor controls.
         let adjust_floor = app.ui_data.lock().generated.sensor_floor.0;
         ui.vertical(|ui| {
@@ -125,7 +127,7 @@ pub fn generated_mode_ui(
             }
         });
 
-        ui.add_space(0.0);
+        ui.add_space(8.0);
 
         // Sensor ceiling controls.
         let adjust_ceiling = app.ui_data.lock().generated.sensor_ceiling.0;

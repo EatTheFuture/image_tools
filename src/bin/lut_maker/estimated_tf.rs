@@ -31,6 +31,8 @@ pub fn estimated_mode_ui(
     ui.horizontal(|ui| {
         // Transfer curve controls.
         ui.vertical(|ui| {
+            ui.set_width(sub_area_width);
+
             ui.label("Transfer Function");
             ui.add_space(4.0);
             ui.add_enabled_ui(job_count == 0, |ui| {
@@ -56,7 +58,7 @@ pub fn estimated_mode_ui(
             ui.add_space(4.0);
         });
 
-        ui.add_space(48.0);
+        ui.add_space(8.0);
 
         // Sensor floor controls.
         ui.vertical(|ui| {
@@ -92,7 +94,7 @@ pub fn estimated_mode_ui(
             }
         });
 
-        ui.add_space(0.0);
+        ui.add_space(8.0);
 
         // Sensor ceiling controls.
         ui.vertical(|ui| {

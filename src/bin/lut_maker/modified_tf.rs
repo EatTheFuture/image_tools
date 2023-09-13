@@ -150,6 +150,8 @@ pub fn modified_mode_ui(
     let sub_area_width = (area_width / 3.0).min(230.0);
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
+            ui.set_width(sub_area_width);
+
             ui.label("LUT");
             if app.ui_data.lock().modified.loaded_lut.is_some() {
                 ui.horizontal(|ui| {
@@ -204,7 +206,7 @@ pub fn modified_mode_ui(
             }
         });
 
-        ui.add_space(48.0);
+        ui.add_space(8.0);
 
         let have_lut = app.ui_data.lock().modified.loaded_lut.is_some();
 
@@ -249,7 +251,7 @@ pub fn modified_mode_ui(
                 }
             });
 
-            ui.add_space(0.0);
+            ui.add_space(8.0);
 
             // Sensor ceiling controls.
             let adjust_ceiling = app.ui_data.lock().modified.sensor_ceiling.0;
