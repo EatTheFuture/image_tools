@@ -2,6 +2,7 @@ pub mod blender_config;
 pub mod config;
 pub mod minimal_config;
 
+mod agx;
 mod bezier;
 mod gamut_map;
 mod hsv_lut;
