@@ -1,4 +1,5 @@
 use crate::{
+    agx::make_agx_rec709,
     config::*,
     tone_map::{ToneCurve, Tonemapper},
 };
@@ -43,6 +44,9 @@ pub fn make_minimal(
         0.25,
     );
 
+    // AgX.
+    let agx_rec709 = make_agx_rec709();
+
     //---------------------------------------------------------
 
     let mut config = OCIOConfig::default();
@@ -86,6 +90,7 @@ pub fn make_minimal(
             ("Standard".into(), "sRGB Gamut Clipped".into()),
             ("Toney (Neutral)".into(), "sRGB Toney Neutral".into()),
             ("Toney (Filmic)".into(), "sRGB Toney Filmic".into()),
+            ("AgX".into(), "sRGB AgX".into()),
             ("Raw".into(), "Raw".into()),
         ],
     });
@@ -171,6 +176,7 @@ pub fn make_minimal(
         "Standard".into(),
         "Toney (Neutral)".into(),
         "Toney (Filmic)".into(),
+        "AgX".into(),
         "Raw".into(),
     ];
 
@@ -220,6 +226,21 @@ pub fn make_minimal(
             "omkr__toney_filmic_ldr_curve_inv.spi1d",
             "omkr__toney_filmic_rec709_chroma.cube",
         ),
+        Transform::ExponentWithLinearTransform {
+            gamma: 2.4,
+            offset: 0.055,
+            direction_inverse: true,
+        },
+        false,
+    );
+
+    config.add_display_colorspace(
+        "sRGB AgX".into(),
+        None,
+        chroma::REC709,
+        whitepoint_adaptation_method,
+        agx_rec709.tone_map_transforms("omkr__agx_rec709.cube"),
+        // Transform::ExponentTransform(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2, 1.0),
         Transform::ExponentWithLinearTransform {
             gamma: 2.4,
             offset: 0.055,
@@ -537,6 +558,8 @@ pub fn make_minimal(
         let (_, toney_neutral_rec2020_3d) = toney_neutral_rec2020.generate_luts();
         let (_, toney_filmic_rec2020_3d) = toney_filmic_rec2020.generate_luts();
 
+        let agx_rec709_3d = agx_rec709.generate_lut();
+
         config.output_files.extend([
             // sRGB / Rec.709
             (
@@ -554,6 +577,10 @@ pub fn make_minimal(
             (
                 "luts/omkr__toney_filmic_rec709_chroma.cube".into(),
                 OutputFile::Lut3D(toney_filmic_rec709_3d),
+            ),
+            (
+                "luts/omkr__agx_rec709.cube".into(),
+                OutputFile::Lut3D(agx_rec709_3d),
             ),
             // Rec.2020 (reuses the 1D curves from Rec.709)
             (

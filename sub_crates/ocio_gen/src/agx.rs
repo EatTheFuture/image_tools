@@ -2,16 +2,23 @@
 //!
 //! Aims to match Blender's AgX implementation.
 
+use std::path::PathBuf;
+
 use colorbox::{
     chroma::{self, Chromaticities},
-    matrix::{self, Matrix},
+    lut::Lut3D,
+    matrix::{self, AdaptationMethod, Matrix},
     transforms::{
         ocio::{hsv_to_rgb, rgb_to_hsv},
         rgb_gamut,
     },
 };
 
-pub fn agx_base_rec2020() -> AgX {
+use crate::config::{Allocation, Interpolation, Transform};
+
+const HEADROOM_STOPS: f64 = 8.5;
+
+pub fn make_agx_rec709() -> AgX {
     const MID_GRAY: f64 = 0.18;
     const NORMALIZED_LOG2_MINIMUM: f64 = -10.0;
     const NORMALIZED_LOG2_MAXIMUM: f64 = 6.5;
@@ -32,7 +39,10 @@ pub fn agx_base_rec2020() -> AgX {
     };
 
     AgX::new(
-        chroma::REC709,
+        chroma::REC709,  // In.
+        chroma::REC709,  // Out.
+        chroma::REC2020, // Working.
+        chroma::REC709,  // Inset/outset generation.
         [3.0, -1.0, -1.0],
         [0.4, 0.22, 0.13],
         [0.0, 0.0, 0.0],
@@ -42,14 +52,19 @@ pub fn agx_base_rec2020() -> AgX {
         sigmoid,
         [0.2658180370250449, 0.59846986045365, 0.1357121025213052],
         40.0,
+        33,
     )
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct AgX {
+    input_color_space: Chromaticities,
+    output_color_space: Chromaticities,
+    working_color_space: Chromaticities,
     log_range: [f64; 2],
-    mid_gray: f64,
 
+    input_to_working_matrix: Matrix,
+    working_to_output_matrix: Matrix,
     inset_matrix: Matrix,
     outset_matrix: Matrix,
     luminance_coeffs: [f64; 3],
@@ -57,11 +72,16 @@ pub struct AgX {
     sigmoid: curve::Sigmoid,
 
     mix_percent: f64,
+
+    res_3d: usize,
 }
 
 impl AgX {
     pub fn new(
-        color_space: Chromaticities,
+        input_color_space: Chromaticities,
+        output_color_space: Chromaticities,
+        working_color_space: Chromaticities,
+        inset_outset_space: Chromaticities,
         inset_rotations: [f64; 3],
         inset_insets: [f64; 3],
         outset_rotations: [f64; 3],
@@ -71,29 +91,62 @@ impl AgX {
         sigmoid: curve::Sigmoid,
         luminance_coeffs: [f64; 3],
         mix_percent: f64,
+        res_3d: usize,
     ) -> Self {
+        let input_to_working_matrix = matrix::compose(&[
+            matrix::rgb_to_xyz_matrix(input_color_space),
+            matrix::xyz_chromatic_adaptation_matrix(
+                input_color_space.w,
+                working_color_space.w,
+                AdaptationMethod::Bradford,
+            ),
+            matrix::xyz_to_rgb_matrix(working_color_space),
+        ]);
+        let working_to_output_matrix = matrix::compose(&[
+            matrix::rgb_to_xyz_matrix(working_color_space),
+            matrix::xyz_chromatic_adaptation_matrix(
+                working_color_space.w,
+                output_color_space.w,
+                AdaptationMethod::Bradford,
+            ),
+            matrix::xyz_to_rgb_matrix(output_color_space),
+        ]);
         let inset_matrix = matrix::rgb_to_rgb_matrix(
-            space::create_working_space(inset_rotations, inset_insets, color_space),
-            color_space,
+            space::create_working_space(inset_rotations, inset_insets, inset_outset_space),
+            inset_outset_space,
         );
         let outset_matrix = matrix::rgb_to_rgb_matrix(
-            color_space,
-            space::create_working_space(outset_rotations, outset_insets, color_space),
+            inset_outset_space,
+            space::create_working_space(outset_rotations, outset_insets, inset_outset_space),
         );
 
         Self {
-            log_range: log_range,
-            mid_gray: mid_gray,
+            input_color_space: input_color_space,
+            output_color_space: output_color_space,
+            working_color_space: working_color_space,
+            log_range: [
+                // Adding `mid_gray.log2()` here is equivalent to dividing
+                // the linear input by `mid_gray` before converting to log.
+                // This gives us precisely `-log_range[0]` stops below
+                // `mid_gray` and `log_range[1]` stops above it in the
+                // resulting [0.0, 1.0] normalized log space.
+                // https://www.desmos.com/calculator/p7otc443z5
+                log_range[0] + mid_gray.log2(),
+                log_range[1] + mid_gray.log2(),
+            ],
+            input_to_working_matrix: input_to_working_matrix,
+            working_to_output_matrix: working_to_output_matrix,
             inset_matrix: inset_matrix,
             outset_matrix: outset_matrix,
             luminance_coeffs: luminance_coeffs,
             sigmoid: sigmoid,
             mix_percent: mix_percent,
+            res_3d: res_3d,
         }
     }
 
     pub fn eval_1d(&self, x: f64) -> f64 {
-        let x = curve::log2_encoding(x, self.mid_gray, self.log_range[0], self.log_range[1]);
+        let x = curve::log2_encoding(x, self.log_range[0], self.log_range[1]);
         let x = self.sigmoid.eval(x);
         x.powf(2.4)
     }
@@ -102,6 +155,12 @@ impl AgX {
         fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
             (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])
         }
+        fn lerp(a: f64, b: f64, t: f64) -> f64 {
+            (a * (1.0 - t)) + (b * t)
+        }
+
+        // Convert to working space.
+        let col = matrix::transform_color(col, self.input_to_working_matrix);
 
         // Apply open-domain gamut clip.
         // Note: in the original from Eary, this was instead the "lower guard
@@ -120,59 +179,108 @@ impl AgX {
             self.eval_1d(col[2]),
         ];
 
-        // Record post-sigmoid chroma angle.
-        let col = rgb_to_hsv(col);
-
         // Mix pre-formation chroma angle with post formation chroma angle.
-        let hue = {
-            // This looks involved, but is ultimately just a lerp between two
+        let col = {
+            let hsv = rgb_to_hsv(col);
+
+            // This looks involved, but is actually just a lerp between two
             // hue angles.  The complication is that since hue loops back on
             // itself, we need to ensure that we're interpolating on the
             // shortest path between the two hue angles.
-            let h1 = pre_form_hsv[0];
-            let mut h2 = col[0];
-            while (h1 - h2) > 0.5 {
-                h2 += 1.0;
+            let hue1 = pre_form_hsv[0];
+            let mut hue2 = hsv[0];
+            while (hue2 - hue1) > 0.5 {
+                hue2 -= 1.0;
             }
-            while (h1 - h2) < 0.5 {
-                h2 -= 1.0;
+            while (hue2 - hue1) < -0.5 {
+                hue2 += 1.0;
             }
             let t = self.mix_percent / 100.0;
-            let mut h3 = (h1 * (1.0 - t)) + (h2 * t);
-            while h3 < 0.0 {
-                h3 += 1.0;
-            }
-            while h3 > 1.0 {
-                h3 -= 1.0;
-            }
-            h3
+            hsv_to_rgb([lerp(hue1, hue2, t), hsv[1], hsv[2]])
         };
 
-        let col = hsv_to_rgb([hue, col[1], col[2]]);
-
-        // Apply outset to make the result more chroma-laden.
         let col = matrix::transform_color(col, self.outset_matrix);
 
-        // Do a final closed-domain clip to ensure all colors are in-gamut.
         let luma = dot(col, self.luminance_coeffs).max(0.0);
+
+        // Convert to output color space.
+        let col = matrix::transform_color(col, self.working_to_output_matrix);
+
+        // Do a final closed-domain clip to ensure all colors are in-gamut.
         rgb_gamut::closed_domain_clip(rgb_gamut::open_domain_clip(col, luma, 0.0), luma, 0.0)
+    }
+
+    /// Generates a 1D and 3D LUT to apply the tone mapping.
+    ///
+    /// The LUTs should be applied with the transforms yielded by
+    /// `tone_map_transforms()` further below.
+    pub fn generate_lut(&self) -> Lut3D {
+        Lut3D::from_fn([self.res_3d; 3], [0.0; 3], [1.0; 3], |(a, b, c)| {
+            let min_log = self.log_range[0];
+            let max_log = self.log_range[1] + HEADROOM_STOPS;
+
+            // Convert from shaper curve space to linear.
+            let rgb_linear = [
+                curve::log2_decoding(a as f64, min_log, max_log),
+                curve::log2_decoding(b as f64, min_log, max_log),
+                curve::log2_decoding(c as f64, min_log, max_log),
+            ];
+
+            // Apply AgX.
+            let rgb_adjusted = self.eval(rgb_linear);
+
+            (
+                rgb_adjusted[0] as f32,
+                rgb_adjusted[1] as f32,
+                rgb_adjusted[2] as f32,
+            )
+        })
+    }
+
+    /// Generates the OCIO transforms needed for this tone mapper.
+    ///
+    /// Should be used together with `generate_luts()`, above.
+    pub fn tone_map_transforms(&self, lut_3d_path: &str) -> Vec<Transform> {
+        let mut transforms = Vec::new();
+
+        // Clip colors to 1.0 saturation, so they're within the range
+        // of our LUTs.  This is a slight abuse of the ACES gamut mapper,
+        // which is intended for compression rather than clipping.  We
+        // use extreme parameters to make it behave like a clipper.
+        transforms.extend([Transform::ACESGamutMapTransform {
+            threshhold: [0.999, 0.999, 0.999],
+            limit: [10.0, 10.0, 10.0],
+            power: 4.0,
+            direction_inverse: false,
+        }]);
+
+        transforms.extend([
+            // Shaping curve.
+            Transform::AllocationTransform {
+                allocation: Allocation::Log2,
+                vars: vec![self.log_range[0], self.log_range[1] + HEADROOM_STOPS],
+                direction_inverse: false,
+            },
+            // 3D LUT.
+            Transform::FileTransform {
+                src: PathBuf::from(lut_3d_path),
+                interpolation: Interpolation::Tetrahedral,
+                direction_inverse: false,
+            },
+        ]);
+
+        transforms
     }
 }
 
 mod curve {
-    pub fn log2_encoding(lin: f64, middle_grey: f64, min_exposure: f64, max_exposure: f64) -> f64 {
-        let lg2 = (lin / middle_grey).log2();
-        (lg2 - min_exposure) / (max_exposure - min_exposure)
+    pub fn log2_encoding(lin: f64, min_exposure: f64, max_exposure: f64) -> f64 {
+        (lin.log2() - min_exposure) / (max_exposure - min_exposure)
     }
 
-    pub fn log2_decoding(
-        log_norm: f64,
-        middle_grey: f64,
-        min_exposure: f64,
-        max_exposure: f64,
-    ) -> f64 {
+    pub fn log2_decoding(log_norm: f64, min_exposure: f64, max_exposure: f64) -> f64 {
         let lg2 = log_norm * (max_exposure - min_exposure) + min_exposure;
-        2.0_f64.powf(lg2) * middle_grey
+        2.0_f64.powf(lg2)
     }
 
     #[derive(Debug, Copy, Clone)]
