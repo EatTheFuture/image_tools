@@ -39,11 +39,11 @@ pub fn make_agx_rec709() -> AgX {
     };
 
     AgX::new(
-        chroma::REC709,  // In.
+        chroma::E_GAMUT, // In.
         chroma::REC709,  // Out.
         chroma::REC2020, // Working.
         chroma::REC709,  // Inset/outset generation.
-        [3.0, -1.0, -1.0],
+        [3.0, -1.0, -2.0],
         [0.4, 0.22, 0.13],
         [0.0, 0.0, 0.0],
         [0.4, 0.22, 0.04],
@@ -51,6 +51,7 @@ pub fn make_agx_rec709() -> AgX {
         [NORMALIZED_LOG2_MINIMUM, NORMALIZED_LOG2_MAXIMUM],
         sigmoid,
         [0.2658180370250449, 0.59846986045365, 0.1357121025213052],
+        Some(0.08),
         40.0,
         33,
     )
@@ -68,6 +69,7 @@ pub struct AgX {
     inset_matrix: Matrix,
     outset_matrix: Matrix,
     luminance_coeffs: [f64; 3],
+    luminance_blend_power: Option<f64>,
 
     sigmoid: curve::Sigmoid,
 
@@ -90,6 +92,7 @@ impl AgX {
         log_range: [f64; 2],
         sigmoid: curve::Sigmoid,
         luminance_coeffs: [f64; 3],
+        luminance_blend_power: Option<f64>,
         mix_percent: f64,
         res_3d: usize,
     ) -> Self {
@@ -139,6 +142,7 @@ impl AgX {
             inset_matrix: inset_matrix,
             outset_matrix: outset_matrix,
             luminance_coeffs: luminance_coeffs,
+            luminance_blend_power: luminance_blend_power,
             sigmoid: sigmoid,
             mix_percent: mix_percent,
             res_3d: res_3d,
@@ -152,22 +156,11 @@ impl AgX {
     }
 
     pub fn eval(&self, col: [f64; 3]) -> [f64; 3] {
-        fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-            (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])
-        }
-        fn lerp(a: f64, b: f64, t: f64) -> f64 {
-            (a * (1.0 - t)) + (b * t)
-        }
-
         // Convert to working space.
         let col = matrix::transform_color(col, self.input_to_working_matrix);
 
         // Apply open-domain gamut clip.
-        // Note: in the original from Eary, this was instead the "lower guard
-        // rail" application.  I've substituted a simple luminance-based
-        // gamut clip, as I believe that's essentially what "lower guard
-        // rail" is, just with an unnecessarily complex implementation.
-        let col = rgb_gamut::open_domain_clip(col, dot(col, self.luminance_coeffs).max(0.0), 0.0);
+        let col = self.compensate_low_side(col);
 
         let col = matrix::transform_color(col, self.inset_matrix);
 
@@ -207,7 +200,7 @@ impl AgX {
         let col = matrix::transform_color(col, self.working_to_output_matrix);
 
         // Do a final closed-domain clip to ensure all colors are in-gamut.
-        rgb_gamut::closed_domain_clip(rgb_gamut::open_domain_clip(col, luma, 0.0), luma, 0.0)
+        rgb_gamut::closed_domain_clip(self.compensate_low_side(col), luma, 0.0)
     }
 
     /// Generates a 1D and 3D LUT to apply the tone mapping.
@@ -230,9 +223,9 @@ impl AgX {
             let rgb_adjusted = self.eval(rgb_linear);
 
             (
-                rgb_adjusted[0] as f32,
-                rgb_adjusted[1] as f32,
-                rgb_adjusted[2] as f32,
+                rgb_adjusted[0].powf(1.0 / 2.4) as f32,
+                rgb_adjusted[1].powf(1.0 / 2.4) as f32,
+                rgb_adjusted[2].powf(1.0 / 2.4) as f32,
             )
         })
     }
@@ -267,9 +260,68 @@ impl AgX {
                 interpolation: Interpolation::Tetrahedral,
                 direction_inverse: false,
             },
+            Transform::ExponentTransform(2.4, 2.4, 2.4, 1.0),
         ]);
 
         transforms
+    }
+
+    fn compensate_low_side(&self, rgb: [f64; 3]) -> [f64; 3] {
+        let to_src = |col: [f64; 3]| -> [f64; 3] {
+            matrix::transform_color(col, matrix::invert(self.working_to_output_matrix).unwrap())
+        };
+
+        // Calculate original luminance.
+        let y = dot(to_src(rgb), self.luminance_coeffs);
+
+        let max_rgb = rgb[0].max(rgb[1]).max(rgb[2]);
+
+        // Calculate luminance of the opponent color, and use it to compensate for negative luminance values.
+        let inverse_rgb = [max_rgb - rgb[0], max_rgb - rgb[1], max_rgb - rgb[2]];
+        let max_inverse = inverse_rgb[0].max(inverse_rgb[1]).max(inverse_rgb[2]);
+        let y_inverse_rgb = dot(to_src(inverse_rgb), self.luminance_coeffs);
+        let y_compensate_negative = max_inverse - y_inverse_rgb + y;
+        let y = if let Some(p) = self.luminance_blend_power {
+            let t = y.powf(p).clamp(0.0, 1.0);
+            lerp(y_compensate_negative, y, t)
+        } else {
+            y_compensate_negative
+        };
+
+        // Offset the input tristimulus such that there are no negatives.
+        let min_rgb = rgb[0].min(rgb[1]).min(rgb[2]);
+        let offset = (-min_rgb).max(0.0);
+        let rgb_offset = [rgb[0] + offset, rgb[1] + offset, rgb[2] + offset];
+
+        // Calculate luminance of the opponent color, and use it to compensate for negative luminance values.
+        let max_rgb_offset = rgb_offset[0].max(rgb_offset[1]).max(rgb_offset[2]);
+        let inverse_rgb_offset = [
+            max_rgb_offset - rgb_offset[0],
+            max_rgb_offset - rgb_offset[1],
+            max_rgb_offset - rgb_offset[2],
+        ];
+        let max_inverse_rgb_offset = inverse_rgb_offset[0]
+            .max(inverse_rgb_offset[1])
+            .max(inverse_rgb_offset[2]);
+        let y_inverse_rgb_offset = dot(to_src(inverse_rgb_offset), self.luminance_coeffs);
+        let y_new = dot(to_src(rgb_offset), self.luminance_coeffs);
+        let y_new_compensate_negative = max_inverse_rgb_offset - y_inverse_rgb_offset + y_new;
+        let y_new = if let Some(p) = self.luminance_blend_power {
+            let t = y_new.powf(p).clamp(0.0, 1.0);
+            lerp(y_new_compensate_negative, y_new, t)
+        } else {
+            y_new_compensate_negative
+        };
+
+        // Compensate the intensity to match the original luminance.
+        let luminance_ratio = if y_new > y { y / y_new } else { 1.0 };
+        let rgb_out = [
+            rgb_offset[0] * luminance_ratio,
+            rgb_offset[1] * luminance_ratio,
+            rgb_offset[2] * luminance_ratio,
+        ];
+
+        rgb_out
     }
 }
 
@@ -595,4 +647,11 @@ mod space {
             assert!(is_close(c1.w.1, c2.w.1, 0.0000001));
         }
     }
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])
+}
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    (a * (1.0 - t)) + (b * t)
 }

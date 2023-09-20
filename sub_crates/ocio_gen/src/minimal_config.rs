@@ -237,7 +237,7 @@ pub fn make_minimal(
     config.add_display_colorspace(
         "sRGB AgX".into(),
         None,
-        chroma::REC709,
+        chroma::E_GAMUT,
         whitepoint_adaptation_method,
         agx_rec709.tone_map_transforms("omkr__agx_rec709.cube"),
         // Transform::ExponentTransform(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2, 1.0),
