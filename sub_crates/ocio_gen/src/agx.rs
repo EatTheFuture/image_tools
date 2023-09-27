@@ -13,6 +13,7 @@ use colorbox::{
 
 use crate::config::{Allocation, Interpolation, Transform};
 
+const LUT_GAMMA: f64 = 2.4;
 const HEADROOM_STOPS: f64 = 8.5;
 
 pub fn make_agx_rec709() -> AgX {
@@ -36,7 +37,7 @@ pub fn make_agx_rec709() -> AgX {
     };
 
     AgX::new(
-        chroma::E_GAMUT, // In.
+        chroma::REC709,  // In.
         chroma::REC709,  // Out.
         chroma::REC2020, // Working.
         chroma::REC709,  // Inset/outset generation.
@@ -50,7 +51,85 @@ pub fn make_agx_rec709() -> AgX {
         [0.2658180370250449, 0.59846986045365, 0.1357121025213052],
         Some(0.08),
         40.0,
-        31,
+        37,
+    )
+}
+
+pub fn make_agx_rec2020() -> AgX {
+    const MID_GRAY: f64 = 0.18;
+    const NORMALIZED_LOG2_MINIMUM: f64 = -10.0;
+    const NORMALIZED_LOG2_MAXIMUM: f64 = 6.5;
+
+    // Sigmoid definition.
+    let sigmoid = {
+        let x_pivot =
+            NORMALIZED_LOG2_MINIMUM.abs() / (NORMALIZED_LOG2_MAXIMUM - NORMALIZED_LOG2_MINIMUM);
+        let y_pivot = MID_GRAY.powf(1.0 / 2.4);
+
+        curve::Sigmoid::new(
+            [x_pivot, y_pivot],
+            2.4,
+            [0.0; 2],
+            [1.5; 2],
+            [[0.0; 2], [1.0; 2]],
+        )
+    };
+
+    AgX::new(
+        chroma::REC2020, // In.
+        chroma::REC2020, // Out.
+        chroma::REC2020, // Working.
+        chroma::REC709,  // Inset/outset generation.
+        [3.0, -1.0, -2.0],
+        [0.4, 0.22, 0.13],
+        [0.0, 0.0, 0.0],
+        [0.4, 0.22, 0.04],
+        MID_GRAY,
+        [NORMALIZED_LOG2_MINIMUM, NORMALIZED_LOG2_MAXIMUM],
+        sigmoid,
+        [0.2658180370250449, 0.59846986045365, 0.1357121025213052],
+        None,
+        40.0,
+        37,
+    )
+}
+
+pub fn make_agx_display_p3() -> AgX {
+    const MID_GRAY: f64 = 0.18;
+    const NORMALIZED_LOG2_MINIMUM: f64 = -10.0;
+    const NORMALIZED_LOG2_MAXIMUM: f64 = 6.5;
+
+    // Sigmoid definition.
+    let sigmoid = {
+        let x_pivot =
+            NORMALIZED_LOG2_MINIMUM.abs() / (NORMALIZED_LOG2_MAXIMUM - NORMALIZED_LOG2_MINIMUM);
+        let y_pivot = MID_GRAY.powf(1.0 / 2.4);
+
+        curve::Sigmoid::new(
+            [x_pivot, y_pivot],
+            2.4,
+            [0.0; 2],
+            [1.5; 2],
+            [[0.0; 2], [1.0; 2]],
+        )
+    };
+
+    AgX::new(
+        chroma::DISPLAY_P3, // In.
+        chroma::DISPLAY_P3, // Out.
+        chroma::REC2020,    // Working.
+        chroma::REC709,     // Inset/outset generation.
+        [3.0, -1.0, -2.0],
+        [0.4, 0.22, 0.13],
+        [0.0, 0.0, 0.0],
+        [0.4, 0.22, 0.04],
+        MID_GRAY,
+        [NORMALIZED_LOG2_MINIMUM, NORMALIZED_LOG2_MAXIMUM],
+        sigmoid,
+        [0.2658180370250449, 0.59846986045365, 0.1357121025213052],
+        Some(0.08),
+        40.0,
+        37,
     )
 }
 
@@ -226,9 +305,9 @@ impl AgX {
             let rgb_adjusted = self.eval(rgb_linear);
 
             (
-                rgb_adjusted[0].powf(1.0 / 2.4) as f32,
-                rgb_adjusted[1].powf(1.0 / 2.4) as f32,
-                rgb_adjusted[2].powf(1.0 / 2.4) as f32,
+                rgb_adjusted[0].powf(1.0 / LUT_GAMMA) as f32,
+                rgb_adjusted[1].powf(1.0 / LUT_GAMMA) as f32,
+                rgb_adjusted[2].powf(1.0 / LUT_GAMMA) as f32,
             )
         })
     }
@@ -239,7 +318,7 @@ impl AgX {
     pub fn tone_map_transforms(&self, lut_3d_path: &str) -> Vec<Transform> {
         let mut transforms = Vec::new();
 
-        // Clip colors to 1.0 saturation, so they're within the range
+        // Clip colors to max 1.0 saturation, so they're within the range
         // of our LUTs.  This is a slight abuse of the ACES gamut mapper,
         // which is intended for compression rather than clipping.  We
         // use extreme parameters to make it behave like a clipper.
@@ -263,7 +342,7 @@ impl AgX {
                 interpolation: Interpolation::Tetrahedral,
                 direction_inverse: false,
             },
-            Transform::ExponentTransform(2.4, 2.4, 2.4, 1.0),
+            Transform::ExponentTransform(LUT_GAMMA, LUT_GAMMA, LUT_GAMMA, 1.0),
         ]);
 
         transforms

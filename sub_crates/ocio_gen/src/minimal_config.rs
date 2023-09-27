@@ -1,5 +1,5 @@
 use crate::{
-    agx::make_agx_rec709,
+    agx::{make_agx_display_p3, make_agx_rec2020, make_agx_rec709},
     config::*,
     tone_map::{ToneCurve, Tonemapper},
 };
@@ -46,6 +46,8 @@ pub fn make_minimal(
 
     // AgX.
     let agx_rec709 = make_agx_rec709();
+    let agx_rec2020 = make_agx_rec2020();
+    let agx_display_p3 = make_agx_display_p3();
 
     //---------------------------------------------------------
 
@@ -56,7 +58,7 @@ pub fn make_minimal(
     config.search_path.extend(["luts".into()]);
 
     config.roles.reference = Some("Linear".into());
-    config.roles.aces_interchange = Some("Linear ACES".into());
+    config.roles.aces_interchange = Some("ACES".into());
     config.roles.cie_xyz_d65_interchange = Some("XYZ D65".into());
 
     config.roles.default = Some("Linear".into());
@@ -102,6 +104,7 @@ pub fn make_minimal(
             ("Standard".into(), "Rec.709 Gamut Clipped".into()),
             ("Toney (Neutral)".into(), "Rec.709 Toney Neutral".into()),
             ("Toney (Filmic)".into(), "Rec.709 Toney Filmic".into()),
+            ("AgX".into(), "Rec.709 AgX".into()),
             ("Raw".into(), "Raw".into()),
         ],
     });
@@ -113,6 +116,7 @@ pub fn make_minimal(
             ("Standard".into(), "Rec.2020 Gamut Clipped".into()),
             ("Toney (Neutral)".into(), "Rec.2020 Toney Neutral".into()),
             ("Toney (Filmic)".into(), "Rec.2020 Toney Filmic".into()),
+            ("AgX".into(), "Rec.2020 AgX".into()),
             ("Raw".into(), "Raw".into()),
         ],
     });
@@ -171,6 +175,16 @@ pub fn make_minimal(
         ],
     });
     config.active_displays.push("DCI-P3".into());
+
+    config.displays.push(Display {
+        name: "Display P3".into(),
+        views: vec![
+            ("Standard".into(), "Display P3 Gamut Clipped".into()),
+            ("AgX".into(), "Display P3 AgX".into()),
+            ("Raw".into(), "Raw".into()),
+        ],
+    });
+    config.active_displays.push("Display P3".into());
 
     config.active_views = vec![
         "Standard".into(),
@@ -299,6 +313,20 @@ pub fn make_minimal(
         false,
     );
 
+    config.add_display_colorspace(
+        "Rec.709 AgX".into(),
+        None,
+        agx_rec709.input_color_space,
+        whitepoint_adaptation_method,
+        agx_rec709.tone_map_transforms("omkr__agx_rec709.cube"),
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        false,
+    );
+
     //----------
     // Rec.2020
 
@@ -342,6 +370,20 @@ pub fn make_minimal(
             "omkr__toney_filmic_ldr_curve_inv.spi1d",
             "omkr__toney_filmic_rec2020_chroma.cube",
         ),
+        Transform::ExponentWithLinearTransform {
+            gamma: 1.0 / 0.45,
+            offset: 0.09929682680944,
+            direction_inverse: true,
+        },
+        false,
+    );
+
+    config.add_display_colorspace(
+        "Rec.2020 AgX".into(),
+        None,
+        agx_rec2020.input_color_space,
+        whitepoint_adaptation_method,
+        agx_rec2020.tone_map_transforms("omkr__agx_rec2020.cube"),
         Transform::ExponentWithLinearTransform {
             gamma: 1.0 / 0.45,
             offset: 0.09929682680944,
@@ -413,6 +455,9 @@ pub fn make_minimal(
         true,
     );
 
+    //----------
+    // DCI-P3
+
     config.add_display_colorspace(
         "DCI-P3 Gamut Clipped".into(),
         None,
@@ -421,6 +466,37 @@ pub fn make_minimal(
         vec![],
         Transform::ExponentTransform(2.6, 2.6, 2.6, 1.0).invert(),
         true,
+    );
+
+    //----------
+    // Display P3
+
+    config.add_display_colorspace(
+        "Display P3 Gamut Clipped".into(),
+        None,
+        chroma::DISPLAY_P3,
+        whitepoint_adaptation_method,
+        vec![],
+        Transform::ExponentWithLinearTransform {
+            gamma: 2.4,
+            offset: 0.055,
+            direction_inverse: true,
+        },
+        true,
+    );
+
+    config.add_display_colorspace(
+        "Display P3 AgX".into(),
+        None,
+        agx_display_p3.input_color_space,
+        whitepoint_adaptation_method,
+        agx_display_p3.tone_map_transforms("omkr__agx_display_p3.cube"),
+        Transform::ExponentWithLinearTransform {
+            gamma: 2.4,
+            offset: 0.055,
+            direction_inverse: true,
+        },
+        false,
     );
 
     //---------------------------------------------------------
@@ -483,10 +559,20 @@ pub fn make_minimal(
     });
 
     config.add_input_colorspace(
-        "Linear ACES".into(),
+        "ACES".into(),
         Some("linear".into()),
         Some("ACES AP0 linear space".into()),
         chroma::ACES_AP0,
+        whitepoint_adaptation_method,
+        None,
+        true,
+    );
+
+    config.add_input_colorspace(
+        "ACES cg".into(),
+        Some("linear".into()),
+        Some("ACES AP1 linear space".into()),
+        chroma::ACES_AP1,
         whitepoint_adaptation_method,
         None,
         true,
@@ -497,6 +583,16 @@ pub fn make_minimal(
         Some("linear".into()),
         Some("Linear color space with sRGB/Rec.709 gamut".into()),
         chroma::REC709,
+        whitepoint_adaptation_method,
+        None,
+        false,
+    );
+
+    config.add_input_colorspace(
+        "Rec.2020 Linear".into(),
+        Some("linear".into()),
+        Some("Linear color space with Rec.2020 gamut".into()),
+        chroma::REC2020,
         whitepoint_adaptation_method,
         None,
         false,
@@ -558,6 +654,8 @@ pub fn make_minimal(
         let (_, toney_filmic_rec2020_3d) = toney_filmic_rec2020.generate_luts();
 
         let agx_rec709_3d = agx_rec709.generate_lut();
+        let agx_rec2020_3d = agx_rec2020.generate_lut();
+        let agx_display_p3_3d = agx_display_p3.generate_lut();
 
         config.output_files.extend([
             // sRGB / Rec.709
@@ -589,6 +687,15 @@ pub fn make_minimal(
             (
                 "luts/omkr__toney_filmic_rec2020_chroma.cube".into(),
                 OutputFile::Lut3D(toney_filmic_rec2020_3d),
+            ),
+            (
+                "luts/omkr__agx_rec2020.cube".into(),
+                OutputFile::Lut3D(agx_rec2020_3d),
+            ),
+            // Display P3
+            (
+                "luts/omkr__agx_display_p3.cube".into(),
+                OutputFile::Lut3D(agx_display_p3_3d),
             ),
         ]);
     }
