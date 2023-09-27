@@ -8,10 +8,7 @@ use colorbox::{
     chroma::{self, Chromaticities},
     lut::Lut3D,
     matrix::{self, AdaptationMethod, Matrix},
-    transforms::{
-        ocio::{hsv_to_rgb, rgb_to_hsv},
-        rgb_gamut,
-    },
+    transforms::ocio::{hsv_to_rgb, rgb_to_hsv},
 };
 
 use crate::config::{Allocation, Interpolation, Transform};
@@ -53,15 +50,14 @@ pub fn make_agx_rec709() -> AgX {
         [0.2658180370250449, 0.59846986045365, 0.1357121025213052],
         Some(0.08),
         40.0,
-        33,
+        31,
     )
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct AgX {
-    input_color_space: Chromaticities,
-    output_color_space: Chromaticities,
-    working_color_space: Chromaticities,
+    pub input_color_space: Chromaticities,
+    pub output_color_space: Chromaticities,
     log_range: [f64; 2],
 
     input_to_working_matrix: Matrix,
@@ -126,7 +122,6 @@ impl AgX {
         Self {
             input_color_space: input_color_space,
             output_color_space: output_color_space,
-            working_color_space: working_color_space,
             log_range: [
                 // Adding `mid_gray.log2()` here is equivalent to dividing
                 // the linear input by `mid_gray` before converting to log.
@@ -194,13 +189,21 @@ impl AgX {
 
         let col = matrix::transform_color(col, self.outset_matrix);
 
-        let luma = dot(col, self.luminance_coeffs).max(0.0);
-
         // Convert to output color space.
         let col = matrix::transform_color(col, self.working_to_output_matrix);
 
-        // Do a final closed-domain clip to ensure all colors are in-gamut.
-        rgb_gamut::closed_domain_clip(self.compensate_low_side(col), luma, 0.0)
+        // Do a final open-domain gamut clip.
+        let col = self.compensate_low_side(col);
+
+        // Clamp rgb channels to be in the gamut volume.
+        // Note: a more appropriate thing to do here would be a
+        // luminance-based clip, but this is how AgX in Blender does it,
+        // so we're just matching that.
+        [
+            col[0].clamp(0.0, 1.0),
+            col[1].clamp(0.0, 1.0),
+            col[2].clamp(0.0, 1.0),
+        ]
     }
 
     /// Generates a 1D and 3D LUT to apply the tone mapping.
