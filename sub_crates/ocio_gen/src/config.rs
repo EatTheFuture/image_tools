@@ -446,16 +446,13 @@ impl OCIOConfig {
         )));
         if use_gamut_clipping && !gamut_is_within_gamut(chromaticities, self.reference_space_chroma)
         {
-            self.generate_gamut_clipping_luts();
-            to_reference_transforms.extend([
-                Transform::ToHSV,
-                Transform::FileTransform {
-                    src: INPUT_GAMUT_CLIP_LUT_FILENAME.into(),
-                    interpolation: Interpolation::Linear,
-                    direction_inverse: false,
-                },
-                Transform::FromHSV,
-            ]);
+            // Abuse ACES gamut mapper to do gamut clipping.
+            to_reference_transforms.extend([Transform::ACESGamutMapTransform {
+                threshhold: [0.999; 3], // Extreme value to approximate clip.
+                limit: [2.0; 3],
+                power: 4.0,
+                direction_inverse: false,
+            }]);
         }
 
         // Build from-reference transforms.
@@ -534,30 +531,17 @@ impl OCIOConfig {
 
         if use_gamut_clipping {
             self.generate_gamut_clipping_luts();
-            let scale = (1 << 24) as f64;
             transforms.extend([
-                Transform::ToHSV,
-                // HDR gamut clipping.
-                // HACK: abuse HSV coordinates to clip saturation to be
-                // within the gamut that the gamut clipping LUT can handle.
-                // TODO: unfortunately, this distorts the luminance of
-                // those clipped colors.  Replace this with a 3D LUT
-                // transform that does proper HDR gamut clipping once
-                // issue #1763 is fixed in OCIO and released.
-                Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
-                    1.0,
-                    1.0 / 1.5,
-                    1.0 / scale,
-                ]))),
-                Transform::RangeTransform {
-                    range_in: (0.0, 1.0),
-                    range_out: (0.0, 1.0),
-                    clamp: true,
+                // HDR gamut clipping.  We abuse the ACES gamut
+                // mapper for gamut clipping.
+                Transform::ACESGamutMapTransform {
+                    threshhold: [0.999; 3], // Extreme value to approximate clip.
+                    limit: [2.0; 3],
+                    power: 4.0,
+                    direction_inverse: false,
                 },
-                Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
-                    1.0, 1.5, scale,
-                ]))),
                 // LDR gamut clipping.
+                Transform::ToHSV,
                 Transform::FileTransform {
                     src: OUTPUT_GAMUT_CLIP_LUT_FILENAME.into(),
                     interpolation: Interpolation::Linear,

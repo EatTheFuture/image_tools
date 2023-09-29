@@ -269,13 +269,10 @@ impl Tonemapper {
     pub fn tone_map_transforms(&self, lut_1d_path: &str, lut_3d_path: &str) -> Vec<Transform> {
         let mut transforms = Vec::new();
 
-        // Clip colors to 1.0 saturation, so they're within the range
-        // of our LUTs.  This is a slight abuse of the ACES gamut mapper,
-        // which is intended for compression rather than clipping.  We
-        // use extreme parameters to make it behave like a clipper.
+        // Narrow gamut compression to bring all colors in gamut.
         transforms.extend([Transform::ACESGamutMapTransform {
-            threshhold: [0.999, 0.999, 0.999],
-            limit: [10.0, 10.0, 10.0],
+            threshhold: [0.9; 3],
+            limit: [2.0; 3],
             power: 4.0,
             direction_inverse: false,
         }]);
