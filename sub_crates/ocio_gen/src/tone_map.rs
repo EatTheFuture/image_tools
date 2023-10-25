@@ -269,13 +269,9 @@ impl Tonemapper {
     pub fn tone_map_transforms(&self, lut_1d_path: &str, lut_3d_path: &str) -> Vec<Transform> {
         let mut transforms = Vec::new();
 
-        // Narrow gamut compression to bring all colors in gamut.
-        transforms.extend([Transform::ACESGamutMapTransform {
-            threshhold: [0.9; 3],
-            limit: [2.0; 3],
-            power: 4.0,
-            direction_inverse: false,
-        }]);
+        // Gamut clip ahead of time.
+        // TODO: turn this into a softer gamut compression.
+        transforms.extend(crate::gamut_map::hsv_gamut_clip());
 
         // Apply tone curve.
         transforms.extend([Transform::FileTransform {

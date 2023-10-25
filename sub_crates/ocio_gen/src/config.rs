@@ -10,6 +10,8 @@ use colorbox::{
     matrix::{self, AdaptationMethod},
 };
 
+use crate::gamut_map;
+
 const GAMUT_DIR: &str = "gamut_handling";
 pub const INPUT_GAMUT_CLIP_LUT_FILENAME: &str = "rgb_input_gamut_clip.cube";
 pub const OUTPUT_GAMUT_CLIP_LUT_FILENAME: &str = "rgb_output_gamut_clip.cube";
@@ -446,13 +448,7 @@ impl OCIOConfig {
         )));
         if use_gamut_clipping && !gamut_is_within_gamut(chromaticities, self.reference_space_chroma)
         {
-            // Abuse ACES gamut mapper to do gamut clipping.
-            to_reference_transforms.extend([Transform::ACESGamutMapTransform {
-                threshhold: [0.999; 3], // Extreme value to approximate clip.
-                limit: [2.0; 3],
-                power: 4.0,
-                direction_inverse: false,
-            }]);
+            to_reference_transforms.extend_from_slice(&gamut_map::hsv_gamut_clip());
         }
 
         // Build from-reference transforms.
@@ -474,16 +470,7 @@ impl OCIOConfig {
         }
         if use_gamut_clipping && !gamut_is_within_gamut(self.reference_space_chroma, chromaticities)
         {
-            self.generate_gamut_clipping_luts();
-            from_reference_transforms.extend([
-                Transform::ToHSV,
-                Transform::FileTransform {
-                    src: INPUT_GAMUT_CLIP_LUT_FILENAME.into(),
-                    interpolation: Interpolation::Linear,
-                    direction_inverse: false,
-                },
-                Transform::FromHSV,
-            ]);
+            from_reference_transforms.extend_from_slice(&gamut_map::hsv_gamut_clip());
         }
 
         // Add the colorspace.

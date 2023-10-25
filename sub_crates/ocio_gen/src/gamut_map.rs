@@ -10,7 +10,12 @@
 /// the maximum value each RGB channel can be in the output, and colors
 /// will be clipped to that as well.  This is typically useful for
 /// processing output colors (e.g. for display).
-use colorbox::transforms::rgb_gamut;
+use colorbox::{
+    matrix::{self, Matrix},
+    transforms::rgb_gamut,
+};
+
+use crate::config::Transform;
 
 /// A simple but reasonably robust approach that clips in RGB space.
 ///
@@ -55,4 +60,68 @@ pub fn rgb_clip(
     } else {
         rgb_gamut::open_domain_clip(rgb, l, 0.0)
     }
+}
+
+fn sat_matrix(sat: f64, weights: [f64; 3]) -> Matrix {
+    let mat1 = [weights, weights, weights];
+    let mat2 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+    fn lerp3(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
+        [
+            (a[0] * (1.0 - t)) + (b[0] * t),
+            (a[1] * (1.0 - t)) + (b[1] * t),
+            (a[2] * (1.0 - t)) + (b[2] * t),
+        ]
+    }
+
+    [
+        lerp3(mat1[0], mat2[0], sat),
+        lerp3(mat1[1], mat2[1], sat),
+        lerp3(mat1[2], mat2[2], sat),
+    ]
+}
+
+pub fn hsv_gamut_clip() -> Vec<Transform> {
+    // This whole thing is basically one big hack to work around OCIO's
+    // bizarre RGB<->HSV conversion behavior for colors with saturation
+    // greater than 1.0.  Instead of just straightforwardly converting to
+    // HSV and then clamping S to 1.0, we instead have to pre-desaturate
+    // the color by some fixed amount, then convert to HSV, and clamp to
+    // that desaturated level, then convert back, and then re-saturate
+    // by the same fixed amount we desaturated by.  This keeps the
+    // saturation < 1.0 from the point of view of OCIO's RGB<->HSV
+    // conversion routines, which in turn makes it behave sanely.
+    // Sigh...
+
+    const MAX_V: f64 = (1u64 << 24) as f64;
+    const DESAT_FAC: f64 = 4.0;
+
+    let desat_mat = sat_matrix(1.0 / DESAT_FAC, [1.0; 3]);
+    let desat_mat_inv = matrix::invert(desat_mat).unwrap();
+
+    vec![
+        Transform::MatrixTransform(matrix::to_4x4_f32(desat_mat)),
+        Transform::ToHSV,
+        Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+            1.0,
+            DESAT_FAC,
+            1.0 / MAX_V,
+        ]))),
+        // We have to clamp all channels, because per-channel clamping
+        // isn't possible in OCIO.  We pre-scaled V so that clamping it
+        // to 1.0 actually clamps to a very large value.  And we simply
+        // reverse that scaling afterwards.
+        Transform::RangeTransform {
+            range_in: (-1.0, 1.0),
+            range_out: (-1.0, 1.0),
+            clamp: true,
+        },
+        Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
+            1.0,
+            1.0 / DESAT_FAC,
+            MAX_V,
+        ]))),
+        Transform::FromHSV,
+        Transform::MatrixTransform(matrix::to_4x4_f32(desat_mat_inv)),
+    ]
 }
