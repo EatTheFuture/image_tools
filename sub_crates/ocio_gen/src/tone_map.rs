@@ -46,6 +46,10 @@ pub struct Tonemapper {
     mapper_3d: ExponentLUTMapper,
 }
 
+const RES_3D_BASE: usize = 31 + 1;
+const RES_3D_MAX: usize = 97;
+const MAPPER_3D_EXPONENT: f64 = 1.5;
+
 impl Default for Tonemapper {
     fn default() -> Tonemapper {
         let to_xyz_mat = rgb_to_xyz_matrix(colorbox::chroma::REC709);
@@ -58,7 +62,7 @@ impl Default for Tonemapper {
 
         Tonemapper {
             exposure: 1.0,
-            tone_curve: ToneCurve::new(0.18, 0.0, 1.0, 1.0),
+            tone_curve: ToneCurve::new(1.0, 0.18, 0.0, 1.0, 1.0),
             saturation_effect: (0.0, 0.5),
             minimum_desaturation_smoothness: 0.25,
 
@@ -68,8 +72,8 @@ impl Default for Tonemapper {
             parent_rgb_luma_weights: rgb_to_xyz_matrix(parent_rgb_chroma)[1],
 
             res_1d: 1 << 12,
-            res_3d: 31 + 1,
-            mapper_3d: ExponentLUTMapper::new(1.5, 1.0, [true, true, true], true),
+            res_3d: RES_3D_BASE,
+            mapper_3d: ExponentLUTMapper::new(MAPPER_3D_EXPONENT, 1.0, [true, true, true], true),
         }
     }
 }
@@ -117,7 +121,17 @@ impl Tonemapper {
             to_parent_rgb_mat: rgb_to_rgb_matrix(colorbox::chroma::REC709, parent_rgb_chroma),
             parent_rgb_luma_weights: rgb_to_xyz_matrix(parent_rgb_chroma)[1],
 
-            ..Self::default()
+            res_1d: 1 << 12,
+            res_3d:
+                (((RES_3D_BASE as f64) * tone_curve.max_output().powf(1.0 / MAPPER_3D_EXPONENT))
+                    as usize)
+                    .min(RES_3D_MAX),
+            mapper_3d: ExponentLUTMapper::new(
+                MAPPER_3D_EXPONENT,
+                tone_curve.max_output(),
+                [true, true, true],
+                true,
+            ),
         }
     }
 
@@ -175,14 +189,23 @@ impl Tonemapper {
 
             // Gamut-ceiling-based desaturation.
             let sat1 = {
+                // We scale these down so that the max corresponds to 1.0.  This
+                // is just to make the math below easier, because it's simpler
+                // if we assume we're always clamping to 1.0.
+                let unit_luma_tonemapped = luma_tonemapped / self.tone_curve.max_output();
+                let unit_maxc = maxc / self.tone_curve.max_output();
+
+                // The actual stuff.
                 let tmp = soft_max(sat0, 1.0, BLEND);
-                let new_maxc = lerp(luma_tonemapped, maxc, tmp);
+                let new_maxc = lerp(unit_luma_tonemapped, unit_maxc, tmp);
                 if new_maxc < 1.0e-14 {
                     1.0e+15
                 } else {
-                    let clamped_new_maxc = reinhard(new_maxc, self.minimum_desaturation_smoothness);
+                    let clamped_new_maxc =
+                        reinhard(new_maxc, self.minimum_desaturation_smoothness, 1.0);
                     let a = clamped_new_maxc / new_maxc;
-                    let b = luma_tonemapped / (new_maxc - (clamped_new_maxc * luma_tonemapped));
+                    let b = unit_luma_tonemapped
+                        / (new_maxc - (clamped_new_maxc * unit_luma_tonemapped));
                     let fac = ((a - 1.0) * b + a).clamp(0.0, 1.0);
                     fac * tmp
                 }
@@ -213,10 +236,16 @@ impl Tonemapper {
         };
 
         // A final hard gamut clip for safety, but it should do very little if anything.
-        rgb_gamut::closed_domain_clip(
-            rgb_gamut::open_domain_clip(rgb_abney, luma_tonemapped, 0.0),
-            luma_tonemapped,
-            0.0,
+        vscale(
+            rgb_gamut::closed_domain_clip(
+                vscale(
+                    rgb_gamut::open_domain_clip(rgb_abney, luma_tonemapped, 0.0),
+                    1.0 / self.tone_curve.max_output(),
+                ),
+                luma_tonemapped / self.tone_curve.max_output(),
+                0.0,
+            ),
+            self.tone_curve.max_output(),
         )
     }
 
@@ -225,7 +254,9 @@ impl Tonemapper {
     /// The LUTs should be applied with the transforms yielded by
     /// `tone_map_transforms()` further below.
     pub fn generate_luts(&self) -> (Lut1D, Lut3D) {
-        let lut_1d = Lut1D::from_fn_1(self.res_1d, 0.0, 1.0, |n| self.eval_1d_inv(n as f64) as f32);
+        let lut_1d = Lut1D::from_fn_1(self.res_1d, 0.0, self.tone_curve.max_output() as f32, |n| {
+            self.eval_1d_inv(n as f64) as f32
+        });
 
         // The 3d LUT is generated to compensate for the missing bits
         // after just the tone mapping curve is applied per-channel.
@@ -293,14 +324,16 @@ impl Tonemapper {
         if x <= 0.0 {
             0.0
         } else {
-            self.tone_curve.eval(x * self.exposure).min(1.0)
+            self.tone_curve
+                .eval(x * self.exposure)
+                .min(self.tone_curve.max_output())
         }
     }
 
     fn eval_1d_inv(&self, y: f64) -> f64 {
         if y <= 0.0 {
             0.0
-        } else if y >= 1.0 {
+        } else if y >= self.tone_curve.max_output() {
             // Infinity would actually be correct here, but it leads
             // to issues in the generated LUTs.  So instead we just
             // choose an extremely large finite number that fits
@@ -325,6 +358,7 @@ impl Tonemapper {
 /// https://www.desmos.com/calculator/pfzvawfekp
 #[derive(Debug, Copy, Clone)]
 pub struct ToneCurve {
+    ceiling: f64,
     fixed_point_compensation: f64,
     toe_slope: f64,
     toe_n: f64,
@@ -333,6 +367,8 @@ pub struct ToneCurve {
 }
 
 impl ToneCurve {
+    /// - `ceiling`: the maximum output channel value.  For example, set
+    ///   to 1.0 for SDR, and > 1.0 for HDR.
     /// - `fixed_point`: the value of `x` that should approximately map
     ///   to itself.  Generally this should be luminance level of a
     ///   medium gray.  Note that extreme toes will cause the fixed point
@@ -348,20 +384,31 @@ impl ToneCurve {
     ///   a linear clamped shoulder, and larger values make the shoulder
     ///   progressively softer and higher dynamic range. 1.0 is a
     ///   reasonable default.
-    pub fn new(fixed_point: f64, toe_slope: f64, toe_size: f64, shoulder: f64) -> ToneCurve {
+    pub fn new(
+        ceiling: f64,
+        fixed_point: f64,
+        toe_slope: f64,
+        toe_size: f64,
+        shoulder: f64,
+    ) -> ToneCurve {
         assert!(toe_slope >= 0.0);
         assert!(toe_size >= 0.0);
         assert!(shoulder >= 0.0);
 
-        let fixed_point_compensation = reinhard_inv(fixed_point, shoulder) / fixed_point;
+        let fixed_point_compensation = reinhard_inv(fixed_point, shoulder, ceiling) / fixed_point;
 
         ToneCurve {
+            ceiling: ceiling,
             fixed_point_compensation: fixed_point_compensation,
             toe_slope: toe_slope,
             toe_n: 1.0 - (toe_slope / fixed_point_compensation),
             toe_w: toe_size * 0.125 * fixed_point,
             shoulder_pow: shoulder,
         }
+    }
+
+    pub fn max_output(&self) -> f64 {
+        self.ceiling
     }
 
     pub fn eval(&self, x: f64) -> f64 {
@@ -371,6 +418,7 @@ impl ToneCurve {
             reinhard(
                 self.toe(x) * self.fixed_point_compensation,
                 self.shoulder_pow,
+                self.ceiling,
             )
         }
     }
@@ -378,10 +426,12 @@ impl ToneCurve {
     pub fn eval_inv(&self, x: f64) -> f64 {
         if x <= 0.0 {
             x / self.toe_slope
-        } else if x >= 1.0 {
+        } else if x >= (self.ceiling * 0.999_999_999_999) {
             f64::INFINITY
         } else {
-            self.toe_inv(reinhard_inv(x, self.shoulder_pow) / self.fixed_point_compensation)
+            self.toe_inv(
+                reinhard_inv(x, self.shoulder_pow, self.ceiling) / self.fixed_point_compensation,
+            )
         }
     }
 
@@ -468,12 +518,13 @@ fn wavelength_to_xy(wavelength: f64) -> (f64, f64) {
 
 /// Generalized Reinhard curve.
 ///
-/// `p`: a tweaking parameter that affects the shape of the curve,
-///      in (0.0, inf].  Larger values make it gentler, lower values
-///      make it sharper.  1.0 = standard Reinhard, 0.0 = linear
-///      in [0,1].
+/// - `p`: a tweaking parameter that affects the shape of the curve, in (0.0,
+///   inf].  Larger values make it gentler, lower values make it sharper.  1.0 =
+///   standard Reinhard, 0.0 = linear in [0,1].
+/// - `ceiling`: the maximum output value that Reinhard is compressing to.  Set
+///   this to 1.0 for standard Reinhard, and > 1.0 for e.g. HDR tone mapping.
 #[inline(always)]
-fn reinhard(x: f64, p: f64) -> f64 {
+fn reinhard(x: f64, p: f64, ceiling: f64) -> f64 {
     // Make out-of-range numbers do something reasonable and predictable.
     if x <= 0.0 {
         return x;
@@ -482,29 +533,29 @@ fn reinhard(x: f64, p: f64) -> f64 {
     // Special case so we get linear at `p == 0` instead of undefined.
     // Negative `p` is unsupported, so treat like zero as well.
     if p <= 0.0 {
-        return x.min(1.0);
+        return x.min(ceiling);
     }
 
-    let tmp = x.powf(-1.0 / p);
+    let tmp = (x / ceiling).powf(-1.0 / p);
 
     // Special cases for numerical stability.
     if tmp > 1.0e15 {
         return x;
     } else if tmp < 1.0e-15 {
-        return 1.0;
+        return ceiling;
     }
 
     // Actual generalized Reinhard.
-    (tmp + 1.0).powf(-p)
+    (tmp + 1.0).powf(-p) * ceiling
 }
 
 /// Inverse of `reinhard()`.
 #[inline(always)]
-fn reinhard_inv(x: f64, p: f64) -> f64 {
+fn reinhard_inv(x: f64, p: f64, ceiling: f64) -> f64 {
     // Make out-of-range numbers do something reasonable and predictable.
     if x <= 0.0 {
         return x;
-    } else if x >= 1.0 {
+    } else if x >= ceiling {
         return std::f64::INFINITY;
     }
 
@@ -514,7 +565,7 @@ fn reinhard_inv(x: f64, p: f64) -> f64 {
         return x;
     }
 
-    let tmp = x.powf(-1.0 / p);
+    let tmp = (x / ceiling).powf(-1.0 / p);
 
     // Special case for numerical stability.
     if tmp > 1.0e15 {
@@ -522,7 +573,7 @@ fn reinhard_inv(x: f64, p: f64) -> f64 {
     }
 
     // Actual generalized Reinhard inverse.
-    (tmp - 1.0).powf(-p)
+    (tmp - 1.0).powf(-p) * ceiling
 }
 
 /// A [0,1] -> [0,1] mapping, with 0.5 biased up or down.
@@ -580,7 +631,7 @@ mod test {
     fn tone_toe_round_trip() {
         let size = 2.0;
         for slope in [0.0, 0.5, 1.0, 1.5, 2.0] {
-            let tc = ToneCurve::new(0.18, slope, size, 1.4);
+            let tc = ToneCurve::new(2.0, 0.18, slope, size, 1.4);
 
             for i in 0..4096 {
                 // Non-linear mapping for x so we test both very
@@ -610,7 +661,7 @@ mod test {
 
     #[test]
     fn tone_curve_round_trip() {
-        let tc = ToneCurve::new(0.18, 0.25, 1.2, 1.4);
+        let tc = ToneCurve::new(2.0, 0.18, 0.25, 1.2, 1.4);
         for i in 0..4096 {
             // Forward.
             let x = i as f64 / 64.0;
@@ -628,7 +679,7 @@ mod test {
 
     #[test]
     fn tonemap_1d_round_trip() {
-        let tone_curve = ToneCurve::new(0.18, 0.8, 1.2, 1.4);
+        let tone_curve = ToneCurve::new(2.0, 0.18, 0.8, 1.2, 1.4);
         let satfx = (0.4, 0.6);
         let min_smooth = 0.25;
         let tm = Tonemapper::new(1.1, tone_curve, None, satfx, min_smooth);
@@ -648,7 +699,7 @@ mod test {
                 if p <= 0.0 && x >= 1.0 {
                     continue;
                 }
-                let x2 = reinhard_inv(reinhard(x, p), p);
+                let x2 = reinhard_inv(reinhard(x, p, 2.0), p, 2.0);
                 assert!((x - x2).abs() < 0.000_001);
             }
         }
