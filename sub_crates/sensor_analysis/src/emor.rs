@@ -1,4 +1,4 @@
-use randomize::{formulas::f32_half_open_right, PCG32};
+use nanorand::{Pcg64, Rng};
 use rayon::prelude::*;
 
 use crate::exposure_mapping::ExposureMapping;
@@ -19,7 +19,7 @@ pub struct EmorEstimator<'a> {
     current_round: usize,
     rounds_without_change: usize,
     step_size: f32,
-    rand: PCG32,
+    rand: Pcg64,
 }
 
 impl<'a> EmorEstimator<'a> {
@@ -35,16 +35,21 @@ impl<'a> EmorEstimator<'a> {
             current_round: 0,
             rounds_without_change: 0,
             step_size: 1.0,
-            rand: PCG32::seed(0xdd60c3b293895214, 0xc16fa8cdc70cc1c3),
+            rand: Pcg64::new_seed(0xdd60c3b293895214c16fa8cdc70cc1c3),
         }
     }
 
     fn rand_0_1(&mut self) -> f32 {
-        f32_half_open_right(self.rand.next_u32())
+        // Note: we divide by 4294967808 instead of 2^32 because the latter
+        // leads to a [0.0, 1.0] mapping instead of [0.0, 1.0) due to floating
+        // point rounding error. 4294967808 unfortunately leaves (precisely)
+        // one unused ulp between the max number this outputs and 1.0, but
+        // that's the best you can do with this construction.
+        self.rand.generate::<u32>() as f32 * (1.0 / 4294967808.0)
     }
 
     fn rand_bool(&mut self) -> bool {
-        self.rand.next_u32() & 1 == 0
+        self.rand.generate::<u8>() & 1 == 0
     }
 
     pub fn do_rounds(&mut self, rounds: usize) {

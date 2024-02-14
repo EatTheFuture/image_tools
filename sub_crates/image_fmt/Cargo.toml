@@ -8,8 +8,5 @@ edition = "2021"
 [dependencies]
 jpeg-decoder = "0.3.0"
 png = "0.17.7"
-# Temporarily pointing at tiff's github for the fix for issue #192.
-# TODO: use crates.io release again once a release with the fix is made.
-# tiff = "0.8.0"
-tiff = { git = "https://github.com/image-rs/image-tiff", rev = "aa42fcb1bb1fa267507166e55d52b7428f15041f" }
-fast_image_resize = "2.7.3"
+tiff = "0.9.1"
+fast_image_resize = "3.0.3"

@@ -7,4 +7,4 @@ edition = "2018"
 
 [dependencies]
 rayon = "1.5"
-randomize = "3"
+nanorand = "0.7.0"
