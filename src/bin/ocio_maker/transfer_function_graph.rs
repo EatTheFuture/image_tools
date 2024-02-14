@@ -1,13 +1,13 @@
 use std::iter::FromIterator;
 
-use crate::egui::{self, Ui};
+use crate::egui::Ui;
 
 use lib::colors::*;
 
 pub fn graph(ui: &mut Ui, space: &mut crate::ColorSpaceSpec) {
     // Visualize transfer function.
     if let Some((ref lut, _, inverse)) = space.transfer_lut {
-        use egui::widgets::plot::{Line, Plot, PlotPoints};
+        use egui_plot::{Line, Plot, PlotPoints};
 
         let colors: &[_] = if lut.tables.len() == 1 {
             &[WHITE]

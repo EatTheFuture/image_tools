@@ -91,18 +91,12 @@ pub fn image_list(ctx: &Context, ui: &mut Ui, app: &mut crate::AppMain, job_coun
             let thumbnails = &ui_data.thumbnails;
             let selected_image_index = &mut ui_data.selected_image_index;
 
-            for (img_i, (ref tex_handle, width, height, _)) in thumbnails.iter().enumerate() {
-                let display_height = 64.0;
-                let display_width = display_height / *height as f32 * *width as f32;
-
+            for (img_i, (ref tex_handle, _, _, _)) in thumbnails.iter().enumerate() {
                 ui.horizontal(|ui| {
                     if ui
                         .add(
-                            egui::widgets::ImageButton::new(
-                                tex_handle,
-                                egui::Vec2::new(display_width, display_height),
-                            )
-                            .selected(img_i == *selected_image_index),
+                            egui::widgets::ImageButton::new(tex_handle)
+                                .selected(img_i == *selected_image_index),
                         )
                         .clicked()
                     {

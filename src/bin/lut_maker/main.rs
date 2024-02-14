@@ -30,11 +30,12 @@ fn main() {
     eframe::run_native(
         "LUT Maker",
         eframe::NativeOptions {
-            drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
+            viewport: egui::ViewportBuilder::default().with_drag_and_drop(true), // Enable drag-and-dropping files on Windows.
             ..eframe::NativeOptions::default()
         },
         Box::new(|cc| Box::new(AppMain::new(cc))),
-    );
+    )
+    .expect("Couldn't start application.");
 }
 
 pub struct AppMain {
@@ -127,7 +128,7 @@ impl eframe::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let job_count = self.job_queue.job_count();
         let total_bracket_images = self.bracket_image_sets.total_image_count();
         let total_dark_images = self.dark_images.total_image_count();
@@ -140,7 +141,7 @@ impl eframe::App for AppMain {
         //----------------
         // GUI.
 
-        menu::menu_bar(ctx, frame);
+        menu::menu_bar(ctx);
 
         // Status bar and log (footer).
         egui_custom::status_bar(ctx, &self.job_queue);
@@ -258,23 +259,25 @@ impl eframe::App for AppMain {
         // Processing.
 
         // Collect dropped files.
-        if !ctx.input().raw.dropped_files.is_empty() {
-            let file_list: Vec<PathBuf> = ctx
-                .input()
+        let dropped_file_list = ctx.input(|input| {
+            let file_list: Vec<PathBuf> = input
                 .raw
                 .dropped_files
                 .iter()
                 .map(|dropped_file| dropped_file.path.clone().unwrap())
                 .collect();
+            file_list
+        });
+        if !dropped_file_list.is_empty() {
             let image_view = self.ui_data.lock().image_view;
             match image_view {
                 ImageViewID::Dark => {
                     self.dark_images
-                        .add_image_files(file_list, ctx, &self.job_queue)
+                        .add_image_files(dropped_file_list, ctx, &self.job_queue)
                 }
                 ImageViewID::Bracketed => {
                     self.bracket_image_sets
-                        .add_image_files(file_list, ctx, &self.job_queue)
+                        .add_image_files(dropped_file_list, ctx, &self.job_queue)
                 }
             }
             self.compute_exposure_mappings();

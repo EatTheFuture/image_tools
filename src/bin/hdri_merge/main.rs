@@ -26,11 +26,12 @@ pub fn main() {
     eframe::run_native(
         "HDRI Merge",
         eframe::NativeOptions {
-            drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
+            viewport: egui::ViewportBuilder::default().with_drag_and_drop(true), // Enable drag-and-dropping files on Windows.
             ..eframe::NativeOptions::default()
         },
         Box::new(|cc| Box::new(AppMain::new(cc))),
-    );
+    )
+    .expect("Couldn't start application.");
 }
 
 pub struct AppMain {
@@ -103,7 +104,7 @@ impl eframe::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Some simple queries we use in drawing the UI.
         let image_count = self.ui_data.lock().thumbnails.len();
         let have_hdri = match self.hdri_merger.try_lock() {
@@ -137,7 +138,6 @@ impl eframe::App for AppMain {
         // Menu bar.
         menu::menu_bar(
             ctx,
-            frame,
             self,
             &add_images_dialog,
             &save_hdri_dialog,
@@ -208,16 +208,17 @@ impl eframe::App for AppMain {
         // Processing.
 
         // Collect dropped files.
-        if !ctx.input().raw.dropped_files.is_empty() {
-            let file_list: Vec<PathBuf> = ctx
-                .input()
+        let dropped_file_list = ctx.input(|input| {
+            let file_list: Vec<PathBuf> = input
                 .raw
                 .dropped_files
                 .iter()
                 .map(|dropped_file| dropped_file.path.clone().unwrap())
                 .collect();
-
-            self.add_image_files(file_list, ctx);
+            file_list
+        });
+        if !dropped_file_list.is_empty() {
+            self.add_image_files(dropped_file_list, ctx);
         }
     }
 }
@@ -494,7 +495,11 @@ impl AppMain {
                             ctx.load_texture(
                                 "",
                                 egui::ColorImage::from_rgba_unmultiplied([*width, *height], pixels),
-                                egui::TextureFilter::Linear,
+                                egui::TextureOptions {
+                                    magnification: egui::TextureFilter::Linear,
+                                    minification: egui::TextureFilter::Linear,
+                                    wrap_mode: egui::TextureWrapMode::ClampToEdge,
+                                },
                             ),
                             *width,
                             *height,
@@ -535,7 +540,11 @@ impl AppMain {
                     let tex_handle = ctx.load_texture(
                         "",
                         egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels),
-                        egui::TextureFilter::Linear,
+                        egui::TextureOptions {
+                            magnification: egui::TextureFilter::Linear,
+                            minification: egui::TextureFilter::Linear,
+                            wrap_mode: egui::TextureWrapMode::ClampToEdge,
+                        },
                     );
 
                     let mut ui_data = ui_data.lock_mut();
@@ -678,6 +687,10 @@ fn make_texture(img: (&[u8], usize, usize), ctx: &egui::Context) -> egui::Textur
     ctx.load_texture(
         "",
         egui::ColorImage::from_rgba_unmultiplied([img.1, img.2], img.0),
-        egui::TextureFilter::Linear,
+        egui::TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Linear,
+            wrap_mode: egui::TextureWrapMode::ClampToEdge,
+        },
     )
 }

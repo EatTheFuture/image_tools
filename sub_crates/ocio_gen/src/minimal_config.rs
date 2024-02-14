@@ -695,13 +695,54 @@ pub fn make_minimal(
         None,
         chroma::REC709,
         whitepoint_adaptation_method,
-        Some(Transform::FileTransform {
-            src: "srgb_to_linear.spi1d".into(),
-            interpolation: Interpolation::Linear,
-            direction_inverse: false,
+        Some(Transform::ExponentWithLinearTransform {
+            gamma: 2.4,
+            offset: 0.055,
+            direction_inverse: true,
         }),
         false,
     );
+
+    //---------------------------------------------------------
+    // Input color spaces abused to create OpenEXR output spaces.
+
+    config.colorspaces.push(ColorSpace {
+        name: "Toney (Neutral) HDR - sRGB Linear".into(),
+        family: "linear".into(),
+        bitdepth: Some(BitDepth::F32),
+        isdata: Some(false),
+        from_reference: {
+            let mut transforms = Vec::new();
+            transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
+                matrix::rgb_to_rgb_matrix(reference_space_chroma, chroma::REC709),
+            )));
+            transforms.extend_from_slice(&toney_neutral_rec709_hdr.tone_map_transforms(
+                "omkr__toney_neutral_hdr_curve_inv.spi1d",
+                "omkr__toney_neutral_hdr_rec709_chroma.cube",
+            ));
+            transforms
+        },
+        ..ColorSpace::default()
+    });
+
+    config.colorspaces.push(ColorSpace {
+        name: "Toney (Filmic) HDR - sRGB Linear".into(),
+        family: "linear".into(),
+        bitdepth: Some(BitDepth::F32),
+        isdata: Some(false),
+        from_reference: {
+            let mut transforms = Vec::new();
+            transforms.push(Transform::MatrixTransform(matrix::to_4x4_f32(
+                matrix::rgb_to_rgb_matrix(reference_space_chroma, chroma::REC709),
+            )));
+            transforms.extend_from_slice(&toney_filmic_rec709_hdr.tone_map_transforms(
+                "omkr__toney_filmic_hdr_curve_inv.spi1d",
+                "omkr__toney_filmic_hdr_rec709_chroma.cube",
+            ));
+            transforms
+        },
+        ..ColorSpace::default()
+    });
 
     //---------------------------------------------------------
     // Generate output files.

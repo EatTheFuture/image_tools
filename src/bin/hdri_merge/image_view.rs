@@ -76,18 +76,17 @@ pub fn image_view(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if show_image == ShowImage::HDRI && have_hdri_preview_tex {
-                if let Some((ref tex_handle, width, height)) = app.ui_data.lock().hdri_preview_tex {
-                    ui.image(
-                        tex_handle,
-                        egui::Vec2::new(width as f32 * image_zoom, height as f32 * image_zoom),
+                if let Some((ref tex_handle, _, _)) = app.ui_data.lock().hdri_preview_tex {
+                    ui.add(
+                        egui::widgets::Image::from_texture(tex_handle)
+                            .fit_to_original_size(image_zoom),
                     );
                 }
             } else if show_image == ShowImage::SelectedImage && image_count > 0 {
-                if let Some((ref tex_handle, width, height)) = app.ui_data.lock().image_preview_tex
-                {
-                    ui.image(
-                        tex_handle,
-                        egui::Vec2::new(width as f32 * image_zoom, height as f32 * image_zoom),
+                if let Some((ref tex_handle, _, _)) = app.ui_data.lock().image_preview_tex {
+                    ui.add(
+                        egui::widgets::Image::from_texture(tex_handle)
+                            .fit_to_original_size(image_zoom),
                     );
                 }
             }

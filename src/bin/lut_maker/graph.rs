@@ -2,11 +2,8 @@ use std::iter::FromIterator;
 
 use sensor_analysis::{utils::lerp_slice, ExposureMapping};
 
-use crate::egui::{
-    self,
-    widgets::plot::{Line, Plot, PlotPoint, PlotPoints, Points},
-    Ui,
-};
+use crate::egui::Ui;
+use egui_plot::{Line, Plot, PlotPoint, PlotPoints, Points};
 
 use crate::AppMode;
 
@@ -148,7 +145,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                 Plot::new("Transfer Function Graph")
                     .data_aspect(1.0)
                     .show(ui, |plot| {
-                        plot.text(egui::widgets::plot::Text::new(
+                        plot.text(egui_plot::Text::new(
                             PlotPoint::new(0.4, 0.1),
                             "No estimated transfer function.",
                         ));
@@ -248,7 +245,7 @@ pub fn graph_ui(ui: &mut Ui, app: &mut crate::AppMain) {
                 Plot::new("Transfer Function Graph")
                     .data_aspect(1.0)
                     .show(ui, |plot| {
-                        plot.text(egui::widgets::plot::Text::new(
+                        plot.text(egui_plot::Text::new(
                             PlotPoint::new(0.4, 0.1),
                             "No transfer function LUT.",
                         ));
@@ -268,7 +265,7 @@ fn exposure_mappings_graph(
         .data_aspect(1.0)
         .show(ui, |plot| {
             if exposure_mappings[0].is_empty() {
-                plot.text(egui::widgets::plot::Text::new(
+                plot.text(egui_plot::Text::new(
                     PlotPoint::new(0.4, 0.1),
                     "Two or more bracketed exposure images\nare needed to generate this data.",
                 ));
@@ -310,10 +307,7 @@ fn transfer_function_graph<I: Iterator<Item = (f32, f32)>, F: Fn(usize) -> I>(
         .data_aspect(1.0)
         .show(ui, |plot| {
             if let Some(text) = label {
-                plot.text(egui::widgets::plot::Text::new(
-                    PlotPoint::new(0.5, -0.05),
-                    text,
-                ));
+                plot.text(egui_plot::Text::new(PlotPoint::new(0.5, -0.05), text));
             }
             for chan in 0..3 {
                 plot.line(

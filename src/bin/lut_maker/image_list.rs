@@ -6,7 +6,7 @@ use shared_data::Shared;
 
 use lib::ImageInfo;
 
-use crate::egui::{self, Context, TextureFilter, Ui};
+use crate::egui::{self, Context, Ui};
 
 pub struct ImageList {
     pub histogram_sets: Shared<Vec<Vec<([Histogram; 3], ImageInfo)>>>,
@@ -119,16 +119,13 @@ impl ImageList {
                         ui.add_space(4.0);
                     }
                     let set = &thumbnail_sets[set_i];
-                    for (img_i, (ref tex_handle, width, height, _)) in set.iter().enumerate() {
-                        let display_height = 64.0;
-                        let display_width = display_height / *height as f32 * *width as f32;
-
+                    for (img_i, (ref tex_handle, _, _, _)) in set.iter().enumerate() {
                         ui.horizontal(|ui| {
                             if ui
                                 .add(
                                     egui::widgets::ImageButton::new(
                                         tex_handle,
-                                        egui::Vec2::new(display_width, display_height),
+                                        // egui::Vec2::new(display_width, display_height),
                                     )
                                     .selected(set_i == *set_index && img_i == *image_index),
                                 )
@@ -262,7 +259,11 @@ impl ImageList {
                                 [width, height],
                                 &pixels,
                             ),
-                            TextureFilter::Linear,
+                            egui::TextureOptions {
+                                magnification: egui::TextureFilter::Linear,
+                                minification: egui::TextureFilter::Linear,
+                                wrap_mode: egui::TextureWrapMode::ClampToEdge,
+                            },
                         );
                     (tex_handle, width, height)
                 };

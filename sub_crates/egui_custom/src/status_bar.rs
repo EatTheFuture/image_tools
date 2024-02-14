@@ -1,9 +1,8 @@
 use eframe::egui::{
     self,
-    color::Rgba,
     containers::ScrollArea,
     widgets::{Button, Label, ProgressBar},
-    Align, RichText,
+    Align, Rgba, RichText,
 };
 use job_queue::{JobQueue, LogLevel};
 
@@ -43,7 +42,7 @@ pub fn status_bar(ctx: &egui::Context, job_queue: &JobQueue) {
             ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .max_height(100.0)
-                .stick_to_bottom()
+                .stick_to_bottom(true)
                 .show(ui, |ui| {
                     ui.add(
                         egui::TextEdit::multiline(&mut log_string.as_str())

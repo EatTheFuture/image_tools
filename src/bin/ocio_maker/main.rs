@@ -31,11 +31,12 @@ fn main() {
     eframe::run_native(
         "OCIO Maker",
         eframe::NativeOptions {
-            drag_and_drop_support: true, // Enable drag-and-dropping files on Windows.
+            viewport: egui::ViewportBuilder::default().with_drag_and_drop(true), // Enable drag-and-dropping files on Windows.
             ..eframe::NativeOptions::default()
         },
         Box::new(|cc| Box::new(AppMain::new(cc))),
-    );
+    )
+    .expect("Couldn't start application.");
 }
 
 pub struct AppMain {
@@ -105,7 +106,7 @@ impl eframe::App for AppMain {
         // Don't need to do anything.
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let job_count = self.job_queue.job_count();
         let mut working_dir = self
             .last_opened_directory
@@ -116,7 +117,7 @@ impl eframe::App for AppMain {
         // GUI.
 
         // Menu bar.
-        menu::menu_bar(ctx, frame, self, &mut working_dir, job_count);
+        menu::menu_bar(ctx, self, &mut working_dir, job_count);
 
         // Top bar, with tabs, config export, etc.
         top_bar::top_bar(ctx, self);
@@ -137,17 +138,15 @@ impl eframe::App for AppMain {
         // Processing.
 
         // Collect dropped files.
-        if !ctx.input().raw.dropped_files.is_empty() {
-            // let file_list: Vec<PathBuf> = ctx
-            //     .input()
-            //     .raw
-            //     .dropped_files
-            //     .iter()
-            //     .map(|dropped_file| dropped_file.path.clone().unwrap())
-            //     .collect();
-
-            // self.add_image_files(file_list, ctx);
-        }
+        let _dropped_file_list = ctx.input(|input| {
+            let file_list: Vec<PathBuf> = input
+                .raw
+                .dropped_files
+                .iter()
+                .map(|dropped_file| dropped_file.path.clone().unwrap())
+                .collect();
+            file_list
+        });
     }
 }
 

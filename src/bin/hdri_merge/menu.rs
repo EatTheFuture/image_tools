@@ -2,7 +2,6 @@ use crate::egui::{self, Context};
 
 pub fn menu_bar(
     ctx: &Context,
-    frame: &mut eframe::Frame,
     app: &mut crate::AppMain,
     add_images_dialog: &rfd::FileDialog,
     save_hdri_dialog: &rfd::FileDialog,
@@ -35,7 +34,7 @@ pub fn menu_bar(
 
                 ui.separator();
                 if ui.add(egui::widgets::Button::new("Quit")).clicked() {
-                    frame.quit();
+                    ctx.send_viewport_cmd(egui::viewport::ViewportCommand::Close);
                 }
             });
         });

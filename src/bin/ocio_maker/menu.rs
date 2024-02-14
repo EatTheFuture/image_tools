@@ -4,7 +4,6 @@ use crate::egui::{self, vec2, Align, Color32, Context, Stroke};
 
 pub fn menu_bar(
     ctx: &Context,
-    frame: &mut eframe::Frame,
     app: &mut crate::AppMain,
     working_dir: &mut PathBuf,
     job_count: usize,
@@ -35,10 +34,10 @@ pub fn menu_bar(
             // Proper menu items.
             ui.horizontal(|ui| {
                 ui.style_mut().spacing.button_padding = vec2(2.0, 0.0);
-                ui.style_mut().visuals.widgets.active.bg_stroke = Stroke::none();
-                ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::none();
+                ui.style_mut().visuals.widgets.active.bg_stroke = Stroke::NONE;
+                ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::NONE;
                 ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::TRANSPARENT;
-                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::none();
+                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::NONE;
 
                 egui::menu::menu_button(ui, "File", |ui| {
                     if ui
@@ -54,7 +53,7 @@ pub fn menu_bar(
                     }
                     ui.separator();
                     if ui.add(egui::widgets::Button::new("Quit")).clicked() {
-                        frame.quit();
+                        ctx.send_viewport_cmd(egui::viewport::ViewportCommand::Close);
                     }
                 });
             });

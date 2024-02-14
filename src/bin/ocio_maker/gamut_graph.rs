@@ -1,13 +1,13 @@
 use std::iter::FromIterator;
 
-use crate::egui::{self, Color32, Ui};
+use crate::egui::{Color32, Ui};
 
 use lib::colors::*;
 
 pub fn graph(ui: &mut Ui, space: &mut crate::ColorSpaceSpec) {
     // Visualize chromaticities / gamut.
     if let Some(chroma) = space.chroma_space.chromaticities(space.custom_chroma) {
-        use egui::widgets::plot::{HLine, Line, LineStyle, Plot, PlotPoints, VLine};
+        use egui_plot::{HLine, Line, LineStyle, Plot, PlotPoints, VLine};
         let wp_style = LineStyle::Dashed { length: 10.0 };
         let r = [chroma.r.0, chroma.r.1];
         let g = [chroma.g.0, chroma.g.1];
