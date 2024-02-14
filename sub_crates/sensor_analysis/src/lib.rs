@@ -108,6 +108,19 @@ pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> Option<
         .iter()
         .fold(&histograms[0], |a, b| if a.1 > b.1 { a } else { b });
 
+    let darkest_pixel = lowest_exposed
+        .0
+        .buckets
+        .iter()
+        .position(|c| *c > 0)
+        .unwrap_or(0) as f32;
+    let brightest_pixel = highest_exposed
+        .0
+        .buckets
+        .iter()
+        .rposition(|c| *c > 0)
+        .unwrap_or(highest_exposed.0.buckets.len() - 1) as f32;
+
     let mut sensor_floor = 0.0f32;
     let mut sensor_ceiling = (bucket_count - 1) as f32;
     for i in 0..histograms.len() {
@@ -116,7 +129,9 @@ pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> Option<
         let tmp_i = ((ratio * LOOSENESS) as usize).min(bucket_count * 3 / 4);
         if ratio >= 8.0 && tmp_i > 0 {
             let target_sum = histograms[i].0.sum_under(tmp_i);
-            sensor_floor = sensor_floor.max(lowest_exposed.0.find_sum_lerp(target_sum));
+            sensor_floor = sensor_floor
+                .max(lowest_exposed.0.find_sum_lerp(target_sum))
+                .max(darkest_pixel);
         }
 
         // Ceiling.
@@ -125,7 +140,9 @@ pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> Option<
         if ratio <= 0.125 && tmp_i < (bucket_count - 1) {
             let target_sum = histograms[i].0.sum_under(tmp_i);
             if target_sum > (total_samples / 2) {
-                sensor_ceiling = sensor_ceiling.min(highest_exposed.0.find_sum_lerp(target_sum));
+                sensor_ceiling = sensor_ceiling
+                    .min(highest_exposed.0.find_sum_lerp(target_sum))
+                    .min(brightest_pixel);
             }
         }
     }
@@ -134,7 +151,7 @@ pub fn estimate_sensor_floor_ceiling(histograms: &[(Histogram, f32)]) -> Option<
     // Otherwise return the result, appropriately snapped to image
     // quantization.
     if ((sensor_ceiling - sensor_floor) / bucket_count as f32) >= 0.8 {
-        Some((sensor_floor.floor(), sensor_ceiling.ceil()))
+        Some((sensor_floor, sensor_ceiling.ceil()))
     } else {
         // Failed basic sanity check.
         None

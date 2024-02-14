@@ -382,7 +382,7 @@ impl AppMain {
                     let histogram_sets =
                         bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
 
-                    if histogram_sets.len() < 2 {
+                    if histogram_sets.iter().all(|hs| hs[0].len() < 2 || hs[1].len() < 2 || hs[2].len() < 2) {
                         status.lock_mut().log_warning(format!(
                             "Not enough valid images to estimate floor.  Check that you have at least one dark image or at least two bracketed exposure images with exposure Exif data.",
                         ));
@@ -396,6 +396,9 @@ impl AppMain {
                             return;
                         }
                         for i in 0..3 {
+                            if histograms[i].len() < 2 {
+                                continue;
+                            }
                             let norm = 1.0 / (histograms[i][0].0.buckets.len() - 1) as f32;
                             if let Some((f, _)) = estimate_sensor_floor_ceiling(&histograms[i]) {
                                 if let Some(ref mut floor) = floor[i] {
@@ -444,7 +447,7 @@ impl AppMain {
                     .set_progress(format!("Estimating sensor ceiling"), 0.0);
 
                 let histogram_sets = bracket_images_to_histogram_sets(&*bracket_image_sets.lock());
-                if histogram_sets.len() < 2 {
+                if histogram_sets.iter().all(|hs| hs[0].len() < 2 || hs[1].len() < 2 || hs[2].len() < 2) {
                     status.lock_mut().log_warning(format!(
                         "Not enough valid images to estimate ceiling.  Check that you have at least two bracketed exposure images with exposure Exif data.",
                     ));
@@ -458,6 +461,9 @@ impl AppMain {
                         return;
                     }
                     for i in 0..3 {
+                        if histograms[i].len() < 2 {
+                            continue;
+                        }
                         let norm = 1.0 / (histograms[i][0].0.buckets.len() - 1) as f32;
                         if let Some((_, c)) = estimate_sensor_floor_ceiling(&histograms[i]) {
                             if let Some(ref mut ceiling) = ceiling[i] {
