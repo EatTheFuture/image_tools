@@ -769,8 +769,8 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
 name = "colorbox"
-version = "0.3.0"
-source = "git+https://github.com/cessen/colorbox?branch=master#c5fe34921d8b8834b14791c335cf588f05440c23"
+version = "0.4.0"
+source = "git+https://github.com/cessen/colorbox?branch=master#7bdbdc4ffe2fe761824c77989bb85bc8ddd0122f"
 
 [[package]]
 name = "com"

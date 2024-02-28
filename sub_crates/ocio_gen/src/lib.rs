@@ -1,9 +1,11 @@
-pub mod blender_config;
+pub mod blender_3_config;
+pub mod blender_4_config;
 pub mod config;
 pub mod minimal_config;
 
 mod agx;
 mod bezier;
+mod data;
 mod gamut_map;
 mod hsv_lut;
 mod tone_map;

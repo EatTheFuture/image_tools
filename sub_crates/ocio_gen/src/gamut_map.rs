@@ -112,8 +112,8 @@ pub fn hsv_gamut_clip() -> Vec<Transform> {
         // to 1.0 actually clamps to a very large value.  And we simply
         // reverse that scaling afterwards.
         Transform::RangeTransform {
-            range_in: (-1.0, 1.0),
-            range_out: (-1.0, 1.0),
+            range_in: (Some(-1.0), Some(1.0)),
+            range_out: (Some(-1.0), Some(1.0)),
             clamp: true,
         },
         Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([

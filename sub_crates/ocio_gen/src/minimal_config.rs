@@ -518,8 +518,8 @@ pub fn make_minimal(
                 //--------
                 // Encode.
                 Transform::RangeTransform {
-                    range_in: (0.0, 1.0),
-                    range_out: (0.0, nits as f64 / 10000.0),
+                    range_in: (Some(0.0), Some(1.0)),
+                    range_out: (Some(0.0), Some(nits as f64 / 10000.0)),
                     clamp: true,
                 },
                 Transform::FileTransform {
@@ -641,7 +641,7 @@ pub fn make_minimal(
                 matrix::rgb_to_xyz_matrix(reference_space_chroma),
                 matrix::xyz_chromatic_adaptation_matrix(
                     reference_space_chroma.w,
-                    chroma::WHITEPOINT_D65,
+                    chroma::illuminant::D65,
                     whitepoint_adaptation_method,
                 ),
             ]),

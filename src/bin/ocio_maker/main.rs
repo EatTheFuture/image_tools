@@ -68,7 +68,7 @@ impl AppMain {
             ui_data: Shared::new(UIData {
                 selected_tab: Tabs::BaseConfig,
 
-                base_preset: BasePreset::Blender3_0,
+                base_preset: BasePreset::Blender4_0,
                 working_color_space: ColorSpaceSpec {
                     // Only the `chroma_space` and `custom_chroma` fields are
                     // actually used to define the working color space.
@@ -231,8 +231,12 @@ impl AppMain {
                     (config, chroma)
                 }
                 BasePreset::Blender3_0 => (
-                    ocio_gen::blender_config::make_blender_3_0(),
-                    ocio_gen::blender_config::REFERENCE_SPACE_CHROMA,
+                    ocio_gen::blender_3_config::make_blender_3_0(),
+                    ocio_gen::blender_3_config::REFERENCE_SPACE_CHROMA,
+                ),
+                BasePreset::Blender4_0 => (
+                    ocio_gen::blender_4_config::make_blender_4_0(),
+                    ocio_gen::blender_4_config::REFERENCE_SPACE_CHROMA,
                 ),
                 BasePreset::AcesLite => {
                     let config = ocio_gen::minimal_config::make_minimal(
@@ -476,6 +480,7 @@ impl AppMain {
 pub enum BasePreset {
     Custom,
     Blender3_0,
+    Blender4_0,
     AcesLite,
 }
 
@@ -484,6 +489,7 @@ impl BasePreset {
         match self {
             Self::Custom => "Custom",
             Self::Blender3_0 => "Blender 3.0",
+            Self::Blender4_0 => "Blender 4.0",
             Self::AcesLite => "ACES Lite",
         }
     }
@@ -492,6 +498,7 @@ impl BasePreset {
         match self {
             Self::Custom => "Custom",
             Self::Blender3_0 => "Blender 3.0",
+            Self::Blender4_0 => "Blender 4.0",
             Self::AcesLite => "ACES Lite",
         }
     }
@@ -500,6 +507,7 @@ impl BasePreset {
         match text.trim() {
             "Custom" => Some(Self::Custom),
             "Blender 3.0" => Some(Self::Blender3_0),
+            "Blender 4.0" => Some(Self::Blender4_0),
             "ACES Lite" => Some(Self::AcesLite),
             _ => None,
         }
@@ -509,6 +517,7 @@ impl BasePreset {
 pub const BASE_PRESETS: &[BasePreset] = &[
     BasePreset::Custom,
     BasePreset::Blender3_0,
+    BasePreset::Blender4_0,
     BasePreset::AcesLite,
 ];
 

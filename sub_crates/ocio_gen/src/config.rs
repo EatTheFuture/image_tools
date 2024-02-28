@@ -44,6 +44,7 @@ pub struct OCIOConfig {
     pub looks: Vec<Look>,
 
     pub colorspaces: Vec<ColorSpace>,
+    pub inactive_colorspaces: Vec<String>,
 }
 
 impl Default for OCIOConfig {
@@ -64,6 +65,7 @@ impl Default for OCIOConfig {
             active_views: Vec::new(),
             looks: Vec::new(),
             colorspaces: Vec::new(),
+            inactive_colorspaces: Vec::new(),
         }
     }
 }
@@ -261,6 +263,18 @@ impl OCIOConfig {
             file.write_all(b"\n")?;
         }
 
+        // Inactive colorspaces.
+        if !self.inactive_colorspaces.is_empty() {
+            file.write_all(b"inactive_colorspaces: [")?;
+            for (i, space) in self.inactive_colorspaces.iter().enumerate() {
+                if i != 0 {
+                    file.write_all(b", ")?;
+                }
+                file.write_all(space.as_bytes())?;
+            }
+            file.write_all(b"]\n\n")?;
+        }
+
         // Looks.
         if !self.looks.is_empty() {
             file.write_all(b"looks:\n")?;
@@ -286,6 +300,16 @@ impl OCIOConfig {
         for colorspace in self.colorspaces.iter() {
             file.write_all(b"  - !<ColorSpace>\n")?;
             file.write_all(format!("    name: {}\n", colorspace.name).as_bytes())?;
+            if !colorspace.aliases.is_empty() {
+                file.write_all(b"    aliases: [")?;
+                for (i, alias) in colorspace.aliases.iter().enumerate() {
+                    if i != 0 {
+                        file.write_all(b", ")?;
+                    }
+                    file.write_all(alias.as_bytes())?;
+                }
+                file.write_all(b"]\n")?;
+            }
             if !colorspace.description.is_empty() {
                 file.write_all(
                     format!(
@@ -329,17 +353,33 @@ impl OCIOConfig {
         Ok(())
     }
 
+    pub fn has_colorspace(&self, name: &str) -> bool {
+        for colorspace in self.colorspaces.iter() {
+            if colorspace.name == name {
+                return true;
+            }
+            for alias in colorspace.aliases.iter() {
+                if alias == name {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Peforms some basic validation checks on the configuration.
     ///
     /// This is not 100% thorough by any means.
     pub fn validate(&self) -> Result<(), ValidationError> {
         // Check for duplicate color space names.
-        let mut colorspaces = HashSet::new();
-        for colorspace in self.colorspaces.iter() {
-            if !colorspaces.insert(colorspace.name.as_str()) {
-                return Err(ValidationError::DuplicateColorSpace(
-                    colorspace.name.clone(),
-                ));
+        {
+            let mut colorspaces = HashSet::new();
+            for colorspace in self.colorspaces.iter() {
+                if !colorspaces.insert(colorspace.name.as_str()) {
+                    return Err(ValidationError::DuplicateColorSpace(
+                        colorspace.name.clone(),
+                    ));
+                }
             }
         }
 
@@ -377,40 +417,45 @@ impl OCIOConfig {
         // Check for references to non-existent color spaces.
         // TODO: check inside views and color spaces themselves.
         if let Some(ref space) = self.roles.reference {
-            if !colorspaces.contains(space.as_str()) {
+            if !self.has_colorspace(space.as_str()) {
                 return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
             }
         };
         if let Some(ref space) = self.roles.aces_interchange {
-            if !colorspaces.contains(space.as_str()) {
+            if !self.has_colorspace(space.as_str()) {
                 return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
             }
         };
         if let Some(ref space) = self.roles.cie_xyz_d65_interchange {
-            if !colorspaces.contains(space.as_str()) {
+            if !self.has_colorspace(space.as_str()) {
                 return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
             }
         };
         if let Some(ref space) = self.roles.default {
-            if !colorspaces.contains(space.as_str()) {
+            if !self.has_colorspace(space.as_str()) {
                 return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
             }
         };
         if let Some(ref space) = self.roles.data {
-            if !colorspaces.contains(space.as_str()) {
+            if !self.has_colorspace(space.as_str()) {
                 return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
             }
         };
         for (_, space) in self.roles.other.iter() {
-            if !colorspaces.contains(space.as_str()) {
+            if !self.has_colorspace(space.as_str()) {
                 return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
             }
         }
         for display in self.displays.iter() {
             for (_, space) in display.views.iter() {
-                if !colorspaces.contains(space.as_str()) {
+                if !self.has_colorspace(space.as_str()) {
                     return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
                 }
+            }
+        }
+        for space in self.inactive_colorspaces.iter() {
+            if !self.has_colorspace(space.as_str()) {
+                return Err(ValidationError::ReferenceToAbsentColorSpace(space.clone()));
             }
         }
 
@@ -677,6 +722,7 @@ pub struct Display {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Look {
     pub name: String,
+    pub description: String,
     pub process_space: String,
     pub transform: Vec<Transform>,         // Required.
     pub inverse_transform: Vec<Transform>, // Optional, can be empty.
@@ -686,6 +732,7 @@ pub struct Look {
 pub struct ColorSpace {
     pub name: String,
     pub description: String,
+    pub aliases: Vec<String>,
 
     pub family: String,
     pub equalitygroup: String,
@@ -704,6 +751,7 @@ impl Default for ColorSpace {
         ColorSpace {
             name: String::new(),
             description: String::new(),
+            aliases: Vec::new(),
             family: String::new(),
             equalitygroup: String::new(),
             encoding: None,
@@ -742,10 +790,10 @@ pub enum Transform {
         vars: Vec<f64>,
         direction_inverse: bool,
     },
-    /// Maps `range_in` to `range_out`, and clamps both the low and high end.
+    /// Maps `range_in` to `range_out`, and optionally clamps both the low and high end.
     RangeTransform {
-        range_in: (f64, f64),
-        range_out: (f64, f64),
+        range_in: (Option<f64>, Option<f64>),
+        range_out: (Option<f64>, Option<f64>),
         clamp: bool,
     },
     ExponentTransform(f64, f64, f64, f64), // Separate exponents for r, g, b, and a.
@@ -768,7 +816,67 @@ pub enum Transform {
 
         direction_inverse: bool,
     },
+    GradingPrimaryTransform {
+        // TODO: flesh this out properly.  Right now it's just the
+        // bare minimum for the AgX looks in Blender's OCIO config.
+        style: GradingStyle, // Default is Log.
+        contrast: [f32; 3],  // Implied "master: 1".
+        saturation: f32,
+        pivot_contrast: f32, // "pivot: {constrast: N}" in the config.
+        direction_inverse: bool,
+    },
+    GradingToneTransform {
+        style: GradingStyle,      // Default is Log.
+        blacks: Option<Tone>,     // start and width
+        shadows: Option<Tone>,    // start and pivot
+        midtones: Option<Tone>,   // center and width
+        highlights: Option<Tone>, // start and pivot
+        whites: Option<Tone>,     // start and width
+        s_contrast: Option<f32>,
+        // name: Option<String>,
+        direction_inverse: bool,
+    },
+    CDLTransform {
+        // TODO: the other fields.
+        // style: CDLStyle,
+        // slope: [f32; 3],
+        // offset: [f32; 3],
+        power: [f32; 3],
+        // sat: f32,
+        direction_inverse: bool,
+    },
 }
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum GradingStyle {
+    Linear, // "linear" in the config.
+    Log,    // "log" in the config.
+    Video,  // "video" in the config.
+}
+
+impl GradingStyle {
+    pub fn as_str(&self) -> &'static str {
+        match *self {
+            GradingStyle::Linear => "linear",
+            GradingStyle::Log => "log",
+            GradingStyle::Video => "video",
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Tone {
+    pub rgb: [f32; 3],
+    pub master: f32,
+    pub start_center: f32, // "start" or "center", because OCIO is a mess.
+    pub width_pivot: f32,  // "width" or "pivot", because OCIO is a mess.
+}
+
+// #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+// pub enum CDLStyle {
+//     Asc,     // "asc" in the config.
+//     NoClamp, // "noclamp" in the config.
+// }
 
 impl Transform {
     pub fn invert(self) -> Self {
@@ -837,6 +945,48 @@ impl Transform {
                 limit: limit,
                 power: power,
                 direction_inverse: !direction_inverse,
+            },
+
+            GradingPrimaryTransform {
+                style,
+                contrast,
+                saturation,
+                pivot_contrast,
+                direction_inverse,
+            } => GradingPrimaryTransform {
+                style: style,
+                contrast: contrast,
+                saturation: saturation,
+                pivot_contrast: pivot_contrast,
+                direction_inverse: !direction_inverse,
+            },
+
+            GradingToneTransform {
+                style,
+                blacks,
+                shadows,
+                midtones,
+                highlights,
+                whites,
+                s_contrast,
+                direction_inverse,
+            } => GradingToneTransform {
+                style: style,
+                blacks: blacks,
+                shadows: shadows,
+                midtones: midtones,
+                highlights: highlights,
+                whites: whites,
+                s_contrast: s_contrast,
+                direction_inverse: !direction_inverse,
+            },
+
+            CDLTransform {
+                power,
+                direction_inverse,
+            } => CDLTransform {
+                power: power,
+                direction_inverse: direction_inverse,
             },
         }
     }
@@ -922,14 +1072,23 @@ pub fn write_transform_yaml<W: std::io::Write>(
             range_out,
             clamp,
         } => {
-            format!(
-                "!<RangeTransform> {{ min_in_value: {}, max_in_value: {}, min_out_value: {}, max_out_value: {}, style: {} }}",
-                range_in.0,
-                range_in.1,
-                range_out.0,
-                range_out.1,
-                if clamp { "clamp" } else { "noClamp" },
-            )
+            let mut text = String::new();
+            text.push_str("!<RangeTransform> { ");
+            if let Some(v) = range_in.0 {
+                text.push_str(&format!("min_in_value: {}, ", v));
+            }
+            if let Some(v) = range_in.1 {
+                text.push_str(&format!("max_in_value: {}, ", v));
+            }
+            if let Some(v) = range_out.0 {
+                text.push_str(&format!("min_out_value: {}, ", v));
+            }
+            if let Some(v) = range_out.1 {
+                text.push_str(&format!("max_out_value: {}, ", v));
+            }
+            text.push_str(if clamp { "clamp" } else { "noClamp" });
+            text.push_str(" }");
+            text
         }
         &Transform::ExponentTransform(r, g, b, a) => {
             format!(
@@ -973,6 +1132,126 @@ pub fn write_transform_yaml<W: std::io::Write>(
                 threshhold[0],
                 threshhold[0],
                 power,
+                if direction_inverse {
+                    ", direction: inverse"
+                } else {
+                    ""
+                },
+            )
+        }
+
+        &Transform::GradingPrimaryTransform {
+            style,
+            contrast,
+            saturation,
+            pivot_contrast,
+            direction_inverse,
+        } => {
+            format!(
+                "!<GradingPrimaryTransform> {{ style: {}, contrast: {{rgb: [{}, {}, {}], master: 1}}, saturation: {}, pivot: {{contrast: {}}}{} }}",
+                style.as_str(),
+                contrast[0],
+                contrast[1],
+                contrast[2],
+                saturation,
+                pivot_contrast,
+                if direction_inverse {
+                    ", direction: inverse"
+                } else {
+                    ""
+                },
+            )
+        }
+
+        &Transform::GradingToneTransform {
+            style,
+            blacks,
+            shadows,
+            midtones,
+            highlights,
+            whites,
+            s_contrast,
+            direction_inverse,
+        } => {
+            let mut text = String::new();
+
+            text.push_str("!<GradingToneTransform> {");
+            text.push_str(&format!("style: {}", style.as_str()));
+            if let Some(tone) = blacks {
+                text.push_str(&format!(
+                    ", blacks: {{rgb: [{}, {}, {}], master: {}, start: {}, width: {}}}",
+                    tone.rgb[0],
+                    tone.rgb[1],
+                    tone.rgb[2],
+                    tone.master,
+                    tone.start_center,
+                    tone.width_pivot,
+                ));
+            }
+            if let Some(tone) = shadows {
+                text.push_str(&format!(
+                    ", shadows: {{rgb: [{}, {}, {}], master: {}, start: {}, pivot: {}}}",
+                    tone.rgb[0],
+                    tone.rgb[1],
+                    tone.rgb[2],
+                    tone.master,
+                    tone.start_center,
+                    tone.width_pivot,
+                ));
+            }
+            if let Some(tone) = midtones {
+                text.push_str(&format!(
+                    ", midtones: {{rgb: [{}, {}, {}], master: {}, center: {}, width: {}}}",
+                    tone.rgb[0],
+                    tone.rgb[1],
+                    tone.rgb[2],
+                    tone.master,
+                    tone.start_center,
+                    tone.width_pivot,
+                ));
+            }
+            if let Some(tone) = highlights {
+                text.push_str(&format!(
+                    ", highlights: {{rgb: [{}, {}, {}], master: {}, start: {}, pivot: {}}}",
+                    tone.rgb[0],
+                    tone.rgb[1],
+                    tone.rgb[2],
+                    tone.master,
+                    tone.start_center,
+                    tone.width_pivot,
+                ));
+            }
+            if let Some(tone) = whites {
+                text.push_str(&format!(
+                    ", whites: {{rgb: [{}, {}, {}], master: {}, start: {}, width: {}}}",
+                    tone.rgb[0],
+                    tone.rgb[1],
+                    tone.rgb[2],
+                    tone.master,
+                    tone.start_center,
+                    tone.width_pivot,
+                ));
+            }
+            if let Some(n) = s_contrast {
+                text.push_str(&format!(", s_contrast: {}", n));
+            }
+            if direction_inverse {
+                text.push_str(", direction: inverse");
+            }
+            text.push_str("}");
+
+            text
+        }
+
+        &Transform::CDLTransform {
+            power,
+            direction_inverse,
+        } => {
+            format!(
+                "!<CDLTransform> {{ power: [{}, {}, {}]{} }}",
+                power[0],
+                power[1],
+                power[2],
                 if direction_inverse {
                     ", direction: inverse"
                 } else {
