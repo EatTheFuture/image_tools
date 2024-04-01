@@ -69,6 +69,7 @@ impl AppMain {
                 selected_image_index: 0,
                 image_zoom: 1.0,
                 show_image: ShowImage::SelectedImage,
+                save_with_preview_exposure: false,
 
                 thumbnails: Vec::new(),
                 image_preview_tex: None,
@@ -85,6 +86,7 @@ pub struct UIData {
     selected_image_index: usize,
     image_zoom: f32,
     show_image: ShowImage,
+    save_with_preview_exposure: bool,
 
     // Others.
     thumbnails: Vec<(egui::TextureHandle, usize, usize, ImageInfo)>, // (GPU texture, width, height, info)
@@ -196,6 +198,17 @@ impl eframe::App for AppMain {
                         self.save_hdri(path);
                     }
                 }
+
+                ui.add_space(20.0);
+
+                // Save with preview exposure or not.
+                ui.add_enabled(
+                    job_count == 0,
+                    egui::widgets::Checkbox::new(
+                        &mut self.ui_data.lock_mut().save_with_preview_exposure,
+                        "Save with preview exposure",
+                    ),
+                );
             });
 
             ui.add(egui::widgets::Separator::default().spacing(12.0));
@@ -427,6 +440,11 @@ impl AppMain {
 
     fn save_hdri(&mut self, path: PathBuf) {
         let hdri = self.hdri_merger.clone_ref();
+        let exposure = if self.ui_data.lock().save_with_preview_exposure {
+            2.0f32.powf(self.ui_data.lock().preview_exposure)
+        } else {
+            1.0
+        };
 
         self.job_queue.add_job("Save HDRI", move |status| {
             status
@@ -438,6 +456,7 @@ impl AppMain {
                     &hdri.pixels,
                     hdri.width,
                     hdri.height,
+                    exposure,
                 )
                 .unwrap();
             }

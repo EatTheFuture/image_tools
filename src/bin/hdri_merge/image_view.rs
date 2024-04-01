@@ -45,7 +45,7 @@ pub fn image_view(
                 .add(
                     egui::widgets::DragValue::new(&mut app.ui_data.lock_mut().preview_exposure)
                         .speed(0.1)
-                        .prefix("Log Exposure: "),
+                        .prefix("Preview Exposure: "),
                 )
                 .changed()
             {
