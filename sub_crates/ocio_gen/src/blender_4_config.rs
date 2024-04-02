@@ -1080,7 +1080,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn make_blender_3_0_test() {
-        make_blender_3_0();
+    fn make_blender_4_0_test() {
+        make_blender_4_0();
     }
 }
