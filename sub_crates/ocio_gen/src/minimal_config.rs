@@ -11,11 +11,11 @@ pub fn make_minimal(
     reference_space_chroma: chroma::Chromaticities,
     whitepoint_adaptation_method: matrix::AdaptationMethod,
 ) -> OCIOConfig {
-    let toney_neutral_sdr_curve = ToneCurve::new(1.0, 0.18, 1.0, 4.0, 1.3);
-    let toney_filmic_sdr_curve = ToneCurve::new(1.0, 0.18, 0.5, 2.5, 1.1);
+    let toney_neutral_sdr_curve = ToneCurve::new(1.0, 0.0, 1.3);
+    let toney_filmic_sdr_curve = ToneCurve::new(1.0, 0.4, 1.0);
 
-    let toney_neutral_hdr_curve = ToneCurve::new(12.0, 0.18, 1.0, 4.0, 1.3);
-    let toney_filmic_hdr_curve = ToneCurve::new(12.0, 0.18, 0.5, 2.5, 1.1);
+    let toney_neutral_hdr_curve = ToneCurve::new(12.0, 0.0, 1.3);
+    let toney_filmic_hdr_curve = ToneCurve::new(12.0, 0.4, 1.0);
 
     // Tone mapping operators, used various places below.
     let toney_neutral_rec709 = Tonemapper::new(

@@ -62,7 +62,7 @@ impl Default for Tonemapper {
 
         Tonemapper {
             exposure: 1.0,
-            tone_curve: ToneCurve::new(1.0, 0.18, 0.0, 1.0, 1.0),
+            tone_curve: ToneCurve::new(1.0, 0.0, 1.0),
             saturation_effect: (0.0, 0.5),
             minimum_desaturation_smoothness: 0.25,
 
@@ -201,8 +201,7 @@ impl Tonemapper {
                 if new_maxc < 1.0e-14 {
                     1.0e+15
                 } else {
-                    let clamped_new_maxc =
-                        reinhard(new_maxc, self.minimum_desaturation_smoothness, 1.0);
+                    let clamped_new_maxc = reinhard(new_maxc, self.minimum_desaturation_smoothness);
                     let a = clamped_new_maxc / new_maxc;
                     let b = unit_luma_tonemapped
                         / (new_maxc - (clamped_new_maxc * unit_luma_tonemapped));
@@ -358,80 +357,56 @@ impl Tonemapper {
 /// https://www.desmos.com/calculator/pfzvawfekp
 #[derive(Debug, Copy, Clone)]
 pub struct ToneCurve {
-    ceiling: f64,
-    fixed_point_compensation: f64,
     toe_slope: f64,
-    toe_n: f64,
-    toe_w: f64,
-    shoulder_pow: f64,
+    toe_extent: f64,
+    shoulder_start: f64,
+    shoulder_ceiling: f64,
+    shoulder_power: f64,
 }
 
 impl ToneCurve {
     /// - `ceiling`: the maximum output channel value.  For example, set
     ///   to 1.0 for SDR, and > 1.0 for HDR.
-    /// - `fixed_point`: the value of `x` that should approximately map
-    ///   to itself.  Generally this should be luminance level of a
-    ///   medium gray.  Note that extreme toes will cause the fixed point
-    ///   to not actually be quite fixed.
-    /// - `toe_slope`: the slope of the toe at `x = 0`.  0.0 is max
+    /// - `toe_power`: the strength of the toe.  0.0 applies no toe, leaving the
+    ///   values completely alone, and larger values compress the darks more and
+    ///   more.  0.5 is a reasonable default.
     ///   contrast, 1.0 is neutral, and > 1.0 washes things out.
-    /// - `toe_size`: how far the toe extends out of the darks.  Zero
-    ///   disables the toe, and larger values grow its effects
-    ///   progressively from the darks into the mids and brights.  1.0 is
-    ///   a reasonable value, and means that only colors below the fixed
-    ///   point will be noticeably impacted by the toe.
-    /// - `shoulder`: the strength of the shoulder.  0.0 is equivalent to
+    /// - `shoulder_power`: the strength of the shoulder.  0.0 is equivalent to
     ///   a linear clamped shoulder, and larger values make the shoulder
     ///   progressively softer and higher dynamic range. 1.0 is a
     ///   reasonable default.
-    pub fn new(
-        ceiling: f64,
-        fixed_point: f64,
-        toe_slope: f64,
-        toe_size: f64,
-        shoulder: f64,
-    ) -> ToneCurve {
-        assert!(toe_slope >= 0.0);
-        assert!(toe_size >= 0.0);
-        assert!(shoulder >= 0.0);
-
-        let fixed_point_compensation = reinhard_inv(fixed_point, shoulder, ceiling) / fixed_point;
+    pub fn new(ceiling: f64, toe_power: f64, shoulder_power: f64) -> ToneCurve {
+        assert!(toe_power >= 0.0);
+        assert!(shoulder_power >= 0.0);
 
         ToneCurve {
-            ceiling: ceiling,
-            fixed_point_compensation: fixed_point_compensation,
-            toe_slope: toe_slope,
-            toe_n: 1.0 - (toe_slope / fixed_point_compensation),
-            toe_w: toe_size * 0.125 * fixed_point,
-            shoulder_pow: shoulder,
+            toe_slope: (1.0 - toe_power).max(0.0),
+            toe_extent: toe_power * 0.1,
+            shoulder_start: 0.1,
+            shoulder_ceiling: ceiling,
+            shoulder_power: shoulder_power,
         }
     }
 
     pub fn max_output(&self) -> f64 {
-        self.ceiling
+        self.shoulder_ceiling
     }
 
     pub fn eval(&self, x: f64) -> f64 {
         if x <= 0.0 {
             x * self.toe_slope
         } else {
-            reinhard(
-                self.toe(x) * self.fixed_point_compensation,
-                self.shoulder_pow,
-                self.ceiling,
-            )
+            self.shoulder(self.toe(x))
         }
     }
 
     pub fn eval_inv(&self, x: f64) -> f64 {
         if x <= 0.0 {
             x / self.toe_slope
-        } else if x >= (self.ceiling * 0.999_999_999_999) {
+        } else if x >= (self.shoulder_ceiling * 0.999_999_999_999) {
             f64::INFINITY
         } else {
-            self.toe_inv(
-                reinhard_inv(x, self.shoulder_pow, self.ceiling) / self.fixed_point_compensation,
-            )
+            self.toe_inv(self.shoulder_inv(x))
         }
     }
 
@@ -442,21 +417,21 @@ impl ToneCurve {
 
     fn toe(&self, x: f64) -> f64 {
         // Special cases and validation.
-        if x < 0.0 {
+        if x <= 0.0 {
             return x * self.toe_slope;
-        } else if self.toe_w <= 0.0 || x > Self::TOE_LINEAR_POINT {
+        } else if self.toe_extent <= 0.0 || x > Self::TOE_LINEAR_POINT {
             return x;
         }
 
-        let x = x / self.toe_w;
-        (x - (self.toe_n * x * (-x).exp2())) * self.toe_w
+        let tmp = (1.0 - self.toe_slope) * x * (-x / self.toe_extent).exp2();
+        x - tmp
     }
 
     /// Inverse of `toe()`.  There is no analytic inverse, so we do it
     /// numerically.
     fn toe_inv(&self, y: f64) -> f64 {
         // Special cases and validation.
-        if y < 0.0 {
+        if y <= 0.0 {
             return y / self.toe_slope;
         } else if y > Self::TOE_LINEAR_POINT {
             // Really far out it's close enough to linear to not matter.
@@ -484,6 +459,29 @@ impl ToneCurve {
         }
 
         min
+    }
+
+    fn shoulder(&self, x: f64) -> f64 {
+        // Range adjustment for linear segment and ceiling.
+        let x = (x - self.shoulder_start) / (self.shoulder_ceiling - self.shoulder_start);
+
+        // Actual curve.
+        let y = reinhard(x, self.shoulder_power);
+
+        // Range adjustment for linear segment and ceiling.
+        y * (self.shoulder_ceiling - self.shoulder_start) + self.shoulder_start
+    }
+
+    /// Inverse of `shoulder()`.
+    fn shoulder_inv(&self, y: f64) -> f64 {
+        // Range adjustment for linear segment and ceiling.
+        let y = (y - self.shoulder_start) / (self.shoulder_ceiling - self.shoulder_start);
+
+        // Actual curve.
+        let x = reinhard_inv(y, self.shoulder_power);
+
+        // Range adjustment for linear segment and ceiling.
+        x * (self.shoulder_ceiling - self.shoulder_start) + self.shoulder_start
     }
 }
 
@@ -518,14 +516,14 @@ fn wavelength_to_xy(wavelength: f64) -> (f64, f64) {
 
 /// Generalized Reinhard curve.
 ///
+/// Maps [0, infinity] to [0, 1], and leaves < 0 untouched.
+///
 /// - `p`: a tweaking parameter that affects the shape of the curve, in (0.0,
 ///   inf].  Larger values make it gentler, lower values make it sharper.  1.0 =
 ///   standard Reinhard, 0.0 = linear in [0,1].
-/// - `ceiling`: the maximum output value that Reinhard is compressing to.  Set
-///   this to 1.0 for standard Reinhard, and > 1.0 for e.g. HDR tone mapping.
 #[inline(always)]
-fn reinhard(x: f64, p: f64, ceiling: f64) -> f64 {
-    // Make out-of-range numbers do something reasonable and predictable.
+fn reinhard(x: f64, p: f64) -> f64 {
+    // Leave negavite values alone.
     if x <= 0.0 {
         return x;
     }
@@ -533,29 +531,33 @@ fn reinhard(x: f64, p: f64, ceiling: f64) -> f64 {
     // Special case so we get linear at `p == 0` instead of undefined.
     // Negative `p` is unsupported, so treat like zero as well.
     if p <= 0.0 {
-        return x.min(ceiling);
+        return x.min(1.0);
     }
 
-    let tmp = (x / ceiling).powf(-1.0 / p);
+    // First part of actual generalized Reinhard.
+    let tmp = x.powf(-1.0 / p);
 
     // Special cases for numerical stability.
     if tmp > 1.0e15 {
         return x;
     } else if tmp < 1.0e-15 {
-        return ceiling;
+        return 1.0;
     }
 
-    // Actual generalized Reinhard.
-    (tmp + 1.0).powf(-p) * ceiling
+    // Second part of actual generalized Reinhard.
+    (tmp + 1.0).powf(-p)
 }
 
 /// Inverse of `reinhard()`.
 #[inline(always)]
-fn reinhard_inv(x: f64, p: f64, ceiling: f64) -> f64 {
-    // Make out-of-range numbers do something reasonable and predictable.
+fn reinhard_inv(x: f64, p: f64) -> f64 {
+    // Make out-of-range numbers do something reasonable.
     if x <= 0.0 {
+        // Leave negative values alone.
         return x;
-    } else if x >= ceiling {
+    } else if x >= 1.0 {
+        // There isn't really anything meaningful to do beyond 1.0, but this is
+        // at least consistent and does the right thing at the boundary.
         return std::f64::INFINITY;
     }
 
@@ -565,15 +567,16 @@ fn reinhard_inv(x: f64, p: f64, ceiling: f64) -> f64 {
         return x;
     }
 
-    let tmp = (x / ceiling).powf(-1.0 / p);
+    // First part of actual generalized Reinhard inverse.
+    let tmp = x.powf(-1.0 / p);
 
     // Special case for numerical stability.
     if tmp > 1.0e15 {
         return x;
     }
 
-    // Actual generalized Reinhard inverse.
-    (tmp - 1.0).powf(-p) * ceiling
+    // Second part of actual generalized Reinhard inverse.
+    (tmp - 1.0).powf(-p)
 }
 
 /// A [0,1] -> [0,1] mapping, with 0.5 biased up or down.
@@ -699,7 +702,7 @@ mod test {
                 if p <= 0.0 && x >= 1.0 {
                     continue;
                 }
-                let x2 = reinhard_inv(reinhard(x, p, 2.0), p, 2.0);
+                let x2 = reinhard_inv(reinhard(x, p), p);
                 assert!((x - x2).abs() < 0.000_001);
             }
         }
