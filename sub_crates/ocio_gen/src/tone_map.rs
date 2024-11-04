@@ -393,17 +393,11 @@ impl ToneCurve {
     }
 
     pub fn eval(&self, x: f64) -> f64 {
-        if x <= 0.0 {
-            x * self.toe_slope
-        } else {
-            self.shoulder(self.toe(x))
-        }
+        self.shoulder(self.toe(x))
     }
 
     pub fn eval_inv(&self, x: f64) -> f64 {
-        if x <= 0.0 {
-            x / self.toe_slope
-        } else if x >= (self.shoulder_ceiling * 0.999_999_999_999) {
+        if x >= (self.shoulder_ceiling * 0.999_999_999_999) {
             f64::INFINITY
         } else {
             self.toe_inv(self.shoulder_inv(x))
@@ -417,8 +411,9 @@ impl ToneCurve {
 
     fn toe(&self, x: f64) -> f64 {
         // Special cases and validation.
-        if x <= 0.0 {
-            return x * self.toe_slope;
+        if x < 0.0 {
+            // Do a flipped toe for negative values.
+            return -self.toe(-x);
         } else if self.toe_extent <= 0.0 || x > Self::TOE_LINEAR_POINT {
             return x;
         }
@@ -431,8 +426,9 @@ impl ToneCurve {
     /// numerically.
     fn toe_inv(&self, y: f64) -> f64 {
         // Special cases and validation.
-        if y <= 0.0 {
-            return y / self.toe_slope;
+        if y < 0.0 {
+            // Do a flipped toe for negative values.
+            return -self.toe_inv(-y);
         } else if y > Self::TOE_LINEAR_POINT {
             // Really far out it's close enough to linear to not matter.
             return y;
@@ -632,9 +628,8 @@ mod test {
 
     #[test]
     fn tone_toe_round_trip() {
-        let size = 2.0;
-        for slope in [0.0, 0.5, 1.0, 1.5, 2.0] {
-            let tc = ToneCurve::new(2.0, 0.18, slope, size, 1.4);
+        for power in [0.0, 0.5, 1.0, 1.5, 2.0] {
+            let tc = ToneCurve::new(2.0, power, 1.4);
 
             for i in 0..4096 {
                 // Non-linear mapping for x so we test both very
@@ -658,13 +653,33 @@ mod test {
                 } else {
                     assert!(((x - x2).abs() / x) < 0.000_000_1);
                 }
+
+                let x = -x;
+
+                // Forward negative.
+                let y = tc.toe(x);
+                let x2 = tc.toe_inv(y);
+                if x == 0.0 {
+                    assert!(x2 == 0.0);
+                } else {
+                    assert!(((x - x2).abs() / x.abs()) < 0.000_000_1);
+                }
+
+                // Reverse negative.
+                let y = tc.toe_inv(x);
+                let x2 = tc.toe(y);
+                if x == 0.0 {
+                    assert!(x2 == 0.0);
+                } else {
+                    assert!(((x - x2).abs() / x.abs()) < 0.000_000_1);
+                }
             }
         }
     }
 
     #[test]
     fn tone_curve_round_trip() {
-        let tc = ToneCurve::new(2.0, 0.18, 0.25, 1.2, 1.4);
+        let tc = ToneCurve::new(2.0, 0.25, 1.4);
         for i in 0..4096 {
             // Forward.
             let x = i as f64 / 64.0;
@@ -677,16 +692,31 @@ mod test {
             let y = tc.eval_inv(x);
             let x2 = tc.eval(y);
             assert!((x - x2).abs() < 0.000_001);
+
+            let x = -x;
+
+            // Forward negative.
+            let x = i as f64 / 64.0;
+            let y = tc.eval(x);
+            let x2 = tc.eval_inv(y);
+            assert!((x - x2).abs() < 0.000_001);
+
+            // Reverse negative.
+            let x = i as f64 / 4096.0;
+            let y = tc.eval_inv(x);
+            let x2 = tc.eval(y);
+            assert!((x - x2).abs() < 0.000_001);
         }
     }
 
     #[test]
     fn tonemap_1d_round_trip() {
-        let tone_curve = ToneCurve::new(2.0, 0.18, 0.8, 1.2, 1.4);
+        let tone_curve = ToneCurve::new(2.0, 0.25, 1.4);
         let satfx = (0.4, 0.6);
         let min_smooth = 0.25;
         let tm = Tonemapper::new(1.1, tone_curve, None, satfx, min_smooth);
-        for i in 0..17 {
+        for i in 0..=32 {
+            let x = (i as f64 - 8.0) / 4.0;
             let x = i as f64 / 16.0;
             let x2 = tm.eval_1d(tm.eval_1d_inv(x));
             assert!((x - x2).abs() < 0.000_001);
@@ -695,9 +725,9 @@ mod test {
 
     #[test]
     fn reinhard_round_trip() {
-        for i in 0..17 {
-            for p in 0..1 {
-                let x = (i - 8) as f64 / 4.0;
+        for i in 0..=32 {
+            for p in 0..4 {
+                let x = (i as f64 - 8.0) / 4.0;
                 let p = p as f64 / 8.0;
                 if p <= 0.0 && x >= 1.0 {
                     continue;
