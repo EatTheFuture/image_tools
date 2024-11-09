@@ -19,63 +19,71 @@ pub fn make_minimal(
 
     // Tone mapping operators, used various places below.
     let toney_neutral_rec709 = Tonemapper::new(
+        Some(chroma::REC709),
         1.0,
         toney_neutral_sdr_curve,
-        Some(chroma::REC709),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
     let toney_filmic_rec709 = Tonemapper::new(
+        Some(chroma::REC709),
         1.0,
         toney_filmic_sdr_curve,
-        Some(chroma::REC709),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
 
     let toney_neutral_rec709_hdr = Tonemapper::new(
+        Some(chroma::REC709),
         1.0,
         toney_neutral_hdr_curve,
-        Some(chroma::REC709),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
     let toney_filmic_rec709_hdr = Tonemapper::new(
+        Some(chroma::REC709),
         1.1,
         toney_filmic_hdr_curve,
-        Some(chroma::REC709),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
 
     let toney_neutral_rec2020 = Tonemapper::new(
+        Some(chroma::REC2020),
         1.0,
         toney_neutral_sdr_curve,
-        Some(chroma::REC2020),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
     let toney_filmic_rec2020 = Tonemapper::new(
+        Some(chroma::REC2020),
         1.0,
         toney_filmic_sdr_curve,
-        Some(chroma::REC2020),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
 
     let toney_neutral_rec2020_hdr = Tonemapper::new(
+        Some(chroma::REC2020),
         1.0,
         toney_neutral_hdr_curve,
-        Some(chroma::REC2020),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
     let toney_filmic_rec2020_hdr = Tonemapper::new(
+        Some(chroma::REC2020),
         1.0,
         toney_filmic_hdr_curve,
-        Some(chroma::REC2020),
-        (0.15, 0.7),
-        0.25,
+        0.5,
+        0.2,
+        0.2,
     );
 
     // AgX.

@@ -2,15 +2,19 @@ use colorbox::{
     chroma::Chromaticities,
     lut::{Lut1D, Lut3D},
     matrix::{
-        compose, invert, rgb_to_rgb_matrix, rgb_to_xyz_matrix, transform_color,
-        xyz_chromatic_adaptation_matrix, AdaptationMethod, Matrix,
+        compose, invert, rgb_to_rgb_matrix, rgb_to_xyz_matrix, to_4x4_f32, transform_color,
+        xyz_chromatic_adaptation_matrix, xyz_to_rgb_matrix, AdaptationMethod, Matrix,
     },
     transforms::rgb_gamut,
 };
 
 use crate::config::{ExponentLUTMapper, Interpolation, Transform};
 
-const PARENT_SPACE_WL: [f64; 3] = [630.0, 520.0, 460.0];
+/// RGB chromaticity coordinates for a custom RGB colorspace that encompasses
+/// the spectral locus with a bit of margin all around.  This is used as the
+/// space for the LUTs so they can properly handle out-of-gamut colors, which
+/// can show up in footage from cameras.
+const PARENT_SPACE_RGB_CHROMA: [(f64, f64); 3] = [(0.9, 0.3), (-0.06, 1.04), (0.0, -0.12)];
 
 /// A filmic(ish) tonemapping operator.
 ///
@@ -19,27 +23,41 @@ const PARENT_SPACE_WL: [f64; 3] = [630.0, 520.0, 460.0];
 ///   Useful for tuning the over-all brightness of tone mappers.
 /// - `tone_curve`: the tone mapping curve to use.
 /// - `chromaticities`: the RGBW chromaticities of the tone mapping color
-///   space.  This is used for both input and output colors.
-/// - `saturation_effect`: how much the filmic curve affects the saturation
-///   of colors.  The first number is the effect for fully saturated colors,
-///   and the second is the bias for half-saturated input colors.  Both are
-///   in [0.0, 1.0].  0.0 gives the least effect, and 1.0 the most.  A piar
-///   of (0.0, 0.5) is in some sense "correct", but in practice neither
-///   number should be zero.  (0.1, 0.7) is a pretty reasonable default.
-/// - `minimum_desaturation_smoothness`: ensures a minimum smoothness of
-///   the desaturation transition as colors start to blow out.  0.25 is a
-///   reasonable default.
+///   space (display chromaticities).  This is used for both input and output
+///   colors.
+/// - `gamut_compression`: how aggressively to compress out-of-gamut colors
+///   before tone mapping.  0.0 means a sharp gamut clip, 1.0 means the
+///   smoothest roll-off that affects all in-gamut colors.  Reasonable values
+///   are between 0.0 and 0.3.
+/// - `saturation_preservation`: blends between natural saturation
+///   falloff/intensification (0.0) and full saturation preservation from
+///   the original image (1.0).  Note that 1.0 looks pretty weird.
+///   Reasonable values are between 0.0 and 0.5.
 #[derive(Debug, Copy, Clone)]
 pub struct Tonemapper {
     exposure: f64,
     tone_curve: ToneCurve,
-    saturation_effect: (f64, f64), // (effect, bias)
-    minimum_desaturation_smoothness: f64,
+    saturation_preservation: f64,
+    gamut_compression: f64,
+    blue_lightness: f64,
 
+    inset_mat: Matrix,
+    outset_mat: Matrix,
+
+    // Used for converting to OkLab.
     to_xyz_mat: Matrix,
     from_xyz_mat: Matrix,
-    to_parent_rgb_mat: Matrix,
-    parent_rgb_luma_weights: [f64; 3],
+
+    // Used for compressing the original colors to a
+    // reasonable space before estimating their hue in OkLab.
+    to_rec2020_mat: Matrix,
+    from_rec2020_mat: Matrix,
+
+    // Used for LUTs.
+    to_parent_mat: Matrix,
+    from_parent_mat: Matrix,
+
+    display_rgb_luma_weights: [f64; 3],
 
     res_1d: usize,
     res_3d: usize,
@@ -52,39 +70,18 @@ const MAPPER_3D_EXPONENT: f64 = 1.5;
 
 impl Default for Tonemapper {
     fn default() -> Tonemapper {
-        let to_xyz_mat = rgb_to_xyz_matrix(colorbox::chroma::REC709);
-        let parent_rgb_chroma = Chromaticities {
-            r: wavelength_to_xy(PARENT_SPACE_WL[0]),
-            g: wavelength_to_xy(PARENT_SPACE_WL[1]),
-            b: wavelength_to_xy(PARENT_SPACE_WL[2]),
-            w: colorbox::chroma::REC709.w,
-        };
-
-        Tonemapper {
-            exposure: 1.0,
-            tone_curve: ToneCurve::new(1.0, 0.0, 1.0),
-            saturation_effect: (0.0, 0.5),
-            minimum_desaturation_smoothness: 0.25,
-
-            to_xyz_mat: to_xyz_mat,
-            from_xyz_mat: invert(to_xyz_mat).unwrap(),
-            to_parent_rgb_mat: rgb_to_rgb_matrix(colorbox::chroma::REC709, parent_rgb_chroma),
-            parent_rgb_luma_weights: rgb_to_xyz_matrix(parent_rgb_chroma)[1],
-
-            res_1d: 1 << 12,
-            res_3d: RES_3D_BASE,
-            mapper_3d: ExponentLUTMapper::new(MAPPER_3D_EXPONENT, 1.0, [true, true, true], true),
-        }
+        Tonemapper::new(None, 1.0, ToneCurve::new(1.0, 0.0, 1.0), 0.0, 0.0, 0.0)
     }
 }
 
 impl Tonemapper {
     pub fn new(
+        chromaticities: Option<Chromaticities>,
         exposure: f64,
         tone_curve: ToneCurve,
-        chromaticities: Option<Chromaticities>,
-        saturation_effect: (f64, f64),
-        minimum_desaturation_smoothness: f64,
+        saturation_preservation: f64,
+        gamut_compression: f64,
+        blue_lightness: f64,
     ) -> Self {
         let chromaticities = chromaticities.unwrap_or(colorbox::chroma::REC709);
 
@@ -94,32 +91,53 @@ impl Tonemapper {
             // to a D65 white point, which is what OkLab uses.
             xyz_chromatic_adaptation_matrix(
                 chromaticities.w,
-                (0.31272, 0.32903), // D65
+                colorbox::chroma::illuminant::D65,
                 AdaptationMethod::Hunt,
             ),
         ]);
 
-        // The "parent" RGB space is used to very approximately compute
-        // the spectral purity of colors.  It uses fixed RGB
-        // chromaticities on the spectral locus, but uses the same white
-        // point as the processing space.
-        let parent_rgb_chroma = Chromaticities {
-            r: wavelength_to_xy(PARENT_SPACE_WL[0]),
-            g: wavelength_to_xy(PARENT_SPACE_WL[1]),
-            b: wavelength_to_xy(PARENT_SPACE_WL[2]),
-            w: chromaticities.w,
-        };
+        let to_rec2020_mat = compose(&[
+            rgb_to_xyz_matrix(chromaticities),
+            xyz_chromatic_adaptation_matrix(
+                chromaticities.w,
+                colorbox::chroma::REC2020.w,
+                AdaptationMethod::Hunt,
+            ),
+            xyz_to_rgb_matrix(colorbox::chroma::REC2020),
+        ]);
+
+        let to_parent_mat = rgb_to_rgb_matrix(
+            chromaticities,
+            Chromaticities {
+                r: PARENT_SPACE_RGB_CHROMA[0],
+                g: PARENT_SPACE_RGB_CHROMA[1],
+                b: PARENT_SPACE_RGB_CHROMA[2],
+                // The parent space always uses the same white point
+                // as the display space.
+                w: chromaticities.w,
+            },
+        );
+
+        // The value of 0.73 was arrived at experimentally, and seems
+        // to give over-all good results.
+        let inset_mat = inset_matrix(0.73);
 
         Tonemapper {
             exposure: exposure,
             tone_curve: tone_curve,
-            saturation_effect: saturation_effect,
-            minimum_desaturation_smoothness: minimum_desaturation_smoothness,
+            saturation_preservation: saturation_preservation,
+            gamut_compression: gamut_compression,
+            blue_lightness: blue_lightness,
 
+            inset_mat: inset_mat,
+            outset_mat: invert(inset_mat).unwrap(),
             to_xyz_mat: to_xyz_mat,
             from_xyz_mat: invert(to_xyz_mat).unwrap(),
-            to_parent_rgb_mat: rgb_to_rgb_matrix(colorbox::chroma::REC709, parent_rgb_chroma),
-            parent_rgb_luma_weights: rgb_to_xyz_matrix(parent_rgb_chroma)[1],
+            to_rec2020_mat: to_rec2020_mat,
+            from_rec2020_mat: invert(to_rec2020_mat).unwrap(),
+            to_parent_mat: to_parent_mat,
+            from_parent_mat: invert(to_parent_mat).unwrap(),
+            display_rgb_luma_weights: rgb_to_xyz_matrix(chromaticities)[1],
 
             res_1d: 1 << 12,
             res_3d:
@@ -140,112 +158,153 @@ impl Tonemapper {
     /// Takes an input open-domain "scene linear" RGB value, and returns
     /// a tone mapped closed-domain "display linear" RGB value.
     pub fn eval(&self, rgb: [f64; 3]) -> [f64; 3] {
-        // Compute luma and approximate spectral purity (saturation) of
-        // the color.
-        let (luma_linear, purity) = {
-            let rgb_par = transform_color(rgb, self.to_parent_rgb_mat);
-            let min = rgb_par[0].min(rgb_par[1]).min(rgb_par[2]).max(0.0);
-            let max = rgb_par[0].max(rgb_par[1]).max(rgb_par[2]);
+        use colorbox::transforms::oklab;
 
-            let luma_linear = (rgb_par[0].max(0.0) * self.parent_rgb_luma_weights[0])
-                + (rgb_par[1].max(0.0) * self.parent_rgb_luma_weights[1])
-                + (rgb_par[2].max(0.0) * self.parent_rgb_luma_weights[2]);
-
-            let purity = if max < 1.0e-25 {
-                0.0
-            } else {
-                1.0 - (min / max)
-            }
-            .clamp(0.0, 1.0);
-
-            (luma_linear, purity)
+        // Precompute some OkLab color information of the un-tonemapped colors.
+        //
+        // This is used later to restore the hue of the color.
+        let oklab_original = {
+            // We gamut clip to Rec2020 first, because OkLab doesn't correctly
+            // handle colors that are far outside the spectral locus, and this
+            // is a cheap way to ensure that they're inside of it.
+            let rec2020 = transform_color(rgb, self.to_rec2020_mat);
+            let rec2020_clipped = rgb_gamut::open_domain_clip(rec2020, max_channel(rec2020), 0.8);
+            let rgb_clipped = transform_color(rec2020_clipped, self.from_rec2020_mat);
+            oklab::from_xyz_d65(transform_color(rgb_clipped, self.to_xyz_mat))
         };
 
-        // Compute the tone mapped color value.
-        let luma_tonemapped = self.eval_1d(luma_linear);
-        let rgb_tonemapped = {
-            let rgb_linear = rgb_gamut::open_domain_clip(rgb, luma_linear, 0.0);
-            let rgb_scaled = vscale(rgb_linear, luma_tonemapped / luma_linear);
-
-            const BLEND: f64 = 0.05;
-            let minc = rgb_scaled[0].min(rgb_scaled[1]).min(rgb_scaled[2]);
-            let maxc = rgb_scaled[0].max(rgb_scaled[1]).max(rgb_scaled[2]);
-
-            // Filmic desaturation.
-            let sat0 = if luma_tonemapped < 1.0e-14 {
-                0.0
+        // Ensure the color is in gamut.
+        let rgb_gamut_mapped = {
+            let blueness = if rgb[2] > 0.0 {
+                ((rgb[2] - rgb[0].max(rgb[1])) / rgb[2].abs()).clamp(0.0, 1.0)
             } else {
-                let step = 1.0
-                    - bias(purity, 1.0 - self.saturation_effect.1)
-                        * (1.0 - self.saturation_effect.0);
-                let step = step.clamp(0.0, 0.99999);
-                let sat =
-                    (1.0 - (self.eval_1d(luma_linear * step) / luma_tonemapped)) / (1.0 - step);
+                0.0
+            };
+            let blue_fac = blueness * self.blue_lightness;
 
-                // Ensure it's within the open-domain gamut.
-                let limit = 1.0 / (1.0 - (minc / luma_tonemapped));
-                soft_min(sat, limit, BLEND)
+            let luma_vs_max = lerp(
+                dot(rgb, self.display_rgb_luma_weights),
+                max_channel(rgb),
+                blue_fac,
+            );
+            let protected = {
+                let tmp = self.gamut_compression + (blue_fac * (1.0 - self.gamut_compression));
+                1.0 - tmp
             };
 
-            // Gamut-ceiling-based desaturation.
-            let sat1 = {
-                // We scale these down so that the max corresponds to 1.0.  This
-                // is just to make the math below easier, because it's simpler
-                // if we assume we're always clamping to 1.0.
-                let unit_luma_tonemapped = luma_tonemapped / self.tone_curve.max_output();
-                let unit_maxc = maxc / self.tone_curve.max_output();
+            rgb_gamut::open_domain_clip(rgb, luma_vs_max, protected)
+        };
 
-                // The actual stuff.
-                let tmp = soft_max(sat0, 1.0, BLEND);
-                let new_maxc = lerp(unit_luma_tonemapped, unit_maxc, tmp);
-                if new_maxc < 1.0e-14 {
-                    1.0e+15
+        // Apply the tone mapping curve, with an inset gamut.
+        //
+        // This is the core of the tone mapper.  Everything after this is
+        // basically just optional adjustments and fixing the colors up in
+        // various ways.
+        let rgb_tone_mapped = {
+            let rgb_inset = transform_color(rgb_gamut_mapped, self.inset_mat);
+            let rgb_compressed = [
+                self.eval_1d(rgb_inset[0]),
+                self.eval_1d(rgb_inset[1]),
+                self.eval_1d(rgb_inset[2]),
+            ];
+            let rgb_outset = transform_color(rgb_compressed, self.outset_mat);
+
+            rgb_outset
+        };
+
+        // Blend between tonemapped saturation and original saturation.
+        let rgb_saturation_adjusted = {
+            let gray_level_a = dot(rgb_tone_mapped, self.display_rgb_luma_weights);
+            let gray_level_b = dot(rgb_gamut_mapped, self.display_rgb_luma_weights);
+
+            if gray_level_a < 1.0e-14 || gray_level_b < 1.0e-14 {
+                // If the gray level is too small, bail, since we otherwise divide by it.
+                rgb_tone_mapped
+            } else {
+                // Note: we scale chroma_vector_b so it's relative to the same
+                // luminance as chroma_vector_a.
+                let chroma_vector_a = vsub(rgb_tone_mapped, [gray_level_a; 3]);
+                let chroma_vector_b = vsub(rgb_gamut_mapped, [gray_level_b; 3]);
+
+                let saturation_a = dot(chroma_vector_a, chroma_vector_a).sqrt() / gray_level_a;
+                let saturation_b = dot(chroma_vector_b, chroma_vector_b).sqrt() / gray_level_b;
+
+                let rgb_saturated = if saturation_a < 1.0e-10 || saturation_b < 1.0e-10 {
+                    // If the saturation is basically zero, then it doesn't
+                    // matter, and this avoids numerical instability.
+                    rgb_tone_mapped
                 } else {
-                    let clamped_new_maxc = reinhard(new_maxc, self.minimum_desaturation_smoothness);
-                    let a = clamped_new_maxc / new_maxc;
-                    let b = unit_luma_tonemapped
-                        / (new_maxc - (clamped_new_maxc * unit_luma_tonemapped));
-                    let fac = ((a - 1.0) * b + a).clamp(0.0, 1.0);
-                    fac * tmp
-                }
-            };
+                    // The t factor ensures that colors still blow out towards
+                    // white in a pleasing way.
+                    let t = if saturation_a < saturation_b {
+                        saturation_a / saturation_b
+                    } else {
+                        0.0
+                    };
+                    let chroma_scale = lerp(saturation_a, saturation_b, t) / saturation_a;
+                    vadd([gray_level_a; 3], vscale(chroma_vector_a, chroma_scale))
+                };
 
-            // Do the desaturation based on the minimum of the two above
-            // approaches.
-            let t = (soft_min(sat0, sat1, BLEND) + (BLEND * 0.5)).max(0.0);
-            vlerp([luma_tonemapped; 3], rgb_scaled, t)
+                vlerp(rgb_tone_mapped, rgb_saturated, self.saturation_preservation)
+            }
         };
 
-        // Adjust hue to account for the Abney effect.
-        let rgb_abney = {
-            use colorbox::transforms::oklab;
+        // The inset/outset process as well as re-saturation may have pushed
+        // the colors outside of the closed-domain gamut, so we soft-clip them
+        // back in.
+        let rgb_clipped = {
+            // Scale for max output value.
+            let scaled = vscale(rgb_saturation_adjusted, 1.0 / self.tone_curve.max_output());
 
-            let lab1 = oklab::from_xyz_d65(transform_color(rgb, self.to_xyz_mat));
-            let len1 = ((lab1[1] * lab1[1]) + (lab1[2] * lab1[2])).sqrt();
-            let lab2 = oklab::from_xyz_d65(transform_color(rgb_tonemapped, self.to_xyz_mat));
-            let len2 = ((lab2[1] * lab2[1]) + (lab2[2] * lab2[2])).sqrt();
+            let open_domain_clipped = rgb_gamut::open_domain_clip(
+                scaled,
+                dot(scaled, self.display_rgb_luma_weights),
+                0.9,
+            );
 
-            let lab3 = if len1 < 1.0e-10 {
-                lab2
+            let closed_domain_clipped = rgb_gamut::closed_domain_clip(
+                open_domain_clipped,
+                dot(open_domain_clipped, self.display_rgb_luma_weights),
+                0.7,
+            );
+
+            // Scale for max output value.
+            vscale(closed_domain_clipped, self.tone_curve.max_output())
+        };
+
+        // Fix hue to match the original input colors.
+        let rgb_hue_fixed = {
+            let oklab_tonemapped =
+                oklab::from_xyz_d65(transform_color(rgb_clipped, self.to_xyz_mat));
+
+            let len1 = ((oklab_tonemapped[1] * oklab_tonemapped[1])
+                + (oklab_tonemapped[2] * oklab_tonemapped[2]))
+                .sqrt();
+            let len2 = ((oklab_original[1] * oklab_original[1])
+                + (oklab_original[2] * oklab_original[2]))
+                .sqrt();
+
+            let oklab_adjusted = if len2 < 1.0e-10 {
+                oklab_tonemapped
             } else {
-                [lab2[0], lab1[1] / len1 * len2, lab1[2] / len1 * len2]
+                [
+                    oklab_tonemapped[0],
+                    oklab_original[1] * (len1 / len2),
+                    oklab_original[2] * (len1 / len2),
+                ]
             };
 
-            transform_color(oklab::to_xyz_d65(lab3), self.from_xyz_mat)
+            transform_color(oklab::to_xyz_d65(oklab_adjusted), self.from_xyz_mat)
         };
 
-        // A final hard gamut clip for safety, but it should do very little if anything.
-        vscale(
-            rgb_gamut::closed_domain_clip(
-                vscale(
-                    rgb_gamut::open_domain_clip(rgb_abney, luma_tonemapped, 0.0),
-                    1.0 / self.tone_curve.max_output(),
-                ),
-                luma_tonemapped / self.tone_curve.max_output(),
-                0.0,
-            ),
-            self.tone_curve.max_output(),
-        )
+        // The hue adjustment can slightly push colors out of gamut again.  It's
+        // not enough to be visually important, so we just do simple clamping
+        // here to push the colors back in.
+        [
+            rgb_hue_fixed[0].max(0.0).min(self.tone_curve.max_output()),
+            rgb_hue_fixed[1].max(0.0).min(self.tone_curve.max_output()),
+            rgb_hue_fixed[2].max(0.0).min(self.tone_curve.max_output()),
+        ]
     }
 
     /// Generates a 1D and 3D LUT to apply the tone mapping.
@@ -257,10 +316,13 @@ impl Tonemapper {
             self.eval_1d_inv(n as f64) as f32
         });
 
-        // The 3d LUT is generated to compensate for the missing bits
-        // after just the tone mapping curve is applied per-channel.
-        // It's sort of a "diff" that can be applied afterwards to get
-        // the full rgb transform.
+        // The 3d LUT is generated to compensate for the missing bits after just
+        // the tone mapping curve is applied per-channel in parent rgb space.
+        // It's sort of a "diff" that can be applied afterwards to get the full
+        // rgb transform.
+        //
+        // The generated LUT expects the input values to be in parent space, and
+        // produces outputs in display space (the LUT mapping not withstanding).
         let lut_3d = Lut3D::from_fn(
             [self.res_3d; 3],
             [0.0; 3],
@@ -276,8 +338,10 @@ impl Tonemapper {
                     self.eval_1d_inv(rgb[2]),
                 ];
 
+                // NOTE: at this point the color is in linear "parent" colorspace.
+
                 // Figure out what it should map to.
-                let rgb_adjusted = self.eval(rgb_linear);
+                let rgb_adjusted = self.eval(transform_color(rgb_linear, self.from_parent_mat));
 
                 // Convert back to LUT space.
                 let abc_final = self.mapper_3d.to_lut(rgb_adjusted);
@@ -299,8 +363,8 @@ impl Tonemapper {
     pub fn tone_map_transforms(&self, lut_1d_path: &str, lut_3d_path: &str) -> Vec<Transform> {
         let mut transforms = Vec::new();
 
-        // Gamut clip ahead of time.
-        // TODO: turn this into a softer gamut compression.
+        // Convert to parent space and gamut clip to that space.
+        transforms.extend([Transform::MatrixTransform(to_4x4_f32(self.to_parent_mat))]);
         transforms.extend(crate::gamut_map::hsv_gamut_clip());
 
         // Apply tone curve.
@@ -310,8 +374,12 @@ impl Tonemapper {
             direction_inverse: true,
         }]);
 
-        // Apply chroma LUT.
+        // Apply 3D LUT that does the final adjustments and maps the colors to
+        // display space.
         transforms.extend(self.mapper_3d.transforms_lut_3d(lut_3d_path));
+
+        // Gamut clip after
+        transforms.extend(crate::gamut_map::hsv_gamut_clip());
 
         transforms
     }
@@ -481,6 +549,18 @@ impl ToneCurve {
     }
 }
 
+/// Computes a matrix that insets/outsets the rgb primaries
+/// towards/away from the white point.
+///
+/// `factor`: the inset/outset amount.  Less than 1.0 is inset,
+/// more is outset.  0.0 is total desaturation.
+fn inset_matrix(factor: f64) -> Matrix {
+    let a = factor * (2.0 / 3.0) + (1.0 / 3.0);
+    let b = (1.0 - a) * 0.5;
+
+    [[a, b, b], [b, a, b], [b, b, a]]
+}
+
 /// Computes the CIE xy chromaticity coordinates of a pure wavelength of light.
 ///
 /// `wavelength` is given in nanometers.
@@ -605,6 +685,14 @@ fn soft_max(a: f64, b: f64, softness: f64) -> f64 {
     (a + b + ((tmp * tmp) + (softness * softness)).sqrt()) * 0.5
 }
 
+fn vadd(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn vsub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
 fn vscale(a: [f64; 3], scale: f64) -> [f64; 3] {
     [a[0] * scale, a[1] * scale, a[2] * scale]
 }
@@ -615,6 +703,14 @@ fn vlerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
         lerp(a[1], b[1], t),
         lerp(a[2], b[2], t),
     ]
+}
+
+fn max_channel(rgb: [f64; 3]) -> f64 {
+    rgb[0].max(rgb[1]).max(rgb[2])
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])
 }
 
 #[inline(always)]
