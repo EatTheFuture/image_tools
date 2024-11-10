@@ -50,8 +50,11 @@ pub fn rgb_clip(
             rgb[1] / channel_max,
             rgb[2] / channel_max,
         ];
-        let rgb2 =
-            rgb_gamut::closed_domain_clip(rgb_gamut::open_domain_clip(rgb1, l, 0.0), l, softness);
+        let rgb2 = rgb_gamut::closed_domain_clip(
+            rgb_gamut::open_domain_clip(rgb1, l, 1.0),
+            l,
+            1.0 - softness,
+        );
         [
             rgb2[0] * channel_max,
             rgb2[1] * channel_max,
