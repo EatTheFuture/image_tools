@@ -64,9 +64,10 @@ pub struct Tonemapper {
     mapper_3d: ExponentLUTMapper,
 }
 
-const RES_3D_BASE: usize = 31 + 1;
+const RES_3D_BASE: usize = 48;
 const RES_3D_MAX: usize = 97;
-const MAPPER_3D_EXPONENT: f64 = 1.5;
+const MAPPER_3D_LOW_EXPONENT: f64 = 2.0;
+const MAPPER_3D_HIGH_EXPONENT: f64 = 2.0;
 
 impl Default for Tonemapper {
     fn default() -> Tonemapper {
@@ -140,12 +141,13 @@ impl Tonemapper {
             display_rgb_luma_weights: rgb_to_xyz_matrix(chromaticities)[1],
 
             res_1d: 1 << 12,
-            res_3d:
-                (((RES_3D_BASE as f64) * tone_curve.max_output().powf(1.0 / MAPPER_3D_EXPONENT))
-                    as usize)
-                    .min(RES_3D_MAX),
+            res_3d: (((RES_3D_BASE as f64)
+                * tone_curve.max_output().powf(1.0 / MAPPER_3D_LOW_EXPONENT))
+                as usize)
+                .min(RES_3D_MAX),
             mapper_3d: ExponentLUTMapper::new(
-                MAPPER_3D_EXPONENT,
+                MAPPER_3D_LOW_EXPONENT,
+                MAPPER_3D_HIGH_EXPONENT,
                 tone_curve.max_output(),
                 [true, true, true],
                 true,

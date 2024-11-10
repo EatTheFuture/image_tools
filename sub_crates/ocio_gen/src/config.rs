@@ -1393,28 +1393,43 @@ fn gamut_is_within_gamut(g1: Chromaticities, g2: Chromaticities) -> bool {
         && point_in_triangle(g1.w, g2.r, g2.g, g2.b)
 }
 
+/// A mapping for luts that lets you compress/expand the low and
+/// high-end range via exponents.
 #[derive(Debug, Copy, Clone)]
 pub struct ExponentLUTMapper {
-    to_linear_exp: f64,
+    to_linear_low_exp: f64,
+    to_linear_high_exp: f64,
     linear_max: f64,
     channels: [bool; 3],
     use_tetrahedral_interpolation: bool,
 }
 
+/// Does `1.0 - channel` for all channels, by abusing the assumption
+/// that the alpha channel equals 1.0.
+///
+/// TODO: replace this with a LUT that does this properly.
+const INV_MAT: [f32; 16] = [
+    -1.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0,
+];
+
 impl ExponentLUTMapper {
-    /// - `to_linear_exp`: the exponent to use for mapping, in the
-    ///   to-linear direction.
+    /// - `to_linear_low_exp`: the exponent to use for mapping the part of the
+    ///    LUT near zero, in the to-linear direction.
+    /// - `to_linear_high_exp`: the exponent to use for mapping the part of the
+    ///    LUT near the max value, in the to-linear direction.
     /// - `linear_max`: the linear value that the max lut point should map to.
     /// - `channels`: which channels the mapping is used for (the rest
     ///   are left alone).
     pub fn new(
-        to_linear_exp: f64,
+        to_linear_low_exp: f64,
+        to_linear_high_exp: f64,
         linear_max: f64,
         channels: [bool; 3],
         use_tetrahedral_interpolation: bool,
     ) -> Self {
         Self {
-            to_linear_exp: to_linear_exp,
+            to_linear_low_exp: to_linear_low_exp,
+            to_linear_high_exp: to_linear_high_exp,
             linear_max: linear_max,
             channels: channels,
             use_tetrahedral_interpolation: use_tetrahedral_interpolation,
@@ -1435,17 +1450,32 @@ impl ExponentLUTMapper {
     pub fn from_lut(&self, xyz: [f64; 3]) -> [f64; 3] {
         [
             if self.channels[0] {
-                xyz[0].powf(self.to_linear_exp) * self.linear_max
+                let n = xyz[0];
+                let n = n.powf(self.to_linear_low_exp);
+                let n = 1.0 - n;
+                let n = n.powf(self.to_linear_high_exp);
+                let n = 1.0 - n;
+                n * self.linear_max
             } else {
                 xyz[0]
             },
             if self.channels[1] {
-                xyz[1].powf(self.to_linear_exp) * self.linear_max
+                let n = xyz[1];
+                let n = n.powf(self.to_linear_low_exp);
+                let n = 1.0 - n;
+                let n = n.powf(self.to_linear_high_exp);
+                let n = 1.0 - n;
+                n * self.linear_max
             } else {
                 xyz[1]
             },
             if self.channels[2] {
-                xyz[2].powf(self.to_linear_exp) * self.linear_max
+                let n = xyz[2];
+                let n = n.powf(self.to_linear_low_exp);
+                let n = 1.0 - n;
+                let n = n.powf(self.to_linear_high_exp);
+                let n = 1.0 - n;
+                n * self.linear_max
             } else {
                 xyz[2]
             },
@@ -1456,17 +1486,32 @@ impl ExponentLUTMapper {
     pub fn to_lut(&self, xyz: [f64; 3]) -> [f64; 3] {
         [
             if self.channels[0] {
-                (xyz[0] / self.linear_max).powf(1.0 / self.to_linear_exp)
+                let n = xyz[0] / self.linear_max;
+                let n = 1.0 - n;
+                let n = n.powf(1.0 / self.to_linear_high_exp);
+                let n = 1.0 - n;
+                let n = n.powf(1.0 / self.to_linear_low_exp);
+                n
             } else {
                 xyz[0]
             },
             if self.channels[1] {
-                (xyz[1] / self.linear_max).powf(1.0 / self.to_linear_exp)
+                let n = xyz[1] / self.linear_max;
+                let n = 1.0 - n;
+                let n = n.powf(1.0 / self.to_linear_high_exp);
+                let n = 1.0 - n;
+                let n = n.powf(1.0 / self.to_linear_low_exp);
+                n
             } else {
                 xyz[1]
             },
             if self.channels[2] {
-                (xyz[2] / self.linear_max).powf(1.0 / self.to_linear_exp)
+                let n = xyz[2] / self.linear_max;
+                let n = 1.0 - n;
+                let n = n.powf(1.0 / self.to_linear_high_exp);
+                let n = 1.0 - n;
+                let n = n.powf(1.0 / self.to_linear_low_exp);
+                n
             } else {
                 xyz[2]
             },
@@ -1483,10 +1528,18 @@ impl ExponentLUTMapper {
                 if self.channels[1] { 1.0 / self.linear_max } else { 1.0 },
                 if self.channels[2] { 1.0 / self.linear_max } else { 1.0 },
             ]))),
+            Transform::MatrixTransform(INV_MAT),
             Transform::ExponentTransform(
-                if self.channels[0] { 1.0 / self.to_linear_exp } else { 1.0 },
-                if self.channels[1] { 1.0 / self.to_linear_exp } else { 1.0 },
-                if self.channels[2] { 1.0 / self.to_linear_exp } else { 1.0 },
+                if self.channels[0] { 1.0 / self.to_linear_high_exp } else { 1.0 },
+                if self.channels[1] { 1.0 / self.to_linear_high_exp } else { 1.0 },
+                if self.channels[2] { 1.0 / self.to_linear_high_exp } else { 1.0 },
+                1.0,
+            ),
+            Transform::MatrixTransform(INV_MAT),
+            Transform::ExponentTransform(
+                if self.channels[0] { 1.0 / self.to_linear_low_exp } else { 1.0 },
+                if self.channels[1] { 1.0 / self.to_linear_low_exp } else { 1.0 },
+                if self.channels[2] { 1.0 / self.to_linear_low_exp } else { 1.0 },
                 1.0,
             ),
 
@@ -1503,11 +1556,19 @@ impl ExponentLUTMapper {
 
             // From LUT space.
             Transform::ExponentTransform(
-                if self.channels[0] { self.to_linear_exp } else { 1.0 },
-                if self.channels[1] { self.to_linear_exp } else { 1.0 },
-                if self.channels[2] { self.to_linear_exp } else { 1.0 },
+                if self.channels[0] { self.to_linear_low_exp } else { 1.0 },
+                if self.channels[1] { self.to_linear_low_exp } else { 1.0 },
+                if self.channels[2] { self.to_linear_low_exp } else { 1.0 },
                 1.0,
             ),
+            Transform::MatrixTransform(INV_MAT),
+            Transform::ExponentTransform(
+                if self.channels[0] { self.to_linear_high_exp } else { 1.0 },
+                if self.channels[1] { self.to_linear_high_exp } else { 1.0 },
+                if self.channels[2] { self.to_linear_high_exp } else { 1.0 },
+                1.0,
+            ),
+            Transform::MatrixTransform(INV_MAT),
             Transform::MatrixTransform(matrix::to_4x4_f32(matrix::scale_matrix([
                 if self.channels[0] { self.linear_max } else { 1.0 },
                 if self.channels[1] { self.linear_max } else { 1.0 },
